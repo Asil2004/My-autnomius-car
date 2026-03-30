@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Robot Control Center</title>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+    <style>
+        #map { width: 500px; height: 500px; border: 2px solid #333; background: #eee; margin: 20px; position: relative; }
+        .robot { width: 15px; height: 15px; background: red; border-radius: 50%; position: absolute; }
+        .controls { margin-left: 50px; }
+        button { padding: 15px; font-size: 18px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>Avtonom Robot Boshqaruvi</h1>
+    <div id="map"><div id="robotMarker" class="robot"></div></div>
+    
+    <div class="controls">
+        <button onclick="sendCmd('forward')">OLGA</button><br>
+        <button onclick="sendCmd('left')">CHAP</button>
+        <button onclick="sendCmd('stop')">TO'XTA</button>
+        <button onclick="sendCmd('right')">O'NG</button><br>
+        <button onclick="sendCmd('back')">ORQA</button>
+    </div>
+
+    <script>
+        const firebaseConfig = {
+            apiKey: "AIzaSyAGk2Ulw2sR5GMgKmrbKn6n-Eema0Advv4",
+            databaseURL: "https://myautonomousrobot-default-rtdb.firebaseio.com",
+            projectId: "myautonomousrobot",
+        };
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        function sendCmd(cmd) {
+            db.ref('/robot/command').set(cmd);
+        }
+
+        // Robot harakatini xaritada ko'rsatish (MPU6050 asosida)
+        db.ref('/robot/angle').on('value', (snap) => {
+            let angle = snap.val();
+            let marker = document.getElementById('robotMarker');
+            marker.style.transform = `rotate(${angle}deg)`;
+            // Xarita chizish logikasi bu yerga qo'shiladi
+        });
+    </script>
+</body>
+</html>
