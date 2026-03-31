@@ -34,61 +34,62 @@
 </div>
 
 <script>
-    const config = {
-        apiKey: "AIzaSyAGk2Ulw2sR5GMgKmrbKn6n-Eema0Advv4",
-        databaseURL: "https://myautonomousrobot-default-rtdb.firebaseio.com"
-    };
-    firebase.initializeApp(config);
-    const db = firebase.database();
+// --- FIREBASE INTEGRATSIYASI ---
+const firebaseConfig = {
+    apiKey: "AIzaSyAGk2Ulw2sR5GMgKmrbKn6n-Eema0Advv4",
+    databaseURL: "https://myautonomousrobot-default-rtdb.firebaseio.com"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
 
-    const canvas = document.getElementById('lidarCanvas');
-    const ctx = canvas.getContext('2d');
-    let robot = { x:0, y:0, th:0 };
-    let points = [];
+let robot = { x: 0, y: 0, th: 0 };
+let mapPoints = [];
+let zoom = 1.0;
 
-    function send(c) { db.ref('/robot/command').set(c); }
-    function clearMap() { points = []; db.ref('/robot/lidar_stream').remove(); }
-
-    // Robot statusini yangilash
-    db.ref('/robot/status').on('value', s => {
-        robot = s.val();
-        document.getElementById('stats').innerText = `X: ${robot.x.toFixed(1)} | Y: ${robot.y.toFixed(1)} | ${robot.th.toFixed(0)}°`;
-    });
-
-    // Lidar nuqtalarini qabul qilish
-    db.ref('/robot/lidar_stream').limitToLast(20).on('child_added', s => {
-        const p = s.val();
-        // Global koordinataga o'tkazish
-        const angle = (p.a + robot.th) * Math.PI / 180;
-        const lx = robot.x + Math.cos(angle) * (p.d / 10);
-        const ly = robot.y + Math.sin(angle) * (p.d / 10);
-        points.push({x: lx, y: ly});
-        if(points.length > 2000) points.shift();
-    });
-
-    function draw() {
-        canvas.width = canvas.offsetWidth;
-        canvas.height = canvas.offsetHeight;
-        const cx = canvas.width/2;
-        const cy = canvas.height/2;
-
-        // Nuqtalarni chizish
-        ctx.fillStyle = "#00ff88";
-        points.forEach(p => {
-            ctx.fillRect(cx + p.x - robot.x, cy + p.y - robot.y, 2, 2);
-        });
-
-        // Robot markeri
-        ctx.save();
-        ctx.translate(cx, cy);
-        ctx.rotate(robot.th * Math.PI/180);
-        ctx.fillStyle = "#ff4d6d";
-        ctx.beginPath(); ctx.moveTo(12,0); ctx.lineTo(-8,-7); ctx.lineTo(-8,7); ctx.fill();
-        ctx.restore();
-
-        requestAnimationFrame(draw);
+// Robot holatini yangilash
+db.ref('/robot/status').on('value', (snapshot) => {
+    if (snapshot.exists()) {
+        robot = snapshot.val();
+        setStatus('connected', 'ONLINE');
+        document.getElementById('coordsOverlay').innerHTML = `X: ${robot.x.toFixed(0)} mm<br>Y: ${robot.y.toFixed(0)} mm`;
     }
-    draw();
+});
+
+// Lidar nuqtalarini qabul qilish va xaritaga chizish
+db.ref('/robot/lidar_stream').on('value', (snapshot) => {
+    const data = snapshot.val();
+    if (!data) return;
+
+    Object.values(data).forEach(p => {
+        const rad = (p.a + robot.th) * Math.PI / 180;
+        const x = robot.x + Math.cos(rad) * p.d;
+        const y = robot.y + Math.sin(rad) * p.d;
+        
+        mapPoints.push({ x, y, dist: p.d, angle: p.a });
+    });
+
+    if (mapPoints.length > 10000) mapPoints.splice(0, 500);
+    updateStats();
+});
+
+// Boshqaruv tugmalari funksiyasi
+function sendCommand(cmd) {
+    db.ref('/robot/command').set(cmd);
+}
+
+// HTML dagi tugmalarni Firebase ga bog'lash
+// Buning uchun HTML dagi mousedown/mouseup qismlarini yangilang:
+// Masalan: onmousedown="sendCommand('forward')" onmouseup="sendCommand('stop')"
+
+function updateStats() {
+    document.getElementById('statPoints').textContent = mapPoints.length.toLocaleString();
+    if (mapPoints.length > 0) {
+        const lastD = mapPoints[mapPoints.length - 1].dist;
+        document.getElementById('statMaxDist').textContent = (lastD / 1000).toFixed(2) + " m";
+    }
+}
+
+// Canvas render mantiqi (Siz yuborgan fayldagi drawGrid va render funksiyalarini saqlab qoling)
 </script>
 </body>
 </html>
