@@ -2,216 +2,96 @@
 <html lang="uz">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ASTRA-1: Autonomous OS</title>
+    <title>ASTRA-OS v2.0</title>
     <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=JetBrains+Mono:wght@300;500&display=swap" rel="stylesheet">
-    
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=JetBrains+Mono&display=swap" rel="stylesheet">
     <style>
-        :root {
-            --neon-blue: #00f2ff;
-            --neon-green: #00ff88;
-            --neon-red: #ff0055;
-            --bg-dark: #02060a;
-            --panel-bg: rgba(10, 20, 30, 0.8);
-            --glass-border: rgba(0, 242, 255, 0.2);
-            --font-main: 'JetBrains Mono', monospace;
-            --font-header: 'Orbitron', sans-serif;
-        }
+        :root { --neon: #00f2ff; --bg: #02060a; --panel: rgba(10, 20, 30, 0.9); }
+        body { background: var(--bg); color: #fff; font-family: 'JetBrains Mono', monospace; display: grid; grid-template-columns: 300px 1fr; height: 100vh; margin: 0; }
+        
+        .sidebar { background: var(--panel); padding: 20px; border-right: 1px solid var(--neon); display: flex; flex-direction: column; gap: 20px; }
+        h1 { font-family: 'Orbitron'; color: var(--neon); font-size: 18px; letter-spacing: 3px; }
+        
+        .viewport { position: relative; overflow: hidden; background: radial-gradient(circle, #102030 1px, transparent 1px); background-size: 40px 40px; }
+        canvas { width: 100%; height: 100%; }
 
-        * { margin: 0; padding: 0; box-sizing: border-box; cursor: crosshair; }
+        .btn { background: rgba(0, 242, 255, 0.1); border: 1px solid var(--neon); color: var(--neon); padding: 12px; cursor: pointer; transition: 0.3s; font-family: 'Orbitron'; }
+        .btn:hover { background: var(--neon); color: #000; box-shadow: 0 0 15px var(--neon); }
+        .btn.active { background: #00ff88; border-color: #00ff88; color: #000; }
 
-        body {
-            background: var(--bg-dark);
-            color: #e0f7fa;
-            font-family: var(--font-main);
-            height: 100vh;
-            display: grid;
-            grid-template-columns: 320px 1fr 300px;
-            grid-template-rows: 70px 1fr;
-            overflow: hidden;
-        }
-
-        /* 🟦 HEADER: Futuristic Navigation */
-        header {
-            grid-column: 1 / -1;
-            background: linear-gradient(to bottom, #0a141e, transparent);
-            border-bottom: 1px solid var(--glass-border);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0 30px;
-            backdrop-filter: blur(10px);
-        }
-
-        .system-title {
-            font-family: var(--font-header);
-            font-size: 20px;
-            letter-spacing: 5px;
-            color: var(--neon-blue);
-            text-shadow: 0 0 10px var(--neon-blue);
-        }
-
-        /* 🟩 LEFT SIDEBAR: Diagnostics */
-        .sidebar-left {
-            background: var(--panel-bg);
-            border-right: 1px solid var(--glass-border);
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
-        }
-
-        .module-card {
-            background: rgba(255, 255, 255, 0.03);
-            border-left: 3px solid var(--neon-blue);
-            padding: 15px;
-            position: relative;
-        }
-
-        .module-title {
-            font-size: 10px;
-            color: var(--neon-blue);
-            text-transform: uppercase;
-            margin-bottom: 8px;
-            display: block;
-        }
-
-        /* 🕹️ CENTER: The Map Viewport */
-        .viewport {
-            position: relative;
-            background: 
-                radial-gradient(circle at center, rgba(0, 242, 255, 0.05) 0%, transparent 70%),
-                linear-gradient(rgba(0, 242, 255, 0.02) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(0, 242, 255, 0.02) 1px, transparent 1px);
-            background-size: 100% 100%, 40px 40px, 40px 40px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        canvas {
-            filter: drop-shadow(0 0 10px rgba(0, 242, 255, 0.2));
-        }
-
-        /* 🟥 RIGHT SIDEBAR: Controls */
-        .sidebar-right {
-            background: var(--panel-bg);
-            border-left: 1px solid var(--glass-border);
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-        }
-
-        .control-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 10px;
-        }
-
-        .nav-btn {
-            background: rgba(0, 242, 255, 0.05);
-            border: 1px solid var(--glass-border);
-            color: var(--neon-blue);
-            padding: 15px;
-            font-size: 18px;
-            transition: all 0.3s;
-        }
-
-        .nav-btn:hover {
-            background: var(--neon-blue);
-            color: var(--bg-dark);
-            box-shadow: 0 0 20px var(--neon-blue);
-        }
-
-        .nav-btn:active { transform: scale(0.9); }
-
-        /* 🔋 UI ELEMENTS: Status bars */
-        .stat-bar {
-            height: 4px;
-            background: rgba(255,255,255,0.1);
-            width: 100%;
-            margin-top: 5px;
-            overflow: hidden;
-        }
-
-        .stat-fill {
-            height: 100%;
-            background: var(--neon-green);
-            width: 75%; /* Dinamik o'zgaradi */
-            box-shadow: 0 0 10px var(--neon-green);
-        }
-
-        /* 📡 HUD OVERLAYS */
-        .hud-scanline {
-            position: absolute;
-            width: 100%;
-            height: 2px;
-            background: rgba(0, 242, 255, 0.1);
-            top: 0;
-            animation: scan 4s linear infinite;
-            pointer-events: none;
-        }
-
-        @keyframes scan {
-            0% { top: 0; }
-            100% { top: 100%; }
-        }
+        .stat-box { border-left: 3px solid var(--neon); padding-left: 10px; margin-bottom: 10px; }
+        .label { font-size: 10px; color: #5a7a8a; }
     </style>
 </head>
 <body>
 
-<header>
-    <div class="system-title">ASTRA-OS v2.0</div>
-    <div id="connection-status" style="color: var(--neon-green); font-size: 12px;">● SYSTEM ONLINE</div>
-</header>
-
-<div class="sidebar-left">
-    <div class="module-card">
-        <span class="module-title">Locational Data</span>
-        <div style="font-size: 18px; color: var(--neon-blue);">X: <span id="pos-x">0.0</span></div>
-        <div style="font-size: 18px; color: var(--neon-blue);">Y: <span id="pos-y">0.0</span></div>
+<div class="sidebar">
+    <h1>ASTRA-OS</h1>
+    <div class="stat-box">
+        <div class="label">COORDINATES</div>
+        <div id="pos-info">X: 0.0 | Y: 0.0</div>
+    </div>
+    
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+        <button class="btn active" id="m0" onclick="setMode(0)">MANUAL</button>
+        <button class="btn" id="m1" onclick="setMode(1)">AUTO</button>
     </div>
 
-    <div class="module-card">
-        <span class="module-title">IMU Gyroscope</span>
-        <div id="gyro-val" style="font-family: Orbitron; font-size: 22px;">180.00°</div>
-        <div class="stat-bar"><div class="stat-fill" style="width: 50%;"></div></div>
+    <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap: 5px;">
+        <div></div><button class="btn" onmousedown="send('forward')" onmouseup="send('stop')">W</button><div></div>
+        <button class="btn" onmousedown="send('left')" onmouseup="send('stop')">A</button>
+        <button class="btn" onmousedown="send('back')" onmouseup="send('stop')">S</button>
+        <button class="btn" onmousedown="send('right')" onmouseup="send('stop')">D</button>
     </div>
-
-    <div class="module-card">
-        <span class="module-title">Lidar Density</span>
-        <div id="point-count">Points: 0</div>
-    </div>
+    <button class="btn" style="border-color: #ff4d6d; color: #ff4d6d;" onclick="db.ref('/robot/lidar_map').set(null)">PURGE MAP</button>
 </div>
 
-<div class="viewport" id="viewport">
-    <div class="hud-scanline"></div>
-    <canvas id="mainCanvas"></canvas>
-</div>
-
-<div class="sidebar-right">
-    <div class="module-title" style="text-align: center;">Manual Override</div>
-    <div class="control-grid">
-        <div></div><button class="nav-btn" onmousedown="cmd('forward')" onmouseup="cmd('stop')">W</button><div></div>
-        <button class="nav-btn" onmousedown="cmd('left')" onmouseup="cmd('stop')">A</button>
-        <button class="nav-btn" onmousedown="cmd('back')" onmouseup="cmd('stop')">S</button>
-        <button class="nav-btn" onmousedown="cmd('right')" onmouseup="cmd('stop')">D</button>
-    </div>
-
-    <div class="module-card" style="border-left-color: var(--neon-red);">
-        <span class="module-title">System Actions</span>
-        <button class="nav-btn" style="width: 100%; font-size: 12px;" onclick="clearMap()">Purge Map Cache</button>
-        <button class="nav-btn" style="width: 100%; font-size: 12px; margin-top: 10px;" id="auto-btn" onclick="toggleAuto()">Initialize Autopilot</button>
-    </div>
+<div class="viewport" id="v">
+    <canvas id="c"></canvas>
 </div>
 
 <script>
-    // Firebase va boshqaruv logikasi bu yerga keladi (oldingi koddagi kabi)
-    // Canvas chizish va robot harakati algoritmlari...
-</script>
+    const firebaseConfig = {
+        apiKey: "AIzaSyAGk2Ulw2sR5GMgKmrbKn6n-Eema0Advv4",
+        databaseURL: "https://myautonomousrobot-default-rtdb.firebaseio.com",
+        projectId: "myautonomousrobot"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
 
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+    let robot = { x:0, y:0, th:0 };
+
+    function send(c) { db.ref('/robot/command').set(c); }
+    function setMode(m) { 
+        db.ref('/robot/mode').set(m); 
+        document.getElementById('m0').className = m==0 ? 'btn active' : 'btn';
+        document.getElementById('m1').className = m==1 ? 'btn active' : 'btn';
+    }
+
+    db.ref('/robot/status').on('value', s => {
+        robot = s.val();
+        document.getElementById('pos-info').innerText = `X: ${robot.x.toFixed(1)} | Y: ${robot.y.toFixed(1)}`;
+    });
+
+    function draw() {
+        canvas.width = canvas.parentElement.clientWidth;
+        canvas.height = canvas.parentElement.clientHeight;
+        ctx.clearRect(0,0,canvas.width, canvas.height);
+        
+        // Robot markeri
+        ctx.save();
+        ctx.translate(canvas.width/2, canvas.height/2);
+        ctx.rotate(robot.th * Math.PI/180);
+        ctx.fillStyle = "#00f2ff";
+        ctx.beginPath(); ctx.moveTo(15,0); ctx.lineTo(-10,-10); ctx.lineTo(-10,10); ctx.fill();
+        ctx.restore();
+        
+        requestAnimationFrame(draw);
+    }
+    draw();
+</script>
 </body>
 </html>
