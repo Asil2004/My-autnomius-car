@@ -2,93 +2,90 @@
 <html lang="uz">
 <head>
     <meta charset="UTF-8">
-    <title>ASTRA-OS v2.0</title>
+    <title>ASTRA-OS v2.0 | LIDAR READY</title>
     <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=JetBrains+Mono&display=swap" rel="stylesheet">
     <style>
-        :root { --neon: #00f2ff; --bg: #02060a; --panel: rgba(10, 20, 30, 0.9); }
-        body { background: var(--bg); color: #fff; font-family: 'JetBrains Mono', monospace; display: grid; grid-template-columns: 300px 1fr; height: 100vh; margin: 0; }
-        
-        .sidebar { background: var(--panel); padding: 20px; border-right: 1px solid var(--neon); display: flex; flex-direction: column; gap: 20px; }
-        h1 { font-family: 'Orbitron'; color: var(--neon); font-size: 18px; letter-spacing: 3px; }
-        
-        .viewport { position: relative; overflow: hidden; background: radial-gradient(circle, #102030 1px, transparent 1px); background-size: 40px 40px; }
+        :root { --neon: #00f2ff; --bg: #02060a; }
+        body { background: var(--bg); color: #fff; margin: 0; display: grid; grid-template-columns: 280px 1fr; height: 100vh; font-family: 'Courier New', monospace; }
+        .sidebar { padding: 20px; border-right: 1px solid var(--neon); background: rgba(10,20,30,0.9); }
+        .viewport { position: relative; cursor: crosshair; background: radial-gradient(circle, #102030 1px, transparent 1px); background-size: 30px 30px; }
         canvas { width: 100%; height: 100%; }
-
-        .btn { background: rgba(0, 242, 255, 0.1); border: 1px solid var(--neon); color: var(--neon); padding: 12px; cursor: pointer; transition: 0.3s; font-family: 'Orbitron'; }
-        .btn:hover { background: var(--neon); color: #000; box-shadow: 0 0 15px var(--neon); }
-        .btn.active { background: #00ff88; border-color: #00ff88; color: #000; }
-
-        .stat-box { border-left: 3px solid var(--neon); padding-left: 10px; margin-bottom: 10px; }
-        .label { font-size: 10px; color: #5a7a8a; }
+        .btn { width: 100%; padding: 10px; margin: 5px 0; background: none; border: 1px solid var(--neon); color: var(--neon); cursor: pointer; }
+        .btn:hover { background: var(--neon); color: #000; }
     </style>
 </head>
 <body>
 
 <div class="sidebar">
-    <h1>ASTRA-OS</h1>
-    <div class="stat-box">
-        <div class="label">COORDINATES</div>
-        <div id="pos-info">X: 0.0 | Y: 0.0</div>
+    <h2 style="color:var(--neon)">ASTRA-OS</h2>
+    <div id="stats">X: 0 | Y: 0 | θ: 0°</div>
+    <hr style="border-color: #1a3a4a">
+    <button class="btn" onmousedown="send('forward')" onmouseup="send('stop')">OLDINGA (W)</button>
+    <div style="display: flex; gap: 5px;">
+        <button class="btn" onmousedown="send('left')" onmouseup="send('stop')">CHAP (A)</button>
+        <button class="btn" onmousedown="send('right')" onmouseup="send('stop')">O'NG (D)</button>
     </div>
-    
-    <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-        <button class="btn active" id="m0" onclick="setMode(0)">MANUAL</button>
-        <button class="btn" id="m1" onclick="setMode(1)">AUTO</button>
-    </div>
-
-    <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap: 5px;">
-        <div></div><button class="btn" onmousedown="send('forward')" onmouseup="send('stop')">W</button><div></div>
-        <button class="btn" onmousedown="send('left')" onmouseup="send('stop')">A</button>
-        <button class="btn" onmousedown="send('back')" onmouseup="send('stop')">S</button>
-        <button class="btn" onmousedown="send('right')" onmouseup="send('stop')">D</button>
-    </div>
-    <button class="btn" style="border-color: #ff4d6d; color: #ff4d6d;" onclick="db.ref('/robot/lidar_map').set(null)">PURGE MAP</button>
+    <button class="btn" onclick="clearMap()">XARITANI TOZALASH</button>
 </div>
 
-<div class="viewport" id="v">
-    <canvas id="c"></canvas>
+<div class="viewport">
+    <canvas id="lidarCanvas"></canvas>
 </div>
 
 <script>
-    const firebaseConfig = {
+    const config = {
         apiKey: "AIzaSyAGk2Ulw2sR5GMgKmrbKn6n-Eema0Advv4",
-        databaseURL: "https://myautonomousrobot-default-rtdb.firebaseio.com",
-        projectId: "myautonomousrobot"
+        databaseURL: "https://myautonomousrobot-default-rtdb.firebaseio.com"
     };
-    firebase.initializeApp(firebaseConfig);
+    firebase.initializeApp(config);
     const db = firebase.database();
 
-    const canvas = document.getElementById('c');
+    const canvas = document.getElementById('lidarCanvas');
     const ctx = canvas.getContext('2d');
     let robot = { x:0, y:0, th:0 };
+    let points = [];
 
     function send(c) { db.ref('/robot/command').set(c); }
-    function setMode(m) { 
-        db.ref('/robot/mode').set(m); 
-        document.getElementById('m0').className = m==0 ? 'btn active' : 'btn';
-        document.getElementById('m1').className = m==1 ? 'btn active' : 'btn';
-    }
+    function clearMap() { points = []; db.ref('/robot/lidar_stream').remove(); }
 
+    // Robot statusini yangilash
     db.ref('/robot/status').on('value', s => {
         robot = s.val();
-        document.getElementById('pos-info').innerText = `X: ${robot.x.toFixed(1)} | Y: ${robot.y.toFixed(1)}`;
+        document.getElementById('stats').innerText = `X: ${robot.x.toFixed(1)} | Y: ${robot.y.toFixed(1)} | ${robot.th.toFixed(0)}°`;
+    });
+
+    // Lidar nuqtalarini qabul qilish
+    db.ref('/robot/lidar_stream').limitToLast(20).on('child_added', s => {
+        const p = s.val();
+        // Global koordinataga o'tkazish
+        const angle = (p.a + robot.th) * Math.PI / 180;
+        const lx = robot.x + Math.cos(angle) * (p.d / 10);
+        const ly = robot.y + Math.sin(angle) * (p.d / 10);
+        points.push({x: lx, y: ly});
+        if(points.length > 2000) points.shift();
     });
 
     function draw() {
-        canvas.width = canvas.parentElement.clientWidth;
-        canvas.height = canvas.parentElement.clientHeight;
-        ctx.clearRect(0,0,canvas.width, canvas.height);
-        
+        canvas.width = canvas.offsetWidth;
+        canvas.height = canvas.offsetHeight;
+        const cx = canvas.width/2;
+        const cy = canvas.height/2;
+
+        // Nuqtalarni chizish
+        ctx.fillStyle = "#00ff88";
+        points.forEach(p => {
+            ctx.fillRect(cx + p.x - robot.x, cy + p.y - robot.y, 2, 2);
+        });
+
         // Robot markeri
         ctx.save();
-        ctx.translate(canvas.width/2, canvas.height/2);
+        ctx.translate(cx, cy);
         ctx.rotate(robot.th * Math.PI/180);
-        ctx.fillStyle = "#00f2ff";
-        ctx.beginPath(); ctx.moveTo(15,0); ctx.lineTo(-10,-10); ctx.lineTo(-10,10); ctx.fill();
+        ctx.fillStyle = "#ff4d6d";
+        ctx.beginPath(); ctx.moveTo(12,0); ctx.lineTo(-8,-7); ctx.lineTo(-8,7); ctx.fill();
         ctx.restore();
-        
+
         requestAnimationFrame(draw);
     }
     draw();
