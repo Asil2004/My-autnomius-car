@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QALQON v1.0 — Shahar Patrul va Xavfsizlik Jonli Simulyatori</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #080c10;
+    color: #e0f0ff;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    overflow: hidden;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    background: rgba(10, 18, 26, 0.95);
+    padding: 10px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 2px solid #00e5ff;
+    z-index: 10;
+  }
+  .title-block { display: flex; align-items: center; gap: 12px; }
+  .badge {
+    background: #00e5ff;
+    color: #050a0e;
+    font-weight: 800;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 13px;
+    letter-spacing: 1px;
+  }
+  h1 { font-size: 18px; font-weight: 700; color: #fff; letter-spacing: 0.5px; }
+  .status-tag {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: #00ff88;
+    background: rgba(0, 255, 136, 0.1);
+    padding: 5px 12px;
+    border-radius: 20px;
+    border: 1px solid rgba(0, 255, 136, 0.3);
+  }
+  .pulse-dot {
+    width: 8px;
+    height: 8px;
+    background: #00ff88;
+    border-radius: 50%;
+    animation: blink 1s infinite alternate;
+  }
+  @keyframes blink { from { opacity: 0.3; } to { opacity: 1; } }
+
+  #main-viewport {
+    flex: 1;
+    position: relative;
+    background: #06090e;
+  }
+  canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  /* HUD Overlays */
+  .hud-panel {
+    position: absolute;
+    background: rgba(8, 14, 22, 0.85);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(0, 229, 255, 0.3);
+    border-radius: 8px;
+    padding: 12px 16px;
+    pointer-events: auto;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  }
+  .hud-top-left { top: 15px; left: 15px; width: 240px; }
+  .hud-top-right { top: 15px; right: 15px; width: 260px; }
+  .hud-bottom-controls {
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    padding: 8px 16px;
+  }
+
+  .hud-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #8da4b8;
+    margin-bottom: 6px;
+  }
+  .telemetry-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    margin-bottom: 4px;
+    font-family: monospace;
+  }
+  .telemetry-val { color: #00e5ff; font-weight: bold; }
+
+  /* Buttons */
+  button {
+    background: #12202e;
+    color: #00e5ff;
+    border: 1px solid #00e5ff;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  button:hover {
+    background: #00e5ff;
+    color: #050a0e;
+    box-shadow: 0 0 12px rgba(0, 229, 255, 0.5);
+  }
+  button.active {
+    background: #ff0055;
+    border-color: #ff0055;
+    color: #fff;
+    box-shadow: 0 0 15px rgba(255, 0, 85, 0.6);
+  }
+  .btn-sos {
+    background: #b00;
+    border-color: #ff3333;
+    color: #fff;
+  }
+  .btn-sos:hover {
+    background: #ff1111;
+    box-shadow: 0 0 15px rgba(255, 50, 50, 0.8);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="title-block">
+    <span class="badge">IIV PATRUL</span>
+    <h1>QALQON v1.0 — Shahar Ko'chasida Xavfsizlik Nazorati</h1>
+  </div>
+  <div class="status-tag">
+    <div class="pulse-dot"></div>
+    <span>AVTONOM PATRUL: FAOL</span>
+  </div>
+</header>
+
+<div id="main-viewport">
+  <canvas id="patrolCanvas"></canvas>
+
+  <!-- Telemetry HUD -->
+  <div class="hud-panel hud-top-left">
+    <div class="hud-title">📡 Robot Telemetriyasi</div>
+    <div class="telemetry-row"><span>Tezlik:</span><span class="telemetry-val" id="speedVal">0.8 m/s</span></div>
+    <div class="telemetry-row"><span>Minora:</span><span class="telemetry-val" id="mastVal">Ochiq (+180mm)</span></div>
+    <div class="telemetry-row"><span>LiDAR Skaner:</span><span class="telemetry-val" style="color:#00ff88;">360° Aktiv</span></div>
+    <div class="telemetry-row"><span>Piyodalar:</span><span class="telemetry-val" id="pedCountVal">4 kishi</span></div>
+    <div class="telemetry-row"><span>Stroboskop:</span><span class="telemetry-val" id="strobeVal" style="color:#ff3355;">FAOL</span></div>
+  </div>
+
+  <!-- Mini Vision HUD -->
+  <div class="hud-panel hud-top-right">
+    <div class="hud-title">👁️ Old Planshet & AI Ko'zlar</div>
+    <div style="background:#030609; border:1px solid #1a3045; border-radius:4px; height:85px; display:flex; flex-direction:column; align-items:center; justify-content:center; position:relative; overflow:hidden;">
+      <div id="aiEyes" style="display:flex; gap:25px;">
+        <div style="width:28px; height:18px; border:2px solid #00e5ff; border-radius:10px 10px 2px 2px; box-shadow:0 0 10px #00e5ff;"></div>
+        <div style="width:28px; height:18px; border:2px solid #00e5ff; border-radius:10px 10px 2px 2px; box-shadow:0 0 10px #00e5ff;"></div>
+      </div>
+      <div style="font-size:10px; color:#ff4466; margin-top:10px; font-weight:bold; letter-spacing:1px;">🆘 102 TEZKOR YORDAM</div>
+    </div>
+    <div style="font-size:11px; color:#8da4b8; margin-top:8px; text-align:center;">
+      Odamlar bilan audio/vizual aloqa tayyor
+    </div>
+  </div>
+
+  <!-- Bottom Controls -->
+  <div class="hud-panel hud-bottom-controls">
+    <button id="btnStrobe" class="active" onclick="toggleStrobe()">🚨 Miqalka & Sirena</button>
+    <button id="btnMast" onclick="toggleMast()">🔭 Minora: Ko'tarish/Tushirish</button>
+    <button id="btnPed" onclick="addPedestrian()">🚶 Piyoda Chiqsin</button>
+    <button class="btn-sos" onclick="triggerSOS()">🆘 102 Chaqiruvi</button>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('patrolCanvas');
+const ctx = canvas.getContext('2d');
+
+let width, height;
+function resize() {
+  width = canvas.width = window.innerWidth;
+  height = canvas.height = window.innerHeight - 50;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// Simulation State
+let robotX = 150;
+let robotSpeed = 1.2;
+let mastHeight = 1.0; // 1.0 = fully extended, 0.0 = retracted
+let mastTarget = 1.0;
+let strobeActive = true;
+let strobeTimer = 0;
+let lidarAngle = 0;
+let sosTriggered = false;
+
+// Pedestrians on the sidewalk
+let pedestrians = [
+  { x: 450, y: 0, speed: -0.4, label: "Piyoda (Oila)", color: "#4db8ff" },
+  { x: 750, y: 0, speed: -0.6, label: "Piyoda (Yoshlar)", color: "#ffcc66" },
+  { x: 1100, y: 0, speed: 0.3, label: "Sayr qiluvchi", color: "#66ffaa" }
+];
+
+function toggleStrobe() {
+  strobeActive = !strobeActive;
+  document.getElementById('btnStrobe').classList.toggle('active', strobeActive);
+  document.getElementById('strobeVal').textContent = strobeActive ? "FAOL" : "O'CHIQ";
+  document.getElementById('strobeVal').style.color = strobeActive ? "#ff3355" : "#777";
+}
+
+function toggleMast() {
+  mastTarget = (mastTarget === 1.0) ? 0.0 : 1.0;
+  document.getElementById('mastVal').textContent = (mastTarget === 1.0) ? "Ko'tarilmoqda..." : "Yopilmoqda...";
+}
+
+function addPedestrian() {
+  pedestrians.push({
+    x: width + 50,
+    y: 0,
+    speed: -0.5 - Math.random() * 0.4,
+    label: "Yangi Fuqaro",
+    color: "#ff88dd"
+  });
+  document.getElementById('pedCountVal').textContent = pedestrians.length + " kishi";
+}
+
+function triggerSOS() {
+  sosTriggered = true;
+  strobeActive = true;
+  document.getElementById('btnStrobe').classList.add('active');
+  alert("🚨 102 NAVBATCHILIK QISMI BILAN ALOQA O'RNATILDI!\nRobot audio-kamera orqali voqea joyini to'g'ridan-to'g'ri IIV boshqaruv markaziga uzatmoqda.");
+  setTimeout(() => { sosTriggered = false; }, 4000);
+}
+
+// Main 60FPS Render Loop
+function animate() {
+  ctx.clearRect(0, 0, width, height);
+
+  const horizonY = height * 0.45;
+  const groundY = height * 0.55;
+
+  // 1. Shom osmoni (Evening city twilight gradient)
+  const skyGrad = ctx.createLinearGradient(0, 0, 0, groundY);
+  skyGrad.addColorStop(0, '#04070d');
+  skyGrad.addColorStop(0.7, '#0d1828');
+  skyGrad.addColorStop(1, '#1b2d42');
+  ctx.fillStyle = skyGrad;
+  ctx.fillRect(0, 0, width, groundY);
+
+  // Shahar binolari silueti va chiroqlari (Background Skyline)
+  ctx.fillStyle = '#08101a';
+  for (let i = 0; i < width; i += 70) {
+    const bHeight = 40 + Math.sin(i * 12.3) * 35;
+    ctx.fillRect(i, groundY - bHeight, 60, bHeight);
+    // Kichik deraza chiroqlari
+    ctx.fillStyle = (i % 3 === 0) ? '#ffcc77' : '#5588aa';
+    ctx.fillRect(i + 15, groundY - bHeight + 10, 6, 6);
+    ctx.fillRect(i + 35, groundY - bHeight + 20, 6, 6);
+    ctx.fillStyle = '#08101a';
+  }
+
+  // Fon daraxtlari va xiyobon chiroqlari
+  for (let i = 50; i < width; i += 220) {
+    // Chiroq ustuni
+    ctx.strokeStyle = '#445566';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(i, groundY);
+    ctx.lineTo(i, groundY - 80);
+    ctx.stroke();
+    // Chiroq nuri
+    ctx.fillStyle = 'rgba(255, 230, 160, 0.8)';
+    ctx.beginPath();
+    ctx.arc(i, groundY - 80, 5, 0, Math.PI * 2);
+    ctx.fill();
+    // Yerga tushgan yorug'lik g'ubori
+    const lampGlow = ctx.createRadialGradient(i, groundY, 5, i, groundY, 80);
+    lampGlow.addColorStop(0, 'rgba(255, 220, 140, 0.25)');
+    lampGlow.addColorStop(1, 'transparent');
+    ctx.fillStyle = lampGlow;
+    ctx.beginPath();
+    ctx.arc(i, groundY, 80, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 2. Piyodalar yo'lagi (Modern paved walkway / sidewalk)
+  const groundGrad = ctx.createLinearGradient(0, groundY, 0, height);
+  groundGrad.addColorStop(0, '#1a222c');
+  groundGrad.addColorStop(0.3, '#141c24');
+  groundGrad.addColorStop(1, '#0e141a');
+  ctx.fillStyle = groundGrad;
+  ctx.fillRect(0, groundY, width, height - groundY);
+
+  // Yo'lka plitkalari chiziqlari (Pavement perspective grid)
+  ctx.strokeStyle = 'rgba(40, 60, 80, 0.4)';
+  ctx.lineWidth = 1;
+  for (let x = -width; x < width * 2; x += 60) {
+    ctx.beginPath();
+    ctx.moveTo(x + (robotX * 0.2 % 60), groundY);
+    ctx.lineTo(x * 1.5 + (robotX * 0.4 % 60), height);
+    ctx.stroke();
+  }
+  for (let y = groundY; y < height; y += 35) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(width, y);
+    ctx.stroke();
+  }
+
+  // 3. Piyodalar harakati (Pedestrians in background)
+  pedestrians.forEach(ped => {
+    ped.x += ped.speed;
+    if (ped.x < -60) ped.x = width + 50;
+
+    const py = groundY + 20;
+    // Tana
+    ctx.fillStyle = ped.color;
+    ctx.beginPath();
+    ctx.arc(ped.x, py - 35, 7, 0, Math.PI * 2); // Bosh
+    ctx.fill();
+    ctx.fillRect(ped.x - 5, py - 27, 10, 20); // Tana
+    ctx.strokeStyle = ped.color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(ped.x - 3, py - 7);
+    ctx.lineTo(ped.x - 5 + Math.sin(ped.x * 0.1) * 6, py + 8); // Oyoq 1
+    ctx.moveTo(ped.x + 3, py - 7);
+    ctx.lineTo(ped.x + 5 - Math.sin(ped.x * 0.1) * 6, py + 8); // Oyoq 2
+    ctx.stroke();
+
+    // AI Detection Box
+    ctx.strokeStyle = 'rgba(0, 229, 255, 0.6)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(ped.x - 14, py - 46, 28, 56);
+    ctx.fillStyle = '#00e5ff';
+    ctx.font = '10px monospace';
+    ctx.fillText(ped.label, ped.x - 18, py - 50);
+  });
+
+  // 4. Robot Harakati va Fizikasi
+  robotX += robotSpeed;
+  if (robotX > width - 250) robotSpeed = -Math.abs(robotSpeed);
+  if (robotX < 120) robotSpeed = Math.abs(robotSpeed);
+
+  // Mast lerp
+  mastHeight += (mastTarget - mastHeight) * 0.05;
+  if (Math.abs(mastTarget - mastHeight) < 0.02) {
+    document.getElementById('mastVal').textContent = (mastTarget === 1.0) ? "Ochiq (+180mm)" : "Yopiq (Silliq)";
+  }
+
+  const rx = robotX;
+  const ry = groundY + 90;
+
+  // Stroboskop chaqnashi va yorug'lik g'ubori (Red/Blue Strobe Lighting)
+  strobeTimer += 0.15;
+  if (strobeActive) {
+    const isRed = Math.sin(strobeTimer * 3) > 0;
+    const strobeColor = isRed ? 'rgba(255, 20, 50, 0.28)' : 'rgba(0, 130, 255, 0.28)';
+    const groundGlow = ctx.createRadialGradient(rx, ry - 30, 20, rx, ry - 30, 220);
+    groundGlow.addColorStop(0, strobeColor);
+    groundGlow.addColorStop(1, 'transparent');
+    ctx.fillStyle = groundGlow;
+    ctx.beginPath();
+    ctx.arc(rx, ry - 30, 220, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // LiDAR 360° skaner nurlari (Laser Point Cloud sweep)
+  if (mastHeight > 0.4) {
+    lidarAngle += 0.08;
+    ctx.save();
+    ctx.translate(rx, ry - 110 - (mastHeight * 45));
+    ctx.strokeStyle = 'rgba(0, 255, 136, 0.45)';
+    ctx.lineWidth = 1.5;
+    for (let a = 0; a < Math.PI * 2; a += Math.PI / 4) {
+      const beamX = Math.cos(lidarAngle + a) * 140;
+      const beamY = Math.sin(lidarAngle + a) * 40;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(beamX, beamY);
+      ctx.stroke();
+      ctx.fillStyle = '#00ff88';
+      ctx.beginPath();
+      ctx.arc(beamX, beamY, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // 4 ta Oddiy Rezina Shinalar (Underneath Dome)
+  ctx.fillStyle = '#11161c';
+  ctx.strokeStyle = '#25303d';
+  ctx.lineWidth = 3;
+  // Orqa chap va o'ng shina
+  ctx.fillRect(rx - 70, ry + 10, 26, 32);
+  ctx.fillRect(rx + 44, ry + 10, 26, 32);
+  // Protektor naqshlari
+  ctx.fillStyle = '#000';
+  ctx.fillRect(rx - 68, ry + 15, 22, 4);
+  ctx.fillRect(rx - 68, ry + 25, 22, 4);
+  ctx.fillRect(rx + 46, ry + 15, 22, 4);
+  ctx.fillRect(rx + 46, ry + 25, 22, 4);
+
+  // KATTA SFERA (DOMINANT 500 mm HEMISPHERE DOME)
+  const domeGrad = ctx.createRadialGradient(rx - 25, ry - 65, 10, rx, ry - 40, 95);
+  domeGrad.addColorStop(0, '#ffffff');
+  domeGrad.addColorStop(0.7, '#d8e4f0');
+  domeGrad.addColorStop(1, '#9cb0c4');
+  ctx.fillStyle = domeGrad;
+  ctx.beginPath();
+  ctx.arc(rx, ry - 15, 85, Math.PI, 0, false); // Katta yarim shar
+  ctx.fill();
+  ctx.strokeStyle = '#5a738a';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Politsiya ko'k chiziqlari va "POLICE" yozuvi
+  ctx.fillStyle = '#0b2a59';
+  ctx.beginPath();
+  ctx.arc(rx, ry - 15, 84, Math.PI + 0.5, Math.PI + 1.2, false);
+  ctx.lineWidth = 14;
+  ctx.strokeStyle = '#0b2a59';
+  ctx.stroke();
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 11px sans-serif';
+  ctx.fillText("POLICE", rx - 20, ry - 45);
+
+  // Old Interaktiv Planshet (65° tilted AI Face Screen)
+  ctx.fillStyle = '#050a0e';
+  ctx.fillRect(rx - 32, ry - 25, 64, 38);
+  ctx.strokeStyle = '#00e5ff';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(rx - 32, ry - 25, 64, 38);
+
+  // Planshetdagi kiber-ko'zlar
+  ctx.fillStyle = '#00e5ff';
+  ctx.shadowColor = '#00e5ff';
+  ctx.shadowBlur = 6;
+  ctx.fillRect(rx - 20, ry - 17, 12, 7);
+  ctx.fillRect(rx + 8, ry - 17, 12, 7);
+  ctx.shadowBlur = 0;
+
+  // Planshetdagi 102 SOS yozuvi
+  ctx.fillStyle = '#ff2255';
+  ctx.font = 'bold 8px sans-serif';
+  ctx.fillText("SOS 102", rx - 16, ry + 5);
+
+  // TELESKOPIK MINORA (RETRACTABLE MAST)
+  if (mastHeight > 0.05) {
+    const mastY = ry - 100 - (mastHeight * 40);
+
+    // Xromlangan ko'tariluvchi val
+    ctx.fillStyle = '#7a8e9e';
+    ctx.fillRect(rx - 8, mastY + 12, 16, (ry - 100) - mastY);
+
+    // Qizil/Ko'k Stroboskop Halqasi
+    const isRed = Math.sin(strobeTimer * 4) > 0;
+    ctx.fillStyle = (strobeActive && isRed) ? '#ff0033' : '#112244';
+    ctx.fillRect(rx - 24, mastY - 4, 22, 10);
+    ctx.fillStyle = (strobeActive && !isRed) ? '#0066ff' : '#441122';
+    ctx.fillRect(rx + 2, mastY - 4, 22, 10);
+
+    // 360° PTZ Kamera Gumbazi
+    ctx.fillStyle = '#111822';
+    ctx.beginPath();
+    ctx.arc(rx, mastY - 12, 14, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#00e5ff';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // 360° LD19 LiDAR Skaner (Tepasida)
+    ctx.fillStyle = '#05070a';
+    ctx.fillRect(rx - 12, mastY - 26, 24, 11);
+    ctx.fillStyle = '#ff2200';
+    ctx.fillRect(rx - 8, mastY - 22, 16, 3); // Lazer darchasi
+
+    // Ko'tarilgan lyuk qopqog'i
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.ellipse(rx, mastY - 28, 22, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  requestAnimationFrame(animate);
+}
+
+animate();
+</script>
+</body>
+</html>

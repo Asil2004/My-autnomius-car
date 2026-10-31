@@ -11,6 +11,11 @@
 
 Jamoamiz tomonidan tasdiqlangan bosh model: **QALQON v1.0 Police Patrol Robot Prototype**
 
+![Qalqon v1.0 Shahar Ko'chasida Xavfsizlikni Saqlash Jarayoni](docs/images/qalqon_patrol_street_action.jpg)
+*QALQON v1.0: Toshkent shahar piyodalar xiyobonida jamoat xavfsizligini ta'minlash, fuqarolarni himoya qilish va favqulodda vaziyatlarni nazorat qilish jarayoni (Teleskopik minora, LiDAR va stroboskoplar faol holatda).*
+
+<br>
+
 ![Qalqon v1.0 Katta Hajmli Sfera va Oddiy Shinalar](docs/images/qalqon_v1_large_dome_primary.jpg)
 *3D CAD Modeli (Yangilangan): Katta hajmli dominant yarim shar gumbaz, uning ostida mutanosib joylashgan oddiy rezina shinalar va ochilgan teleskopik sensor minorasi.*
 *3D CAD Modeli: 500 mm monolit yarim shar, 4WD oddiy chuqur protektorli rezina shinalar va ochilgan teleskopik minora.*
@@ -102,6 +107,10 @@ graph TD
 ---
 
 ## 📋 Amalga Oshirilgan Ishlar Hisoboti (Changelog)
+
+### [2026-10-31 — Yangilanish 6]: Shahar Ko'chasida Patrul Jarayoni Vizualizatsiyasi va Simulyator
+* ✅ **Amaliy ko'cha sahnasi tasdiqlandi:** Robotning shahar piyodalar xiyobonida tinch fuqarolar orasida xavfsizlikni saqlash, teleskopik minorani ko'tarib 360° LiDAR va stroboskop orqali patrullik qilish jarayoni vizual tasvirga tushirildi.
+* ✅ **Interaktiv video-simulyator qo'shildi:** [qalqon_street_patrol_simulator.html](qalqon_street_patrol_simulator.html) orqali robotning ko'chada harakatlanishi, piyodalarni tanishi va 102 SOS chaqiruvlari jonli 60 FPS simulyatsiya qilindi.
 
 ### [2026-10-31 — Yangilanish 5]: Sfera (Gumbaz) Hajmi Kattalashtirildi
 * ✅ **Proporsiyalar to'g'rilandi:** Sfera qismi kattalashtirilib, butun robot korpusida asosiy dominant hajmga keltirildi. 
