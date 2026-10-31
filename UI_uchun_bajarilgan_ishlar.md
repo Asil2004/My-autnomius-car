@@ -84,3 +84,26 @@ AI ning odatiy va zerikarli ko'k-binafsharang "neyro slop" gradientlari chetga s
 3. **Kollobratorlik Ruxsati va Push**:
    * Taklifnoma tasdiqlangach, `git push origin main` muvaffaqiyatli bajarildi.
    * **Commit kodi**: `24cc868` (*feat: Add tactical cyber-HUD frontend & Android APK control center for QALQON*).
+
+
+---
+
+## 6-BOSQICH: Robot Displeyi Gorizontal Rejimi & 3D `result.glb` Oyna Ortidagi Odam Integratsiyasi
+
+1. **Gorizontal (Landscape) Orientatsiya**:
+   * Dastur robot minorasining 8.7" planshet ekrani uchun to'liq gorizontal (landscape) rejimga o'tkazildi.
+   * `AndroidManifest.xml` da `android:screenOrientation="sensorLandscape"` o'rnatildi.
+2. **Oyna Ortida Turgan 3D Odam (`result.glb`) Bosh Sahifasi**:
+   * Three.js (`three` va `GLTFLoader`) orqali `result.glb` 3D modeli yuklandi.
+   * Minora ichidagi kiber-yorug'lik (police cyan rim light, blue/red ambient) va 4 mm bronlangan Lexan oynasi effekti (glare, scanlines, zirhli burchaklar) qo'shildi.
+   * **Jonli Sergak Harakat**: Model bir o'ngga, bir chapga silliq qarab (`targetLookAngle` sinusoidal ritmi), vaziyatni sergak kuzatayotgandek animatsiya qilindi.
+   * Ekran pastida fuqarolar uchun tezkor **SOS 102** tugmasi, sana/vaqt va jamoat xavfsizligi statusi joylashtirildi.
+3. **Xavfsiz Operator Kirish Tizimi (PIN/Parol)**:
+   * Ekran yuqori o'ng chetida "OPERATOR KIRISH" taktik tugmasi o'rnatildi.
+   * Bosilganda zamonaviy `OperatorAuthModal` ochiladi (Login: `operator`, Parol: `102`).
+   * Touchscreen planshetlar uchun qulay raqamli sensor numpad bilan jihozlandi.
+   * To'g'ri kiritilgach, to'liq Operator Boshqaruv Markazi ochiladi.
+   * Operator markazida "YUZ EKRANI" tugmasi orqali istalgan vaqtda qayta 3D yuz rejimiga qulflanish imkoniyati yaratildi.
+4. **Android APK Yangilanishi va Qurilmaga O'rnatilishi**:
+   * Yangi gorizontal va 3D modifikatsiyalangan versiya `gradlew.bat assembleDebug` orqali yig'ildi.
+   * Ulangan Xiaomi / Redmi Note 11 Pro qurilmasiga to'g'ridan-to'g'ri yangilanib o'rnatildi va ishga tushirildi.

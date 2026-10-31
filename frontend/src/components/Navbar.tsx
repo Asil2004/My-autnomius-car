@@ -9,10 +9,16 @@ import {
   Siren,
   BatteryCharging,
   BatteryMedium,
-  OctagonAlert
+  OctagonAlert,
+  LogOut
 } from 'lucide-react';
+import { tacticalAudio } from '../services/audioService';
 
-export const Navbar: React.FC = () => {
+interface NavbarProps {
+  onLockScreen?: () => void;
+}
+
+export const Navbar: React.FC<NavbarProps> = ({ onLockScreen }) => {
   const {
     battery,
     system,
@@ -46,7 +52,7 @@ export const Navbar: React.FC = () => {
           </div>
           <div className="text-[11px] font-mono text-tactical-500 flex items-center space-x-1.5">
             <Radio className="w-3 h-3 text-emerald-400" />
-            <span className="text-emerald-400">FAOL PATRUL</span>
+            <span className="text-emerald-400">OPERATOR PANEL</span>
             <span>•</span>
             <span>{system.pingMs}ms</span>
           </div>
@@ -70,7 +76,7 @@ export const Navbar: React.FC = () => {
         />
       </div>
 
-      {/* Right Controls: Battery, Sound, Strobe & Emergency Stop */}
+      {/* Right Controls: Battery, Sound, Strobe & Emergency Stop & Lock to Face */}
       <div className="flex items-center space-x-2">
         {/* LiFePO4 Battery */}
         <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded bg-tactical-900 border border-tactical-700/60 font-mono text-xs">
@@ -131,6 +137,21 @@ export const Navbar: React.FC = () => {
           <OctagonAlert className="w-4 h-4" />
           <span className="hidden sm:inline">E-STOP</span>
         </button>
+
+        {/* Lock Screen / Return to 3D Robot Face View */}
+        {onLockScreen && (
+          <button
+            onClick={() => {
+              tacticalAudio.playClick();
+              onLockScreen();
+            }}
+            title="Patrul Yuz Ekraniga Qaytish (Qulflash)"
+            className="px-2.5 py-1.5 rounded bg-police-blue/20 hover:bg-police-blue/40 border border-police-cyan/60 text-police-cyan font-mono text-xs flex items-center space-x-1 transition-all"
+          >
+            <LogOut className="w-4 h-4" />
+            <span className="hidden md:inline">YUZ EKRANI</span>
+          </button>
+        )}
       </div>
     </header>
   );
