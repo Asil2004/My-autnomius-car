@@ -107,3 +107,23 @@ AI ning odatiy va zerikarli ko'k-binafsharang "neyro slop" gradientlari chetga s
 4. **Android APK Yangilanishi va Qurilmaga O'rnatilishi**:
    * Yangi gorizontal va 3D modifikatsiyalangan versiya `gradlew.bat assembleDebug` orqali yig'ildi.
    * Ulangan Xiaomi / Redmi Note 11 Pro qurilmasiga to'g'ridan-to'g'ri yangilanib o'rnatildi va ishga tushirildi.
+
+
+---
+
+## 7-BOSQICH: Minimalist Och Yashil Fon, 3D Modelni Yarqiratish va Ekrandagi Ortiqcha Elementlarni Tozalash
+
+1. **Bosh Sahifani Tozalash (Distraction-Free Face Mode)**:
+   * Ekrandagi barcha chalg'ituvchi yozuvlar, ma'lumot vidjetlari (soat, sana, sektor, batareya holati) va ulkan SOS tugmalari to'liq olib tashlandi.
+   * Ekran toza va estetik holatga keltirildi.
+   * Faqat burchakda sezilar-sezilmas, ixcham va minimalist qulf tugmasi qoldirildi (operator bosib PIN/parol bilan boshqaruv paneliga o'tishi uchun).
+2. **Och Yashil Fon (Soft Pastel Light Green)**:
+   * HTML konteyner va Three.js sahnasi foni chiroyli och yashil rangga (`#D7F5DC`) o'tkazildi.
+   * Tuman (fog) rangi ham och yashil qilib sozlandi.
+3. **3D Modelni Yarqiraydigan (Glossy/Metallic/Specular) Qilish**:
+   * Materiallar yaltiroq va silliq parametrlar bilan yangilandi (`roughness = 0.12`, `metalness = 0.55`).
+   * Zümrad va sian rangdagi kuchli yon yorug'liklar (Rim Lights, intensity 4.5), asosiy tepa quyosh nuri (intensity 3.2) va orqa soch/yelka jilosi qo'shildi.
+   * Natijada 3D model och yashil fonda yaltiroq, yarqiragan va jozibador ko'rinishga ega bo'ldi.
+4. **Android APK Yangilanishi va Telefonga Qayta O'rnatilishi**:
+   * Yangilangan kodlar asosida yangi APK kompilyatsiya qilindi (`qalqon-patrol-v1.0.apk`).
+   * Ulangan Xiaomi / Redmi qurilmasiga to'g'ridan-to'g'ri o'rnatildi va ishga tushirildi.
