@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QALQON v1.0 — Kinematik Patrul Video Taqdimoti</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    @keyframes strobeRed {
+      0%, 100% { opacity: 0.1; filter: drop-shadow(0 0 0px red); }
+      50% { opacity: 1; filter: drop-shadow(0 0 35px #ff0033); }
+    }
+    @keyframes strobeBlue {
+      0%, 100% { opacity: 1; filter: drop-shadow(0 0 35px #0088ff); }
+      50% { opacity: 0.1; filter: drop-shadow(0 0 0px blue); }
+    }
+    @keyframes scanline {
+      0% { transform: translateY(-100%); }
+      100% { transform: translateY(1000%); }
+    }
+    @keyframes pulseGlow {
+      0%, 100% { transform: scale(1); opacity: 0.8; }
+      50% { transform: scale(1.05); opacity: 1; }
+    }
+    .strobe-r { animation: strobeRed 0.4s infinite; }
+    .strobe-b { animation: strobeBlue 0.4s infinite; }
+    .hud-glow { text-shadow: 0 0 10px #00e5ff, 0 0 20px rgba(0,229,255,0.4); }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col items-center justify-center p-3 select-none font-sans">
+
+  <!-- Asosiy Video Konteyneri (16:9 Cinematic Player) -->
+  <div class="w-full max-w-5xl bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden relative flex flex-col">
+    
+    <!-- Yuqori Holat Paneli -->
+    <div class="px-5 py-3 bg-slate-950/90 border-b border-slate-800 flex items-center justify-between z-20">
+      <div class="flex items-center gap-3">
+        <span class="w-3 h-3 rounded-full bg-red-500 animate-ping"></span>
+        <span class="font-bold tracking-wider text-sm text-cyan-400 font-mono">QALQON v1.0 // AUTONOMOUS PATROL CINEMATIC</span>
+      </div>
+      <div class="flex items-center gap-4 text-xs font-mono text-slate-400">
+        <span id="telemetryStatus" class="text-emerald-400 font-semibold">TIZIM: NORMAL PATRUL</span>
+        <span class="hidden sm:inline">BATARYA: 98% (LiFePO4)</span>
+        <span class="hidden sm:inline">LIDAR: 360° AKTIV</span>
+      </div>
+    </div>
+
+    <!-- Video Sahna (Canvas va Vizual Efektlar) -->
+    <div class="relative w-full aspect-video bg-black overflow-hidden flex items-center justify-center">
+      
+      <!-- Fon Tasvirlari (Slaydlar) -->
+      <img id="sceneImg" src="qalqon_v1_large_dome_primary.jpg" 
+           class="absolute inset-0 w-full h-full object-cover transition-opacity duration-700 opacity-95 scale-105" alt="Qalqon Scene">
+
+      <!-- Tungi Politsiya Stroboskop Efekti (Overlay) -->
+      <div id="strobeOverlay" class="absolute inset-0 pointer-events-none opacity-0 transition-opacity duration-300 flex">
+        <div class="w-1/2 h-full bg-red-600/25 strobe-r"></div>
+        <div class="w-1/2 h-full bg-blue-600/25 strobe-b"></div>
+      </div>
+
+      <!-- Kinematik Skaner Chizig'i -->
+      <div class="absolute inset-0 pointer-events-none bg-gradient-to-b from-transparent via-cyan-500/10 to-transparent h-12 w-full animate-[scanline_4s_linear_infinite]"></div>
+
+      <!-- Jonli Telemetriya HUD Qatlami -->
+      <div class="absolute inset-0 p-6 flex flex-col justify-between pointer-events-none z-10 font-mono text-xs">
+        
+        <!-- Yuqori Burchak Ko'rsatkichlari -->
+        <div class="flex justify-between items-start">
+          <div class="bg-black/60 backdrop-blur-md p-3 rounded-lg border border-cyan-500/30 text-cyan-300 space-y-1">
+            <div class="text-[11px] text-slate-400">TEZLIK // HARAKAT</div>
+            <div id="hudSpeed" class="text-lg font-bold text-white">0.6 m/s (4WD)</div>
+            <div class="text-[10px] text-emerald-400">DIFF SKID-STEER: NORMAL</div>
+          </div>
+
+          <!-- Teleskopik Minora Holati -->
+          <div class="bg-black/60 backdrop-blur-md p-3 rounded-lg border border-cyan-500/30 text-right space-y-1">
+            <div class="text-[11px] text-slate-400">TELESKOPIK MINORA</div>
+            <div id="hudMast" class="text-base font-bold text-amber-300">OCHILGAN (+180mm)</div>
+            <div class="text-[10px] text-cyan-400">LIDAR 360°: TO'SIQSIZ SKAN</div>
+          </div>
+        </div>
+
+        <!-- O'rta: AI Planshet Yuzi Vaqtincha Ko'rinishi (Scene 2 uchun) -->
+        <div id="tabletFaceOverlay" class="hidden self-center bg-slate-950/90 border-2 border-cyan-400/80 rounded-2xl p-6 shadow-[0_0_50px_rgba(0,229,255,0.4)] text-center max-w-sm pointer-events-auto">
+          <div class="text-cyan-400 font-bold text-sm tracking-widest mb-4">FRONT INTERACTIVE AI TABLET</div>
+          <!-- Kiber Ko'zlar -->
+          <div class="flex justify-center gap-8 mb-4">
+            <div class="w-12 h-6 bg-cyan-400 rounded-full shadow-[0_0_20px_#00e5ff] animate-pulse"></div>
+            <div class="w-12 h-6 bg-cyan-400 rounded-full shadow-[0_0_20px_#00e5ff] animate-pulse"></div>
+          </div>
+          <div class="text-xs text-slate-300 mb-4 italic">"Assalomu alaykum! Men jamoat xavfsizligi patrul robotiman. Yordam kerakmi?"</div>
+          <button class="w-full py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl shadow-lg border border-red-400 flex items-center justify-center gap-2">
+            <span>🆘</span> 102 TEZKOR YORDAM CHAQIRISH
+          </button>
+        </div>
+
+        <!-- Pastki Subtitr / Sahna Izohi -->
+        <div class="bg-black/75 backdrop-blur-md p-4 rounded-xl border border-slate-700/80 text-center max-w-2xl mx-auto shadow-2xl">
+          <div id="sceneTitle" class="text-cyan-400 font-bold text-sm mb-1 tracking-wider">1-SAHNA: MONOLIT SILLIQ GUMBAZ VA 4WD SHASSI</div>
+          <p id="sceneDesc" class="text-xs text-slate-200 leading-relaxed font-sans">
+            Robot tinch holatda yurganda tashqi gumbazda hech qanday nozik kamera va datchiklar chiqib turmaydi. 500 mm aerodinamik yarim shar chang va yomg'irdan to'liq himoyalangan.
+          </p>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Video Boshqaruv Paneli (Player Controls) -->
+    <div class="p-4 bg-slate-950 border-t border-slate-800 flex flex-col gap-3 z-20">
+      
+      <!-- Progress Bar (Taymer chizig'i) -->
+      <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden cursor-pointer relative" id="progressBarContainer" onclick="seekVideo(event)">
+        <div id="progressBar" class="bg-cyan-500 h-full w-0 transition-all duration-100 shadow-[0_0_10px_#00e5ff]"></div>
+      </div>
+
+      <div class="flex flex-wrap items-center justify-between gap-3 text-xs">
+        
+        <!-- Play / Pause va Vaqt -->
+        <div class="flex items-center gap-3">
+          <button id="btnPlay" onclick="togglePlay()" class="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold rounded-lg flex items-center gap-2 shadow-lg transition">
+            <span id="playIcon">▶</span> <span id="playText">PLAY</span>
+          </button>
+          <button onclick="restartVideo()" class="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300">
+            🔄 Qaytadan
+          </button>
+          <span id="timeDisplay" class="font-mono text-slate-400 text-xs">00:00 / 00:24</span>
+        </div>
+
+        <!-- Sahnalarni To'g'ridan-to'g'ri Tanlash -->
+        <div class="flex items-center gap-1.5 overflow-x-auto py-1">
+          <button onclick="goToScene(0)" class="scene-btn px-2.5 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition text-[11px]">1. Monolit Shassi</button>
+          <button onclick="goToScene(1)" class="scene-btn px-2.5 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition text-[11px]">2. AI Planshet</button>
+          <button onclick="goToScene(2)" class="scene-btn px-2.5 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition text-[11px]">3. Teleskopik Lift</button>
+          <button onclick="goToScene(3)" class="scene-btn px-2.5 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition text-[11px]">4. Tungi Patrul</button>
+        </div>
+
+        <!-- Ovoz / Sirena Knopkasi -->
+        <div class="flex items-center gap-2">
+          <button id="btnAudio" onclick="toggleAudio()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300 flex items-center gap-1.5">
+            <span id="audioIcon">🔊</span> Ovoz
+          </button>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Foydalanuvchi Uchun Yo'riqnoma -->
+  <div class="w-full max-w-5xl mt-3 flex justify-between text-[11px] text-slate-400 px-2 font-mono">
+    <span>💡 PROTIP: Sahnalar o'rtasida o'tish uchun yuqoridagi tugmalardan foydalaning.</span>
+    <span>MUHANDISLIK LOYIHASI: QALQON v1.0 POLICE ROBOT</span>
+  </div>
+
+  <!-- Ssenariy va Audio Dasturi -->
+  <script>
+    const scenes = [
+      {
+        time: 0,
+        duration: 6,
+        img: 'qalqon_v1_large_dome_primary.jpg',
+        title: "1-SAHNA: MONOLIT YARIM SHAR VA 4WD SHASSI",
+        desc: "500 mm diametrli silliq yarim shar gumbaz va uning ostida joylashgan oddiy all-terrain rezina shinalar. Tinch patrulda korpus yuzasi mutlaqo tekis bo'lib, zarba va yomg'irdan himoyalangan.",
+        mast: "YOPILGAN (0mm)",
+        speed: "0.8 m/s (Patrul)",
+        status: "TIZIM: MONOLIT TINCH PATRUL",
+        strobe: false,
+        tablet: false
+      },
+      {
+        time: 6,
+        duration: 6,
+        img: 'qalqon_v1_large_dome_primary.jpg',
+        title: "2-SAHNA: OLD INTERAKTIV AI PLANSHETI VA MULOQOT",
+        desc: "Odam yoki piyoda yaqinlashganda, old qismdagi 8.7 dyuymli planshetda sergak kiber-ko'zlar faollashadi. Fuqaro bevosita ovozli muloqot qilishi yoki qizil 'SOS 102' tugmasi orqali tezkor navbatchiga qo'ng'iroq qilishi mumkin.",
+        mast: "KUTISH REJIMI",
+        speed: "0.0 m/s (To'xtagan)",
+        status: "MULOQOT: FUQARO BILAN ALOQA",
+        strobe: false,
+        tablet: true
+      },
+      {
+        time: 12,
+        duration: 6,
+        img: 'qalqon_v1_large_dome_heavy_duty.jpg',
+        title: "3-SAHNA: TELESKOPIK SENSOR MINORASI YUQORIGA KO'TARILDI",
+        desc: "Xavfli vaziyat yoki keng qamrovli kuzatuv rejimida gumbazning yuqori qopqog'i ko'tarilib, ichidan 360° LD19 LiDAR, PTZ panoramik kamera va favqulodda politsiya stroboskoplari ochilib ishga tushadi.",
+        mast: "OCHILMOQDA (+180mm)",
+        speed: "0.4 m/s (Tekshiruv)",
+        status: "FAVQULODDA: 360° SKANERLASH",
+        strobe: true,
+        tablet: false
+      },
+      {
+        time: 18,
+        duration: 6,
+        img: 'qalqon_v1_patrol_robot_cad_render_1793443789676.jpg',
+        title: "4-SAHNA: TUNGI PATRUL VA TO'SIQLARDAN CHECHELAB O'TISH",
+        desc: "Kuchli LED proyektorlar yo'lni yoritadi. F1TENTH va TTC algoritmlari asosida piyodalar va devorlarni masofadan aniqlab, differensial (tank) burilishi bilan to'siqlarni xavfsiz chetlab o'tadi.",
+        mast: "OCHILGAN (Faol)",
+        speed: "1.0 m/s (Tezkor)",
+        status: "PATRUL: TUNGI XAVFSIZLIK NAZORATI",
+        strobe: true,
+        tablet: false
+      }
+    ];
+
+    let totalDuration = 24;
+    let currentTime = 0;
+    let isPlaying = false;
+    let interval = null;
+    let audioEnabled = true;
+
+    // Web Audio API sintizatori (Robot tovushlari)
+    let audioCtx = null;
+    function playBeep(freq, dur) {
+      if (!audioEnabled) return;
+      try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.frequency.value = freq;
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+        osc.start();
+        osc.stop(audioCtx.currentTime + dur);
+      } catch(e){}
+    }
+
+    function updateView() {
+      // Joriy sahnani aniqlash
+      let currentScene = scenes[0];
+      for (let s of scenes) {
+        if (currentTime >= s.time && currentTime < s.time + s.duration) {
+          currentScene = s;
+          break;
+        }
+      }
+
+      // UI yangilash
+      document.getElementById('sceneImg').src = currentScene.img;
+      document.getElementById('sceneTitle').innerText = currentScene.title;
+      document.getElementById('sceneDesc').innerText = currentScene.desc;
+      document.getElementById('hudMast').innerText = currentScene.mast;
+      document.getElementById('hudSpeed').innerText = currentScene.speed;
+      document.getElementById('telemetryStatus').innerText = currentScene.status;
+
+      // Stroboskop effekti
+      const strobe = document.getElementById('strobeOverlay');
+      strobe.style.opacity = currentScene.strobe ? '1' : '0';
+
+      // Planshet yuzi overlay
+      const tabletOverlay = document.getElementById('tabletFaceOverlay');
+      if (currentScene.tablet) {
+        tabletOverlay.classList.remove('hidden');
+      } else {
+        tabletOverlay.classList.add('hidden');
+      }
+
+      // Progress bar va vaqt
+      const pct = (currentTime / totalDuration) * 100;
+      document.getElementById('progressBar').style.width = pct + '%';
+
+      const sec = Math.floor(currentTime);
+      const strSec = sec < 10 ? '0' + sec : sec;
+      document.getElementById('timeDisplay').innerText = `00:${strSec} / 00:24`;
+    }
+
+    function togglePlay() {
+      if (isPlaying) {
+        pauseVideo();
+      } else {
+        playVideo();
+      }
+    }
+
+    function playVideo() {
+      isPlaying = true;
+      document.getElementById('playIcon').innerText = '⏸';
+      document.getElementById('playText').innerText = 'PAUSE';
+      playBeep(880, 0.1);
+
+      interval = setInterval(() => {
+        currentTime += 0.2;
+        if (currentTime >= totalDuration) {
+          currentTime = 0; // Tsiklli takrorlash
+        }
+        updateView();
+      }, 200);
+    }
+
+    function pauseVideo() {
+      isPlaying = false;
+      document.getElementById('playIcon').innerText = '▶';
+      document.getElementById('playText').innerText = 'PLAY';
+      clearInterval(interval);
+    }
+
+    function restartVideo() {
+      currentTime = 0;
+      updateView();
+      playBeep(440, 0.15);
+      if (!isPlaying) playVideo();
+    }
+
+    function goToScene(idx) {
+      currentTime = scenes[idx].time;
+      updateView();
+      playBeep(660, 0.1);
+    }
+
+    function seekVideo(e) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const width = rect.width;
+      currentTime = (clickX / width) * totalDuration;
+      updateView();
+    }
+
+    function toggleAudio() {
+      audioEnabled = !audioEnabled;
+      document.getElementById('audioIcon').innerText = audioEnabled ? '🔊' : '🔇';
+    }
+
+    // Dastlabki yuklash
+    updateView();
+  </script>
+</body>
+</html>
