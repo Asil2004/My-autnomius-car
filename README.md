@@ -2,8 +2,10 @@
 
 ![Qalqon v1.0 Dizayn Posteri](docs/images/qalqon_v1_poster.jpg)
 
-> 📌 **Mexatronika va Apparat Bo'yicha Bosh Hujjat:**  
-> Konstruktsiya chizmalari, hisobotlar va kelgusi reja: **👉 [`MEXATRONIKA_HISOBOT_VA_REJA.md`](MEXATRONIKA_HISOBOT_VA_REJA.md)**
+> 📌 **Jamoaning Rasmiy Hisobot va Ijro Hujjatlari:**  
+> 1. **Mexatronika & Apparat Konstruksiyasi (Asilbek):** 👉 [`MEXATRONIKA_HISOBOT_VA_REJA.md`](MEXATRONIKA_HISOBOT_VA_REJA.md)  
+> 2. **UI / Frontend & Planshet Interfeysi (Sarvar):** 👉 [`UI_uchun_bajarilgan_ishlar.md`](UI_uchun_bajarilgan_ishlar.md)  
+> 3. **"Miya" (RPi 4) Dasturiy Ta'minot & Tizim Integratsiyasi (Boburjon):** 👉 [`MIYA_UCHUN_BAJARILGAN_ISHLAR.md`](MIYA_UCHUN_BAJARILGAN_ISHLAR.md)
 
 ---
 
