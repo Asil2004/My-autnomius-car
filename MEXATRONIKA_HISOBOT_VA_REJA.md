@@ -1,34 +1,49 @@
-# ⚙️ QALQON v1.0 — Mexatronika va Konstruksiya Bo'yicha Yagona Hisobot va Ish Rejasi
+# ⚙️ QALQON v1.0 — Mexatronika va Apparat Konstruksiyasi Bo'yicha Yagona Rasmiy Hisobot va Ish Rejasi
 
-> **Mas'ul xodim (Rol):** Mexatronika va apparat konstruksiyasi bo'yicha bosh muhandis (Mechatronics & Hardware Lead)  
-> **Loyiha repozitoriysi:** [https://github.com/Asil2004/My-autnomius-car](https://github.com/Asil2004/My-autnomius-car)  
-> **Oxirgi yangilanish sanasi:** 2026-10-31  
-> **Holat:** Faol ishlab chiqish bosqichida (Active In-Progress)
+> 👤 **Mas'ul muhandis (Kim):** Asilbek — Mexatronika va apparat konstruksiyasi bo'yicha bosh muhandis (Mechatronics & Hardware Lead)  
+> 📅 **Oxirgi yangilanish (Qachon):** 31-Oktabr, 2026-yil | 16:55 (Toshkent vaqti, UTC+5)  
+> 🔗 **Loyiha repozitoriysi:** [https://github.com/Asil2004/My-autnomius-car](https://github.com/Asil2004/My-autnomius-car)  
+> 📌 **Eslatma:** Ushbu fayl loyihadagi **yagona rasmiy hisobot hujjati** hisoblanadi. Loyihada boshqa ortiqcha hisobot fayllari yuritilmaydi, barcha yangilanishlar faqat shu faylga kiritib boriladi.
 
 ---
 
-## 📌 Asosiy Kanonik Dizayn Konsepsiyasi (Oddiy Shina va Standart Motorlar)
+## 🕒 QADAMMA-QADAM YANGILANISHLAR VA IJRO JURNALI (AUDIT LOG)
+
+Quyidagi jadvalda loyiha davomida amalga oshirilgan har bir muhandislik yangilanishi, kim tomonidan va qaysi vaqtda bajarilgani qayd etib boriladi:
+
+| № | Qachon (Sana va Vaqt) | Kim (Mas'ul xodim) | Bajarilgan vazifa va Yangilanish mazmuni | Holat / Natija |
+| :---: | :---: | :---: | :--- | :---: |
+| **01** | 2026-10-31 \| 14:38 | **Asilbek** (Mexatronika) | Boshlang'ich repozitoriy strukturasi yaratildi, Arduino drayveri va RPi boshqaruv kodlari yuklandi | `Bajarildi` |
+| **02** | 2026-10-31 \| 15:02 | **Asilbek** (Mexatronika) | Yangi bosh standart tasdiqlandi: **QALQON v1.0 ($\varnothing 500\text{ mm}$ yarim shar gumbazli)** dizayni kiritildi | `Bajarildi` |
+| **03** | 2026-10-31 \| 15:26 | **Asilbek** (Mexatronika) | Old qismga $65^\circ$ ergonomik qiyalikda 8.7" **AI kiber-ko'zlar va muloqot plansheti** (4mm polikarbonatli) loyihalashtirildi | `Bajarildi` |
+| **04** | 2026-10-31 \| 15:41 | **Asilbek** (Mexatronika) | **Teleskopik yashirin minora (Retractable Mast)** mexanizmi kiritildi: sensorlar gumbaz ichidan elektr aktuator bilan $180\text{ mm}$ yuqoriga chiqadi | `Bajarildi` |
+| **05** | 2026-10-31 \| 15:50 | **Asilbek** (Mexatronika) | Shassi Mecanumdan **4WD differensial oddiy kauchuk rezina shinalarga** ($\varnothing 120-130\text{ mm}$) va 12V DC reduktorli motorlarga o'tkazildi | `Bajarildi` |
+| **06** | 2026-10-31 \| 15:54 | **Asilbek** (Mexatronika) | **Sfera (gumbaz) hajmi kattalashtirildi:** Gumbaz korpusi dominant qilinib, oddiy shinalar uning pastki arkalari ostiga mutanosib kiritildi | `Bajarildi` |
+| **07** | 2026-10-31 \| 16:05 | **Asilbek** (Mexatronika) | Toshkent shahar piyodalar ko'chasida jamoat xavfsizligini ta'minlash sahnasi (Render) va **60 FPS jonli video-simulyator** yaratildi | `Bajarildi` |
+| **08** | 2026-10-31 \| 16:55 | **Asilbek** (Mexatronika) | **Yagona hisobot standarti:** Takroriy fayllar tozalandi, har bir o'zgarishga "Kim va Qachon" audit tizimi joriy etildi | `Bajarildi` |
+
+---
+
+## 📌 Asosiy Kanonik Dizayn Konsepsiyasi
 
 Jamoamiz tomonidan tasdiqlangan bosh model: **QALQON v1.0 Police Patrol Robot Prototype**
 
 ![Qalqon v1.0 Shahar Ko'chasida Xavfsizlikni Saqlash Jarayoni](docs/images/qalqon_patrol_street_action.jpg)
-*QALQON v1.0: Toshkent shahar piyodalar xiyobonida jamoat xavfsizligini ta'minlash, fuqarolarni himoya qilish va favqulodda vaziyatlarni nazorat qilish jarayoni (Teleskopik minora, LiDAR va stroboskoplar faol holatda).*
+*QALQON v1.0: Shahar piyodalar xiyobonida jamoat xavfsizligini ta'minlash jarayoni (Teleskopik minora, LiDAR va stroboskoplar faol holatda).*
 
 <br>
 
 ![Qalqon v1.0 Katta Hajmli Sfera va Oddiy Shinalar](docs/images/qalqon_v1_large_dome_primary.jpg)
-*3D CAD Modeli (Yangilangan): Katta hajmli dominant yarim shar gumbaz, uning ostida mutanosib joylashgan oddiy rezina shinalar va ochilgan teleskopik sensor minorasi.*
-*3D CAD Modeli: 500 mm monolit yarim shar, 4WD oddiy chuqur protektorli rezina shinalar va ochilgan teleskopik minora.*
+*3D CAD Modeli: Katta hajmli dominant yarim shar gumbaz, uning ostida mutanosib joylashgan oddiy rezina shinalar va ochilgan teleskopik sensor minorasi.*
 
-<br>
+---
 
-![Qalqon v1.0 Dizayn Posteri](docs/images/qalqon_v1_poster.jpg)
+## 📐 Konstruktiv Talablar va Gabaritlar (Asilbek tomonidan tasdiqlangan)
 
-### 📐 Asosiy Konstruktiv Talablar va Gabaritlar:
 * **Korpus shakli:** **$\varnothing = 500\text{ mm}$ Monolit Yarim shar (Smooth Hemisphere Dome)**. Tinch (patrul) holatida gumbaz yuzasida hech qanday ortiqcha chiqib turuvchi kamera, shox yoki mo'rt datchiklar bo'lmaydi — 100% silliq, zarbaga va yomg'irga chidamli aerodinamik qobiq.
 * **Harakatlanish usuli (Oddiy shinalar va motorlar):** 
-  * Murakkab va nozik rolikli Mecanum g'ildiraklari o'rniga **4 ta standart chuqur protektorli kauchuk rezina shina ($\varnothing 120 - 130\text{ mm}$)** o'rnatiladi.
-  * Har bir g'ildirakni **standart 12V DC metall reduktorli motor (JGB37-520 yoki PG45, 100–150 RPM, 15–20 kg·cm)** to'g'ridan-to'g'ri po'lat L-kronshteynlar orqali harakatga keltiradi.
+  * Murakkab va nozik rolikli Mecanum g'ildiraklari o'rniga **4 ta standart chuqur protektorli all-terrain kauchuk rezina shina ($\varnothing 120 - 130\text{ mm}$)** o'rnatiladi.
+  * Har bir g'ildirakni **standart 12V DC metall reduktorli motor (JGB37-520 yoki PG45, 100–120 RPM, 15–20 kg·cm)** to'g'ridan-to'g'ri po'lat L-kronshteynlar orqali harakatga keltiradi.
   * Boshqaruv turi: **4WD Skid-Steer (Differensial / Tank burilishi)**. Ushbu shassi bruschatka, asfalt, tuproq va plitkalarda sirpanmaydi, qum-shag'al tiqilib qolmaydi va narxi ancha arzon hamda xizmat ko'rsatishga oson.
 * **Teleskopik Yashirin Minora (Retractable Mast):** Faol kuzatuv yoki xavfli vaziyat yuzaga kelganda, gumbazning eng yuqori qopqog'i motorli **teleskopik lift mexanizmi orqali $150 - 200\text{ mm}$ yuqoriga ko'tariladi**. Ko'tarilgach, uning ichidan:
   * 360° LiDAR lazer skaneri (to'siqsiz gorizontal ko'rish maydoni bilan);
@@ -106,43 +121,16 @@ graph TD
 
 ---
 
-## 📋 Amalga Oshirilgan Ishlar Hisoboti (Changelog)
-
-### [2026-10-31 — Yangilanish 6]: Shahar Ko'chasida Patrul Jarayoni Vizualizatsiyasi va Simulyator
-* ✅ **Amaliy ko'cha sahnasi tasdiqlandi:** Robotning shahar piyodalar xiyobonida tinch fuqarolar orasida xavfsizlikni saqlash, teleskopik minorani ko'tarib 360° LiDAR va stroboskop orqali patrullik qilish jarayoni vizual tasvirga tushirildi.
-* ✅ **Interaktiv video-simulyator qo'shildi:** [qalqon_street_patrol_simulator.html](qalqon_street_patrol_simulator.html) orqali robotning ko'chada harakatlanishi, piyodalarni tanishi va 102 SOS chaqiruvlari jonli 60 FPS simulyatsiya qilindi.
-
-### [2026-10-31 — Yangilanish 5]: Sfera (Gumbaz) Hajmi Kattalashtirildi
-* ✅ **Proporsiyalar to'g'rilandi:** Sfera qismi kattalashtirilib, butun robot korpusida asosiy dominant hajmga keltirildi. 
-* ✅ **G'ildiraklar mutanosibligi:** 4 ta oddiy rezina shina gumbazdan katta bo'lib chiqib turmasligi uchun gumbazning pastki himoya qanotlari (wheel arches) ostiga ixcham va to'g'ri proporsiyada joylashtirildi.
-
-### [2026-10-31 — Yangilanish 4]: Shassi Oddiy Shinalar va 12V DC Motorlarga O'tkazildi
-* ✅ **Mecanumdan oddiy rezina shinalarga o'tish:** Nozik Mecanum roliklari o'rniga tashqi muhitda, plitka va asfaltda 100% ishonchli ushlaydigan **$\varnothing 120 - 130\text{ mm}$ kauchuk protektorli balonlar** tanlandi.
-* ✅ **Standart kuchli motorlar:** Har bir g'ildirak uchun 12V JGB37-520 (yoki PG45) to'liq metall reduktorli DC motorlar belgilandi. Bu motorlar 15–20 kg·cm buralish momentiga ega bo'lib, 25 kg gacha bo'lgan to'liq jihozlangan patrul minorasini bemalol harakatlantiradi.
-* ✅ **Differensial (Skid-steer) boshqaruv:** Chap va o'ng tomon motorlarini teskari aylantirish orqali robot joyida 360° ga aylanadi (tank burilishi). Dasturiy ta'minot ancha soddalashdi va ishonchliligi 3 barobar oshdi.
-
-### [2026-10-31 — Yangilanish 3]: Teleskopik Yashirin Minora Konsepsiyasi Qo'shildi
-* ✅ **Monolit qobiq:** Gumbaz ustidagi sensorlar faqat zarur bo'lganda elektr lift bilan $180\text{ mm}$ yuqoriga chiqadi.
-* ✅ **O-ring germetiklik:** Minora yopilganda IP66 to'liq germetik bo'ladi.
-
-### [2026-10-31 — Yangilanish 2]: Old Planshet (AI & Muloqot Moduli) Loyihalashtirildi
-* ✅ **Muloqot ekrani:** $65^\circ$ ergonomik qiyalikda 8.7" planshet, 4 mm polikarbonat va EPDM himoya o'rnatildi.
-
-### [2026-10-31 — Yangilanish 1]: Bosh Shassi va Repozitoriy Ekotizimi
-* ✅ **Arduino & RPi dasturlari:** Repozitoriy tuzilmasi shakllantirildi va dastlabki testlar muvaffaqiyatli o'tkazildi.
-
----
-
-## 🎯 Mexatronik Muhandisning Kelgusi Vazifalar Rejasi (To-Do List)
+## 🎯 Mexatronik Muhandisning Kelgusi Vazifalar Rejasi (Asilbek To-Do)
 
 ### 1. Oddiy Shinalar va Motorlar Montaji (4WD Differensial Shassi)
-- [ ] **1.1.** 4 dona $\varnothing 120 - 130\text{ mm}$ oddiy kauchuk rezina g'ildiraklar uchun $\varnothing 6\text{ mm}$ yoki $\varnothing 8\text{ mm}$ D-shaft po'lat geksagonal (hex) adapterlarni tayyorlash.
-- [ ] **1.2.** 4 ta 12V DC reduktorli motorlarni (JGB37-520) 3 mm qalinlikdagi po'lat L-kronshteynlarga mahkamlash.
-- [ ] **1.3.** 4 mm D16T alyuminiy asos plitasining yangi g'ildiraklar kengligiga moslashtirilgan lazer kesish chizmasini (`DXF`) chiqarish.
-- [ ] **1.4.** Klirensni ($40 - 50\text{ mm}$) tosh va yo'l notekisliklaridan to'siqsiz o'tishi uchun moslash.
+- [ ] **1.1.** 4 dona $\varnothing 120 - 130\text{ mm}$ kauchuk rezina g'ildiraklar uchun $12\text{ mm}$ geksagonal guruch adapterlarni o'rnatish.
+- [ ] **1.2.** 4 ta 12V DC reduktorli motorni (JGB37-520) 3 mm po'lat L-kronshteynlarga bolt bilan mahkamlash.
+- [ ] **1.3.** 4 mm D16T alyuminiy asos plitasining lazer kesish chizmasini (`DXF`) chiqarish.
+- [ ] **1.4.** Klirensni ($45\text{ mm}$) piyodalar yo'lagidagi notekisliklarga nisbatan sinash.
 
 ### 2. Teleskopik Ko'tarish Mexanizmi (Z-Axis Retractable Mast)
-- [ ] **2.1.** $150\text{ mm}$ stroke'ga ega 12V chiziqli aktuator va 2 ta $\varnothing 8\text{ mm}$ silliqlangan yo'naltiruvchi vallarning 3D CAD yig'masini tayyorlash.
+- [ ] **2.1.** $150\text{ mm}$ stroke'ga ega 12V chiziqli aktuator va 2 ta $\varnothing 8\text{ mm}$ yo'naltiruvchi vallarning 3D CAD yig'masini tayyorlash.
 - [ ] **2.2.** Yuqori va pastki chegara datchiklarini (Endstops) o'rnatish.
 - [ ] **2.3.** Yuqori lyuk qopqog'iga O-ring silikon qistirmani montaj qilish.
 - [ ] **2.4.** Ko'tariluvchi sensorlar uchun spiral sim zanjirini (Drag Chain) joylashtirish.
@@ -157,23 +145,13 @@ graph TD
 - [ ] **4.2.** Gumbazni 3D printerda 4 ta segmentda chop etish yoki 3 mm ABS listdan vakuumli qolipda tortish.
 - [ ] **4.3.** Yuqorida $\varnothing 150\text{ mm}$ teleskopik lyuk darchasini ochish.
 
-### 5. Ichki Elektronika Tokchalari va Quvvat
-- [ ] **5.1.** 12V LiFePO4 batareyani pastki markazda mahkam ushlovchi po'lat qisqich (bracket) yasash.
-- [ ] **5.2.** 2 qavatli ichki mezonin (platalar tokchasi) o'rnatish:
-  - 1-polka: Motor drayveri (BTS7960 43A yoki L293D), UBEC konverterlar;
-  - 2-polka: Arduino Uno va Raspberry Pi (silikon amortizatorlarda).
-- [ ] **5.3.** M12 germetik kabel o'tkazgichlarini kiritish.
+---
+
+## 🤝 Jamoa A'zolari Bilan Bog'lanish
+
+* **Dasturiy ta'minot guruhi (Software Lead):** Shassi to'liq differensial boshqaruvda ishlaydi (`F`, `B`, `L`, `R`, `S`) va teleskopik minora buyruqlari (`U`, `D`).
+* **Elektronika guruhi (Electronics Lead):** Har bir motor maksimal toki $3.2\text{ A}$, aktuator toki $2.0\text{ A}$, planshet quvvati doimiy $5\text{V } 3\text{A}$.
 
 ---
 
-## 🤝 Jamoa A'zolari Bilan Integratsiya Nuqtalari
-
-1. **Dasturiy ta'minot (Software / AI Lead) guruhiga:**
-   * Shassi kinematikasi: Mecanum o'rniga klassik **Differensial (Skid-steer)** harakatga o'tildi. Chap motorlar oldinga, o'ng motorlar orqaga aylansa — robot joyida 360° aylanadi. Buyruqlar ancha soddalashdi (`F`, `B`, `L`, `R`, `S`).
-   * Teleskopik minora boshqaruvi: Arduino-ga `U` (`MAST_UP`) va `D` (`MAST_DOWN`) buyruqlari ajratildi.
-2. **Elektronika va Sxemotexnika (Electronics Lead) guruhiga:**
-   * Har bir 12V motorning maksimal yuki (stall current): $3.2\text{ A}$. 4 ta motor uchun kuchliroq **BTS7960 (43A dual H-bridge)** yoki parallel drayver tavsiya etiladi.
-
----
-
-*Eslatma: Ushbu hujjat har bir mexatronik yangilanishdan so'ng yangilanadi va GitHub-ga commit qilinadi.*
+*Hujjat yurituvchisi: **Asilbek** (Mexatronika bosh muhandisi). Barcha o'zgarishlar faqat shu fayl orqali rasmiylashtiriladi.*
