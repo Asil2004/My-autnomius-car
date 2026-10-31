@@ -28,3 +28,4 @@ frontend/android/.gradle/
 frontend/android/app/build/
 frontend/android/local.properties
 phone_screen.png
+.gemini/
