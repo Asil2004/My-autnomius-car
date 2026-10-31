@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+venv/
+ENV/
+
+# Large binaries & OS
+*.apk
+*.tar.gz
+*.zip
+.DS_Store
+Thumbs.db
