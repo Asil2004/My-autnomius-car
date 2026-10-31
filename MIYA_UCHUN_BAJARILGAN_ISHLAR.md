@@ -1,9 +1,9 @@
 # 🧠 QALQON v1.0 — "Miya" (Raspberry Pi 4) Dasturiy Ta'minoti Bo'yicha Yagona Rasmiy Hisobot va Ish Rejasi
 
-> 👤 **Mas'ul muhandis (Kim):** Boburjon — "Miya" (Raspberry Pi 4) dasturiy ta'minoti, xavfsizlik arxitekturasi va tizim integratori (Software & Brain Core Lead)  
-> 📅 **Oxirgi yangilanish (Qachon):** 31-Oktabr, 2026-yil | 22:40 (Toshkent vaqti, UTC+5)  
+> 👤 **Mas'ul muhandis (Kim):** Boburjon — "Miya" (Raspberry Pi 4) dasturiy ta'minoti va sensorlar muhandisi (Software & Brain Engineer)  
+> 📅 **Oxirgi yangilanish (Qachon):** 31-Oktabr, 2026-yil | 22:45 (Toshkent vaqti, UTC+5)  
 > 🔗 **Loyiha repozitoriysi:** [https://github.com/Asil2004/My-autnomius-car](https://github.com/Asil2004/My-autnomius-car)  
-> 📌 **Eslatma:** Ushbu fayl Asilbekning [`MEXATRONIKA_HISOBOT_VA_REJA.md`](MEXATRONIKA_HISOBOT_VA_REJA.md) hamda Sarvarning [`UI_uchun_bajarilgan_ishlar.md`](UI_uchun_bajarilgan_ishlar.md) hujjatlari qatorida **"Miya" (Brain Core) bo'yicha yagona rasmiy hisobot hujjati** hisoblanadi. Barcha yangilanishlar va qilingan ishlar muntazam ravishda shu faylga qayd etib boriladi.
+> 📌 **Eslatma:** Ushbu hisobot bosh muhandis (Asilbek) tomonidan yuklatilgan vazifalar ijrosi, Raspberry Pi 4 dasturiy ta'minoti va jamoaviy integratsiya bo'yicha hisobot berib borish uchun yuritiladi.
 
 ---
 
