@@ -20,3 +20,11 @@ cs437_iot_lab1/
 f1tenth_ws/
 multunus_rc_car/
 desktop_cyd_robot/
+
+# Frontend & Mobile Builds
+frontend/node_modules/
+frontend/dist/
+frontend/android/.gradle/
+frontend/android/app/build/
+frontend/android/local.properties
+phone_screen.png

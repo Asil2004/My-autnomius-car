@@ -215,3 +215,17 @@ graph TD
    🔹 Planshet (102 SOS chaqiruv paneli) va politsiya stroboskopini integratsiya qilish
    🔹 LD19 LiDAR qo'shib to'liq SLAM xaritasini ishga tushirish
 ```
+
+
+---
+
+## 8. Zamonaviy Taktik Frontend & Android Mobil APK
+
+Robotni boshqarish va uning telemetriyasini real-vaqtda kuzatish uchun maxsus **Mission Control Tactical UI** ishlab chiqildi:
+* **Texnologiyalar**: React 19, TypeScript, Tailwind CSS, Lucide Icons, Capacitor Android.
+* **Asosiy Modullar**:
+  * **Boshqaruv HUD**: 8 yo'nalishli Mecanum pulti (`W, A, S, D, Q, E, Space, 1-3`), 360° PTZ gumbaz kamera nazorati, 4x HC-SR04 sonarlar va avtotormoz (`WARN:OBSTACLE_FRONT`).
+  * **SOS 102 Terminali**: 8.7" bronlangan minora ekrani uchun gigant favqulodda chaqiruv, stroboskop va dispetcherlik interfeysi.
+  * **AI & Avtonom Patrul**: Edge TFLite ob'ektlar deteksiyasi (Odam, STOP, Svetofor, Tezlik belgilari), F1TENTH Gap-Follow va TTC (Time to Collision) hisoblagichi.
+  * **360° LiDAR Radar Canvas**: LD19 / RPLiDAR skaneri uchun real-vaqtdagi radar sweep vizualizatsiyasi.
+  * **Android APK**: `qalqon-patrol-v1.0.apk` sifatida to'liq yig'ilgan va smartfon/planshetlarga o'rnatishga tayyor.
