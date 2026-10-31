@@ -1,7 +1,7 @@
 # ⚙️ QALQON v1.0 — Mexatronika va Apparat Konstruksiyasi Bo'yicha Yagona Rasmiy Hisobot va Ish Rejasi
 
 > 👤 **Mas'ul muhandis (Kim):** Asilbek — Mexatronika va apparat konstruksiyasi bo'yicha bosh muhandis (Mechatronics & Hardware Lead)  
-> 📅 **Oxirgi yangilanish (Qachon):** 31-Oktabr, 2026-yil | 16:55 (Toshkent vaqti, UTC+5)  
+> 📅 **Oxirgi yangilanish (Qachon):** 31-Oktabr, 2026-yil | 22:20 (Toshkent vaqti, UTC+5)  
 > 🔗 **Loyiha repozitoriysi:** [https://github.com/Asil2004/My-autnomius-car](https://github.com/Asil2004/My-autnomius-car)  
 > 📌 **Eslatma:** Ushbu fayl loyihadagi **yagona rasmiy hisobot hujjati** hisoblanadi. Loyihada boshqa ortiqcha hisobot fayllari yuritilmaydi, barcha yangilanishlar faqat shu faylga kiritib boriladi.
 
@@ -21,6 +21,7 @@ Quyidagi jadvalda loyiha davomida amalga oshirilgan har bir muhandislik yangilan
 | **06** | 2026-10-31 \| 15:54 | **Asilbek** (Mexatronika) | **Sfera (gumbaz) hajmi kattalashtirildi:** Gumbaz korpusi dominant qilinib, oddiy shinalar uning pastki arkalari ostiga mutanosib kiritildi | `Bajarildi` |
 | **07** | 2026-10-31 \| 16:05 | **Asilbek** (Mexatronika) | Toshkent shahar piyodalar ko'chasida jamoat xavfsizligini ta'minlash sahnasi (Render) va **60 FPS jonli video-simulyator** yaratildi | `Bajarildi` |
 | **08** | 2026-10-31 \| 16:55 | **Asilbek** (Mexatronika) | **Yagona hisobot standarti:** Takroriy fayllar tozalandi, har bir o'zgarishga "Kim va Qachon" audit tizimi joriy etildi | `Bajarildi` |
+| **09** | 2026-10-31 \| 22:20 | **Asilbek** (Mexatronika & Tizim) | **Raspberry Pi 4 Avtonom OTA Auto-Updater & Watchdog:** GitHub'ga kod yangilanganda avtonom tortib olib, xizmatni qayta yuklovchi va nosozlikda avto-rollback qiluvchi systemd arxitekturasi joriy etildi | `Bajarildi` |
 
 ---
 
@@ -144,6 +145,13 @@ graph TD
 - [ ] **4.1.** 500 mm tashqi diametrli monolit yarim shar CAD 3D modelini (`STEP` / `STL`) tayyorlash.
 - [ ] **4.2.** Gumbazni 3D printerda 4 ta segmentda chop etish yoki 3 mm ABS listdan vakuumli qolipda tortish.
 - [ ] **4.3.** Yuqorida $\varnothing 150\text{ mm}$ teleskopik lyuk darchasini ochish.
+
+### 5. Raspberry Pi 4 Avtonom Tizim va OTA (Over-The-Air) Avto-Yangilanish
+- [x] **5.1.** `qalqon_brain.py` ga `/api/health` sog'lomlik monitoringi endpointi qo'shildi.
+- [x] **5.2.** `qalqon_ota_updater.py` avtonom Git Watchdog daemon yaratildi (GitHub'dagi o'zgarishlarni 30s da tekshirish).
+- [x] **5.3.** `qalqon-core.service` va `qalqon-updater.service` systemd fayllari ishlab chiqildi (Boot paytida avtostart va crash-proof auto-restart).
+- [x] **5.4.** 🛡️ Anti-Brick avto-rollback tizimi kiritildi: yangi kod nosozlik bersa, avtomatik ravishda barqaror commitga qaytariladi.
+- [x] **5.5.** `install_autonomous_services.sh` 1-bosqichli o'rnatish skripti tayyorlandi va [AVTONOM_YANGILANISH_VA_TIZIM_QOLLANMASI.md](docs/AVTONOM_YANGILANISH_VA_TIZIM_QOLLANMASI.md) hujjatlashtirildi.
 
 ---
 

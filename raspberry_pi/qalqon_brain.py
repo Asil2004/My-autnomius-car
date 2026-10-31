@@ -217,6 +217,18 @@ def toggle_siren():
     arduino._add_log(f"Sirena: {'YOQILDI' if siren_active else 'O`CHIRILDI'}")
     return {"status": "ok", "siren": siren_active}
 
+@app.get("/api/health")
+def health_check():
+    """Tizim holatini tekshirish (OTA avto-yangilanish va watchdog uchun)"""
+    return {
+        "status": "healthy",
+        "service": "qalqon_brain",
+        "uptime_sec": int(time.time() - START_TIME),
+        "version": "1.0.0",
+        "mode": patrol_mode
+    }
+
+
 @app.get("/api/telemetry")
 def get_telemetry():
     """To'liq telemetriya JSON (Web UI va mobil ilova uchun)"""
