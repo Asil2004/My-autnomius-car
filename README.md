@@ -1,10 +1,14 @@
-# 🛡️ "QALQON" IIV Avtonom Patrul Roboti: Yagona Jamlangan Texnik Qo'llanma
+# 🛡️ "QALQON v1.0" IIV Avtonom Patrul Roboti: Yagona Jamlangan Texnik Qo'llanma
 
-Ushbu hujjat loyihaning g'oyadan tortib amaliy sinovlargacha bo'lgan barcha bosqichlarini, mexanik chizmalari, elektron sxemalari, dasturiy kodlari hamda xalqaro universitet va laboratoriyalarning (MentorPi, Multunus, F1TENTH, UIUC IoT) eng ilg'or tajribalarini o'zida jamlagan yagona texnik qo'llanmadir.
+![Qalqon v1.0 Dizayn Posteri](docs/images/qalqon_v1_poster.jpg)
+
+> 📌 **Mexatronika va Apparat Bo'yicha Bosh Hujjat:**  
+> Konstruktsiya chizmalari, hisobotlar va kelgusi reja: **👉 [`MEXATRONIKA_HISOBOT_VA_REJA.md`](MEXATRONIKA_HISOBOT_VA_REJA.md)**
 
 ---
 
 ## MUNDARIJA
+
 1. **Loyiha Konsepsiyasi va Vazifasi**
 2. **Mexanik Konstruksiya (Talaba / DIY Amortizatorsiz Shassi)**
 3. **Elektronika va Uskunalar Arxitekturasi**
