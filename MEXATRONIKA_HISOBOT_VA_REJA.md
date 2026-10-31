@@ -11,7 +11,8 @@
 
 Jamoamiz tomonidan tasdiqlangan bosh model: **QALQON v1.0 Police Patrol Robot Prototype**
 
-![Qalqon v1.0 Oddiy Shinalar va Teleskopik Minora Renderi](docs/images/qalqon_v1_rubber_tires_render.jpg)
+![Qalqon v1.0 Katta Hajmli Sfera va Oddiy Shinalar](docs/images/qalqon_v1_large_dome_primary.jpg)
+*3D CAD Modeli (Yangilangan): Katta hajmli dominant yarim shar gumbaz, uning ostida mutanosib joylashgan oddiy rezina shinalar va ochilgan teleskopik sensor minorasi.*
 *3D CAD Modeli: 500 mm monolit yarim shar, 4WD oddiy chuqur protektorli rezina shinalar va ochilgan teleskopik minora.*
 
 <br>
@@ -101,6 +102,10 @@ graph TD
 ---
 
 ## 📋 Amalga Oshirilgan Ishlar Hisoboti (Changelog)
+
+### [2026-10-31 — Yangilanish 5]: Sfera (Gumbaz) Hajmi Kattalashtirildi
+* ✅ **Proporsiyalar to'g'rilandi:** Sfera qismi kattalashtirilib, butun robot korpusida asosiy dominant hajmga keltirildi. 
+* ✅ **G'ildiraklar mutanosibligi:** 4 ta oddiy rezina shina gumbazdan katta bo'lib chiqib turmasligi uchun gumbazning pastki himoya qanotlari (wheel arches) ostiga ixcham va to'g'ri proporsiyada joylashtirildi.
 
 ### [2026-10-31 — Yangilanish 4]: Shassi Oddiy Shinalar va 12V DC Motorlarga O'tkazildi
 * ✅ **Mecanumdan oddiy rezina shinalarga o'tish:** Nozik Mecanum roliklari o'rniga tashqi muhitda, plitka va asfaltda 100% ishonchli ushlaydigan **$\varnothing 120 - 130\text{ mm}$ kauchuk protektorli balonlar** tanlandi.
