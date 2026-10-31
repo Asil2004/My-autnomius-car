@@ -13,3 +13,10 @@ ENV/
 *.zip
 .DS_Store
 Thumbs.db
+
+# Cloned reference repos
+DeepPiCar/
+cs437_iot_lab1/
+f1tenth_ws/
+multunus_rc_car/
+desktop_cyd_robot/
