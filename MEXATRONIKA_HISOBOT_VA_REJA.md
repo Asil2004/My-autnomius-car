@@ -11,6 +11,11 @@
 
 Jamoamiz tomonidan tasdiqlangan bosh model: **QALQON v1.0 Police Patrol Robot Prototype**
 
+![Qalqon v1.0 Teleskopik Minora va AI Planshet Renderi](docs/images/qalqon_v1_telescopic_render.jpg)
+*3D CAD Modeli: 500 mm yarim shar gumbaz, old qismida 65° qiyalikdagi AI planshet ekrani va ochilgan teleskopik sensor minorasi.*
+
+<br>
+
 ![Qalqon v1.0 Dizayn Posteri](docs/images/qalqon_v1_poster.jpg)
 
 ### 📐 Asosiy Konstruktiv Talablar va Gabaritlar:
