@@ -100,6 +100,7 @@ graph TD
 * **Lavozimi:** Backend, Sun'iy Intellekt va O'rnatilgan Tizimlar Rahbari (AI, Vision & Embedded Systems Lead)
 * **Telegram:** [https://t.me/Boburjon2108](https://t.me/Boburjon2108)
 * **Javobgarlik sohasi:** Raspberry Pi operatsion tizimi, kompyuter ko'rishi (OpenCV, TFLite), sensorlar integratsiyasi va OTA avto-yangilanish.
+* **Yagona rasmiy hisoboti:** [`MIYA_UCHUN_BAJARILGAN_ISHLAR.md`](MIYA_UCHUN_BAJARILGAN_ISHLAR.md)
 
 ### 🎯 Boburjonning Asosiy Vazifalari:
 1. **Raspberry Pi Backend & Serial Daemon (`pi_patrol.py`, `qalqon_brain.py`):**
@@ -117,6 +118,7 @@ graph TD
 * **Email:** `qoldoshevsarvar648@gmail.com`
 * **Telegram:** [https://t.me/sarvar_quldoshevv](https://t.me/sarvar_quldoshevv)
 * **Javobgarlik sohasi:** Foydalanuvchi interfeysi (UI), Android boshqaruv ilovasi, robotning old planshetidagi kiber-ko'zlar va IIV dispetcherlik paneli.
+* **Yagona rasmiy hisoboti:** [`UI_uchun_bajarilgan_ishlar.md`](UI_uchun_bajarilgan_ishlar.md)
 
 ### 🎯 Sarvarning Asosiy Vazifalari:
 1. **Old Planshet Yuz Interfeysi (Tablet Kiosk UI):**
