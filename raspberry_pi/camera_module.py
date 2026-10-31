@@ -46,6 +46,7 @@ class CameraModule:
         
         # Odam / Yuz deteksiyasi
         self.detected_persons = []
+        self.latest_alert = None
         self._init_face_detector()
         
         # Kamera drayverini ochish
@@ -259,6 +260,37 @@ class CameraModule:
     def get_jpeg(self):
         with self.lock:
             return self.latest_jpeg
+
+    def dispatch_alert_to_iib(self, reason: str = "Xavfli vaziyat aniqlandi"):
+        """
+        Navoiy viloyati IIB navbatchilik qismiga tezkor kadr va signal uzatish.
+        Kadrga IIB belgisi, vaqt va xavf sababi shtamp qilinadi.
+        """
+        with self.lock:
+            if self.latest_frame is None:
+                return None
+            alert_img = self.latest_frame.copy()
+
+        h, w = alert_img.shape[:2]
+        # Qizil xavf banneri
+        cv2.rectangle(alert_img, (0, 0), (w, 55), (0, 0, 180), -1)
+        cv2.putText(alert_img, "NAVOIY VILOYATI IIB - TEZKOR XABAR", (15, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+        cv2.putText(alert_img, f"SABAB: {reason} | VAQT: {time.strftime('%H:%M:%S')}", (15, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
+
+        _, jpeg_buf = cv2.imencode('.jpg', alert_img, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+        self.latest_alert = {
+            "timestamp": time.time(),
+            "time_str": time.strftime('%Y-%m-%d %H:%M:%S'),
+            "reason": reason,
+            "persons_count": len(self.detected_persons),
+            "jpeg": jpeg_buf.tobytes()
+        }
+        return self.latest_alert
+
+    def get_latest_alert_jpeg(self):
+        if hasattr(self, 'latest_alert') and self.latest_alert:
+            return self.latest_alert.get("jpeg")
+        return self.get_jpeg()
 
     def get_status(self):
         return {

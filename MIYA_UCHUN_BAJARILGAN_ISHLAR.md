@@ -21,7 +21,8 @@ Quyidagi jadvalda "Miya" (Raspberry Pi 4) yo'nalishida amalga oshirilgan har bir
 | **06** | 2026-10-31 \| 20:35 | **Boburjon** (Miya Lead) | **Dual-Port Server (8000 & 8080):** Mobil Wi-Fi hotspot tarmoqlarida uzluksiz ochilish uchun parallel portlar va Windows xavfsizlik devori qoidalari sozlandi | `Bajarildi` |
 | **07** | 2026-10-31 \| 21:08 | **Boburjon** (Miya Lead) | **GitHub integratsiyasi va push:** `bozorovboburjon408-art` akkaunti orqali barcha Miya kodlari asosiy repoga jo'natildi (`commit: 10cf676`) | `Bajarildi` |
 | **08** | 2026-10-31 \| 21:23 | **Boburjon** (Miya Lead) | **Butun Loyihani Birlashtirish (Full Integration):** Sarvarning planshet frontendiga jonli WebSocket ulandi, Asilbekning teleskopik minorasi (`U`/`D`) HUD'ga kiritildi (`commit: 72225c0`) | `Bajarildi` |
-| **09** | 2026-10-31 \| 22:40 | **Boburjon** (Miya Lead) | **Yagona hisobot standarti:** `MIYA_UCHUN_BAJARILGAN_ISHLAR.md` rasmiy hujjati joriy etildi va repozitoriya boshqaruviga ulandi | `Bajarildi` |
+| **09** | 2026-10-31 \| 22:40 | **Boburjon** (Software Engineer) | **Yagona hisobot standarti:** `MIYA_UCHUN_BAJARILGAN_ISHLAR.md` rasmiy hujjati joriy etildi va repozitoriya boshqaruviga ulandi | `Bajarildi` |
+| **10** | 2026-10-31 \| 22:50 | **Boburjon** (Software Engineer) | **Navoiy viloyati IIB TT (Asilbek Ravshanov) topshiriqlari ijrosi:** <br>1. `pi_patrol.py` moduli WebSocket serveri Arduino Mega/Uno UART (115200 baud) bilan to'liq sinxronlashtirildi; <br>2. Pi Camera V2 orqali odamlar/to'siqlar deteksiyasi va Navoiy IIB navbatchilik qismiga tezkor kadr uzatish (`/api/dispatch_alert`, `/api/alert_snapshot`); <br>3. LD19 LiDAR 2D Occupancy Grid SLAM xaritasi (`/api/slam_map`) va avtotormoz integratsiya qilindi. | `Bajarildi` |
 
 ---
 

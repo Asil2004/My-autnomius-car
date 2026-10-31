@@ -228,6 +228,32 @@ def health_check():
         "mode": patrol_mode
     }
 
+@app.get("/api/dispatch_alert")
+def dispatch_alert(reason: str = "Favqulodda xavf signali"):
+    """Navoiy viloyati IIB navbatchilik qismiga tezkor kadr va signal uzatish (TT 2-bandi)"""
+    alert = camera.dispatch_alert_to_iib(reason)
+    arduino._add_log(f"🚨 NAVOIY IIB DISPETCHER: {reason}")
+    return {
+        "status": "ok",
+        "message": "Signal Navoiy viloyati IIB navbatchilik qismiga yuborildi",
+        "timestamp": alert["time_str"] if alert else time.strftime('%H:%M:%S'),
+        "reason": reason,
+        "persons_detected": len(camera.detected_persons)
+    }
+
+@app.get("/api/alert_snapshot")
+def alert_snapshot():
+    """Navoiy viloyati IIB uchun favqulodda kadr tasviri (JPEG)"""
+    jpeg = camera.get_latest_alert_jpeg()
+    if jpeg:
+        return Response(content=jpeg, media_type="image/jpeg")
+    return Response(content=b"", status_code=404)
+
+@app.get("/api/slam_map")
+def get_slam_map():
+    """LD19 LiDAR 2D Occupancy Grid SLAM xaritasi (TT 3-bandi)"""
+    return lidar.get_slam_grid(grid_size=60, resolution_m=0.1)
+
 
 @app.get("/api/telemetry")
 def get_telemetry():

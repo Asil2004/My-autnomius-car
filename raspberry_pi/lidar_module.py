@@ -303,6 +303,30 @@ class LidarModule:
         sectors = self.get_sectors()
         return sectors["front"] <= safe_distance
 
+    def get_slam_grid(self, grid_size: int = 60, resolution_m: float = 0.1):
+        """
+        2D SLAM Occupancy Grid Map (60x60 panjara, har katak 10x10 sm).
+        Robot markazda (30, 30).
+        0 = Bo'sh joy, 100 = To'siq/Devor.
+        """
+        grid = [[0 for _ in range(grid_size)] for _ in range(grid_size)]
+        center = grid_size // 2
+        with self.lock:
+            for deg in range(360):
+                d = self.scan_distances[deg]
+                if 0.1 < d < (grid_size * resolution_m / 2.0):
+                    rad = math.radians(deg)
+                    gx = int(center + (d * math.sin(rad)) / resolution_m)
+                    gy = int(center - (d * math.cos(rad)) / resolution_m)
+                    if 0 <= gx < grid_size and 0 <= gy < grid_size:
+                        grid[gy][gx] = 100
+        return {
+            "size": grid_size,
+            "resolution_m": resolution_m,
+            "center": [center, center],
+            "grid": grid
+        }
+
     def status(self):
         return {
             "mode": "HARDWARE" if self.is_hardware else "SIMULATION",
