@@ -229,3 +229,4 @@ Robotni boshqarish va uning telemetriyasini real-vaqtda kuzatish uchun maxsus **
   * **AI & Avtonom Patrul**: Edge TFLite ob'ektlar deteksiyasi (Odam, STOP, Svetofor, Tezlik belgilari), F1TENTH Gap-Follow va TTC (Time to Collision) hisoblagichi.
   * **360° LiDAR Radar Canvas**: LD19 / RPLiDAR skaneri uchun real-vaqtdagi radar sweep vizualizatsiyasi.
   * **Android APK**: `qalqon-patrol-v1.0.apk` sifatida to'liq yig'ilgan va smartfon/planshetlarga o'rnatishga tayyor.
+* **Batafsil Hisobot**: [UI_uchun_bajarilgan_ishlar.md](UI_uchun_bajarilgan_ishlar.md)
