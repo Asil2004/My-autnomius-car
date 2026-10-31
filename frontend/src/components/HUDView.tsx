@@ -424,6 +424,24 @@ export const HUDView: React.FC = () => {
             </button>
           </div>
 
+          {/* Teleskopik Minora Boshqaruvi (U va D) */}
+          <div className="grid grid-cols-2 gap-2 mt-2">
+            <button
+              onClick={() => sendMecanumCommand('U')}
+              title="Teleskopik Minorani Ko'tarish (U)"
+              className="p-2 rounded-lg border font-mono text-xs font-bold text-police-cyan border-police-cyan/40 bg-tactical-900/90 hover:bg-tactical-800 flex items-center justify-center space-x-1"
+            >
+              <span>🗼 MINORA ↑ (U)</span>
+            </button>
+            <button
+              onClick={() => sendMecanumCommand('D')}
+              title="Teleskopik Minorani Tushirish (D)"
+              className="p-2 rounded-lg border font-mono text-xs font-bold text-slate-300 border-tactical-700 bg-tactical-900/90 hover:bg-tactical-800 flex items-center justify-center space-x-1"
+            >
+              <span>🗼 MINORA ↓ (D)</span>
+            </button>
+          </div>
+
           <div className="mt-3 text-[10px] font-mono text-slate-400 text-center">
             Klaviatura: <span className="text-police-cyan">W, A, S, D, Q, E, Space (Stop), 1-3 (Tezlik)</span>
           </div>

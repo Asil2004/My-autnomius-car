@@ -48,7 +48,7 @@ class ArduinoBridge:
         
         # Sonar masofalari (santimetrda)
         self.sonars = {"front": 65, "rear": 120, "left": 80, "right": 85}
-        self.battery = {"voltage": 12.8, "percentage": 90, "current": 1.5}
+        self.battery = {"voltage": 12.8, "percentage": 90, "current": 1.5, "temp": 28.2, "isCharging": False}
         
         self._init_connection()
 
@@ -128,10 +128,12 @@ class ArduinoBridge:
                 self.sonars["left"] = max(25, min(200, int(self.sonars["left"] + (random.random() - 0.5) * 3)))
                 self.sonars["right"] = max(25, min(200, int(self.sonars["right"] + (random.random() - 0.5) * 3)))
 
-                # Batareya toki
+                # Batareya toki va harorati
                 is_moving = self.last_cmd not in ('S', 'STOP')
                 self.battery["current"] = 4.2 if is_moving else 1.3
                 self.battery["voltage"] = round(12.8 - (0.3 if is_moving else 0.0) + (random.random() - 0.5) * 0.05, 2)
+                self.battery["temp"] = round(28.0 + (0.5 if is_moving else 0.0) + (random.random() - 0.5) * 0.1, 1)
+                self.battery["isCharging"] = False
 
             time.sleep(0.5)
 

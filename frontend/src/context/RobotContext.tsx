@@ -140,7 +140,7 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [system, setSystem] = useState<SystemStatus>({
     rpiConnected: true,
     arduinoConnected: true,
-    rpiIp: '10.37.227.167',
+    rpiIp: (typeof window !== 'undefined' && window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') ? window.location.hostname : '10.255.89.119',
     rpiPort: 8000,
     arduinoPort: '/dev/ttyACM0 (115200 baud)',
     pingMs: 14,
@@ -308,6 +308,67 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => clearInterval(timer);
   }, [sos.active]);
 
+  // WebSocket ulanishi (Haqiqiy robot rejimida jonli telemetriya)
+  useEffect(() => {
+    if (isSimulationMode) return;
+    let ws: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout>;
+
+    const connect = () => {
+      try {
+        const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const url = `${proto}//${system.rpiIp}:${system.rpiPort}/ws`;
+        ws = new WebSocket(url);
+
+        ws.onopen = () => {
+          setSystem((s) => ({ ...s, rpiConnected: true }));
+          addLog('RPI', 'success', `Raspberry Pi telemetriyasiga ulandi (${url})`);
+        };
+
+        ws.onmessage = (ev) => {
+          try {
+            const d = JSON.parse(ev.data);
+            if (d.sonars) setSonars(d.sonars);
+            if (d.battery) {
+              setBattery((prev) => ({
+                ...prev,
+                voltage: d.battery.voltage ?? prev.voltage,
+                percentage: d.battery.percentage ?? prev.percentage,
+                current: d.battery.current ?? prev.current,
+                temp: d.battery.temp ?? prev.temp,
+                isCharging: d.battery.isCharging ?? prev.isCharging
+              }));
+            }
+            if (d.lidar && d.lidar.points) {
+              lidarPointsRef.current = d.lidar.points;
+            }
+            if (d.motion) {
+              if (d.motion.last_cmd) setLastCommand(d.motion.last_cmd);
+              if (d.motion.speed_level) setSpeedLevelState(d.motion.speed_level);
+              setIsMoving(d.motion.is_moving ?? false);
+            }
+          } catch (e) {}
+        };
+
+        ws.onclose = () => {
+          setSystem((s) => ({ ...s, rpiConnected: false }));
+          reconnectTimer = setTimeout(connect, 2000);
+        };
+        ws.onerror = () => {
+          setSystem((s) => ({ ...s, rpiConnected: false }));
+        };
+      } catch (e) {
+        reconnectTimer = setTimeout(connect, 2000);
+      }
+    };
+
+    connect();
+    return () => {
+      if (ws) ws.close();
+      clearTimeout(reconnectTimer);
+    };
+  }, [isSimulationMode, system.rpiIp, system.rpiPort, addLog]);
+
   // Synthetic simulation generator for LiDAR and Sonar telemetry
   const lidarPointsRef = useRef<LidarPoint[]>([]);
   useEffect(() => {
@@ -349,9 +410,10 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       lidarPointsRef.current = pts;
     };
 
+    if (!isSimulationMode) return;
     const interval = setInterval(updateSensors, 800);
     return () => clearInterval(interval);
-  }, [isMoving]);
+  }, [isSimulationMode, isMoving]);
 
   const setRpiConfig = (ip: string, port: number) => {
     setSystem((prev) => ({ ...prev, rpiIp: ip, rpiPort: port }));

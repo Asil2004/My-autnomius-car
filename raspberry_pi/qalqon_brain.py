@@ -201,6 +201,22 @@ def set_obstacle(dist: Optional[float] = None):
         arduino._add_log("🟢 To'siq olib tashlandi. Yo'l ochiq.")
     return {"status": "ok", "obstacle_distance_m": dist}
 
+@app.get("/strobe")
+def toggle_strobe():
+    """Politsiya stroboskopi holatini almashtirish"""
+    global strobe_active
+    strobe_active = not strobe_active
+    arduino._add_log(f"Stroboskop: {'YOQILDI' if strobe_active else 'O`CHIRILDI'}")
+    return {"status": "ok", "strobe": strobe_active}
+
+@app.get("/siren")
+def toggle_siren():
+    """Politsiya sirenasi holatini almashtirish"""
+    global siren_active
+    siren_active = not siren_active
+    arduino._add_log(f"Sirena: {'YOQILDI' if siren_active else 'O`CHIRILDI'}")
+    return {"status": "ok", "siren": siren_active}
+
 @app.get("/api/telemetry")
 def get_telemetry():
     """To'liq telemetriya JSON (Web UI va mobil ilova uchun)"""
