@@ -7,12 +7,12 @@
 
 ---
 
-## 📌 Asosiy Kanonik Dizayn Konsepsiyasi (Yashirin Teleskopik Minora)
+## 📌 Asosiy Kanonik Dizayn Konsepsiyasi (Oddiy Shina va Standart Motorlar)
 
 Jamoamiz tomonidan tasdiqlangan bosh model: **QALQON v1.0 Police Patrol Robot Prototype**
 
-![Qalqon v1.0 Teleskopik Minora va AI Planshet Renderi](docs/images/qalqon_v1_telescopic_render.jpg)
-*3D CAD Modeli: 500 mm yarim shar gumbaz, old qismida 65° qiyalikdagi AI planshet ekrani va ochilgan teleskopik sensor minorasi.*
+![Qalqon v1.0 Oddiy Shinalar va Teleskopik Minora Renderi](docs/images/qalqon_v1_rubber_tires_render.jpg)
+*3D CAD Modeli: 500 mm monolit yarim shar, 4WD oddiy chuqur protektorli rezina shinalar va ochilgan teleskopik minora.*
 
 <br>
 
@@ -20,6 +20,10 @@ Jamoamiz tomonidan tasdiqlangan bosh model: **QALQON v1.0 Police Patrol Robot Pr
 
 ### 📐 Asosiy Konstruktiv Talablar va Gabaritlar:
 * **Korpus shakli:** **$\varnothing = 500\text{ mm}$ Monolit Yarim shar (Smooth Hemisphere Dome)**. Tinch (patrul) holatida gumbaz yuzasida hech qanday ortiqcha chiqib turuvchi kamera, shox yoki mo'rt datchiklar bo'lmaydi — 100% silliq, zarbaga va yomg'irga chidamli aerodinamik qobiq.
+* **Harakatlanish usuli (Oddiy shinalar va motorlar):** 
+  * Murakkab va nozik rolikli Mecanum g'ildiraklari o'rniga **4 ta standart chuqur protektorli kauchuk rezina shina ($\varnothing 120 - 130\text{ mm}$)** o'rnatiladi.
+  * Har bir g'ildirakni **standart 12V DC metall reduktorli motor (JGB37-520 yoki PG45, 100–150 RPM, 15–20 kg·cm)** to'g'ridan-to'g'ri po'lat L-kronshteynlar orqali harakatga keltiradi.
+  * Boshqaruv turi: **4WD Skid-Steer (Differensial / Tank burilishi)**. Ushbu shassi bruschatka, asfalt, tuproq va plitkalarda sirpanmaydi, qum-shag'al tiqilib qolmaydi va narxi ancha arzon hamda xizmat ko'rsatishga oson.
 * **Teleskopik Yashirin Minora (Retractable Mast):** Faol kuzatuv yoki xavfli vaziyat yuzaga kelganda, gumbazning eng yuqori qopqog'i motorli **teleskopik lift mexanizmi orqali $150 - 200\text{ mm}$ yuqoriga ko'tariladi**. Ko'tarilgach, uning ichidan:
   * 360° LiDAR lazer skaneri (to'siqsiz gorizontal ko'rish maydoni bilan);
   * 360° Panoramik / PTZ gumbaz kamera;
@@ -27,7 +31,6 @@ Jamoamiz tomonidan tasdiqlangan bosh model: **QALQON v1.0 Police Patrol Robot Pr
   * 2 dona quvvatli aylanma LED proyektorlar ochilib ishlaydi.
 * **Old Interaktiv Planshet (AI & Muloqot):** Gumbazning old markaziy qismida **8.0 – 8.7 dyuymli sensorli planshet**. U sun'iy intellekt kiber-ko'zlari (mimika), fuqarolar bilan ovozli/matnli muloqot va **"SOS 102"** tezkor chaqiruv paneli vazifasini bajaradi. **$60^\circ - 65^\circ$ ergonomik qiyalikda**, 4 mm bronlangan polikarbonat oyna ortida joylashgan.
 * **Tashqi o'lchamlar:** Eni: $450\text{ mm}$ | Bo'yi: $550\text{ mm}$ | Balandligi: Yopiq holatda $380\text{ mm}$, minora ochilganda $550\text{ mm}$.
-* **Harakatlanish usuli:** **4WD Mecanum** mustaqil g'ildirakli platforma (joyida 360° burilish va burilmasdan yonboshga strafe harakati).
 * **Himoya darajasi:** Minora yopiq holatda **IP66**, ochilgan holatda **IP54** germetiklik standarti.
 
 ---
@@ -48,7 +51,7 @@ graph TD
         ACTUATOR[12V Mini Chiziqli Aktuator / NEMA17 + T8 Vint]
         RODS[2 ta 8mm Xromlangan Chiziqli Yo'naltiruvchi Vallar]
         SWITCHES[Yuqori va Pastki Cheklovchi Datchiklar: Endstops]
-        CABLE_CHAIN[Egiluvchan Spiral Sim Kanali: Simlar qisilib qolmasligi uchun]
+        CABLE_CHAIN[Egiluvchan Spiral Sim Kanali]
     end
 
     subgraph 3-Blok [Tashqi Qobiq & Old Interfeys: Ø 500 mm Yarim Shar]
@@ -61,15 +64,15 @@ graph TD
     subgraph 4-Blok [Elektronika Steki: Vertikal Mezonin]
         RPI[Raspberry Pi 3/4/5: Yuqori Aql / AI / Veb-Server]
         ARDUINO[Arduino Uno: Quyi Refleks / Aktuator va Motor Boshqaruvi]
-        DRIVER[Motor Drayveri: Mecanum + Lift Drayveri]
+        DRIVER[Motor Drayveri: 43A BTS7960 yoki L293D Dual H-Bridge]
         STEPDOWN[DC-DC Step-Down UBEC Quvvat Manbalari]
     end
 
-    subgraph 5-Blok [Quvvat va Shassi: Pastki Asos]
+    subgraph 5-Blok [Quvvat va Shassi: Oddiy Shina va Mustahkam Motorlar]
         BASE[4 mm D16T Alyuminiy Qattiq Asos Plitasi]
         BATTERY[12V LiFePO4 Akkumulyator Batareyasi: Pastki Markazda]
-        MOTORS[4 ta 12V Reduktorli DC Motor: Po'lat L-kronshteynlarda]
-        WHEELS[4 ta 100-130 mm Mecanum G'ildiraklar]
+        MOTORS[4 ta 12V Reduktorli DC Motor: JGB37-520 Po'lat L-kronshteynlarda]
+        WHEELS[4 ta 120-130 mm Oddiy Kauchuk Protektorli Shinalar]
         SONARS[4 tomonlama HC-SR04 Ultratovush To'siq Datchiklari]
     end
 
@@ -99,53 +102,51 @@ graph TD
 
 ## 📋 Amalga Oshirilgan Ishlar Hisoboti (Changelog)
 
+### [2026-10-31 — Yangilanish 4]: Shassi Oddiy Shinalar va 12V DC Motorlarga O'tkazildi
+* ✅ **Mecanumdan oddiy rezina shinalarga o'tish:** Nozik Mecanum roliklari o'rniga tashqi muhitda, plitka va asfaltda 100% ishonchli ushlaydigan **$\varnothing 120 - 130\text{ mm}$ kauchuk protektorli balonlar** tanlandi.
+* ✅ **Standart kuchli motorlar:** Har bir g'ildirak uchun 12V JGB37-520 (yoki PG45) to'liq metall reduktorli DC motorlar belgilandi. Bu motorlar 15–20 kg·cm buralish momentiga ega bo'lib, 25 kg gacha bo'lgan to'liq jihozlangan patrul minorasini bemalol harakatlantiradi.
+* ✅ **Differensial (Skid-steer) boshqaruv:** Chap va o'ng tomon motorlarini teskari aylantirish orqali robot joyida 360° ga aylanadi (tank burilishi). Dasturiy ta'minot ancha soddalashdi va ishonchliligi 3 barobar oshdi.
+
 ### [2026-10-31 — Yangilanish 3]: Teleskopik Yashirin Minora Konsepsiyasi Qo'shildi
-* ✅ **Monolit qobiq konsepsiyasi:** Gumbaz ustidagi barcha ochiq sensorlar yashirildi. Vandalizm, daraxt shoxlari va kuchli yomg'irdan himoya qilish uchun datchiklar faqat zarur bo'lganda ochiladigan qilib belgilandi.
-* ✅ **Teleskopik lift kinematikasi ishlab chiqildi:** $150 - 200\text{ mm}$ balandlikka ko'tariluvchi 12V mini elektr aktuator (yoki T8 vintli NEMA17) va 2 ta yo'naltiruvchi chiziqli val arxitekturasi kiritildi.
-* ✅ **Germetiklik (O-ring) yechimi:** Minora pastga tushganda uning qopqog'i gumbazdagi maxsus truba o'rindig'iga silikon O-ring qistirma orqali zich yopiladi (yopiq holatda IP66 to'liq germetik).
-* ✅ **Spiral kabel zanjiri:** Minora ko'tarilib-tushganda LiDAR va kamera simlari buralib yoki qisilib uzilmasligi uchun spiral kabel (curly cord) kanali rejalashtirildi.
+* ✅ **Monolit qobiq:** Gumbaz ustidagi sensorlar faqat zarur bo'lganda elektr lift bilan $180\text{ mm}$ yuqoriga chiqadi.
+* ✅ **O-ring germetiklik:** Minora yopilganda IP66 to'liq germetik bo'ladi.
 
 ### [2026-10-31 — Yangilanish 2]: Old Planshet (AI & Muloqot Moduli) Loyihalashtirildi
-* ✅ **Muloqot ekrani:** $\varnothing 500\text{ mm}$ gumbaz oldiga $65^\circ$ qiyalikda 8.7" planshet joylashtirish belgilandi.
-* ✅ **Vandalga qarshi 4 qatlam:** 4 mm polikarbonat, EPDM germetik qistirma, ichki xavfsizlik boltlar.
-* ✅ **Quvvat:** Doimiy 5V 3A UBEC quvvat liniyasi kiritildi.
+* ✅ **Muloqot ekrani:** $65^\circ$ ergonomik qiyalikda 8.7" planshet, 4 mm polikarbonat va EPDM himoya o'rnatildi.
 
 ### [2026-10-31 — Yangilanish 1]: Bosh Shassi va Repozitoriy Ekotizimi
-* ✅ **Mecanum shassi:** 4 ta motorli L293D maketida harakatlar sinovdan o'tdi.
-* ✅ **Arduino & RPi dasturlari:** [`arduino_l293d_patrol.ino`](arduino/arduino_l293d_patrol/arduino_l293d_patrol.ino) va [`pi_patrol.py`](raspberry_pi/pi_patrol.py) yozildi va sinovdan o'tkazildi.
+* ✅ **Arduino & RPi dasturlari:** Repozitoriy tuzilmasi shakllantirildi va dastlabki testlar muvaffaqiyatli o'tkazildi.
 
 ---
 
 ## 🎯 Mexatronik Muhandisning Kelgusi Vazifalar Rejasi (To-Do List)
 
-### 1. Teleskopik Ko'tarish Mexanizmi (Z-Axis Retractable Mast)
-- [ ] **1.1.** $150\text{ mm}$ yurish yo'liga (stroke) ega 12V chiziqli aktuator (Linear Actuator) yoki NEMA17 qadamli motor + T8 Trapezoid vint mexanizmining 3D CAD yig'masini tayyorlash.
-- [ ] **1.2.** Tebranishsiz silliq harakatlanish uchun 2 ta $\varnothing 8\text{ mm}$ silliqlangan vallar (Linear Shafts) va chiziqli podshipniklar (LM8UU) korpusini loyihalash.
-- [ ] **1.3.** Yuqori va pastki so'nggi nuqtalarni aniqlovchi 2 dona germetik chegaraviy datchik (Endstop Limit Switches) o'rnatish.
-- [ ] **1.4.** Minora qopqog'iga O-ring silikon qistirmani joylashtirish va gumbazning $\varnothing 150\text{ mm}$ yuqori darchasiga suv kirmaydigan qulf fiksatorini loyihalash.
-- [ ] **1.5.** Ko'tariluvchi sensorlar (LiDAR, kamera, LED) uchun spiral egiluvchan sim yo'lagini (Drag Chain) hisoblash.
+### 1. Oddiy Shinalar va Motorlar Montaji (4WD Differensial Shassi)
+- [ ] **1.1.** 4 dona $\varnothing 120 - 130\text{ mm}$ oddiy kauchuk rezina g'ildiraklar uchun $\varnothing 6\text{ mm}$ yoki $\varnothing 8\text{ mm}$ D-shaft po'lat geksagonal (hex) adapterlarni tayyorlash.
+- [ ] **1.2.** 4 ta 12V DC reduktorli motorlarni (JGB37-520) 3 mm qalinlikdagi po'lat L-kronshteynlarga mahkamlash.
+- [ ] **1.3.** 4 mm D16T alyuminiy asos plitasining yangi g'ildiraklar kengligiga moslashtirilgan lazer kesish chizmasini (`DXF`) chiqarish.
+- [ ] **1.4.** Klirensni ($40 - 50\text{ mm}$) tosh va yo'l notekisliklaridan to'siqsiz o'tishi uchun moslash.
 
-### 2. Old Planshet (AI & Muloqot) Konstruksiyasi
-- [ ] **2.1.** 500 mm yarim sharning old qismida planshet o'rnatiladigan $65^\circ$ qiya ramkani (visor bezel) CAD modelda chizish.
-- [ ] **2.2.** 4 mm polikarbonat himoya oynasi va planshet ekranining o'lchamlarini moslashtirish ($215 \times 130\text{ mm}$).
-- [ ] **2.3.** Planshet ustiga mikrofon teshigini, pastki qismiga esa 5W dinamik panjarasini joylashtirish.
-- [ ] **2.4.** Planshet qizib ketmasligi uchun orqa qutisiga passiv konveksiya ventilyatsiyasini kiritish.
+### 2. Teleskopik Ko'tarish Mexanizmi (Z-Axis Retractable Mast)
+- [ ] **2.1.** $150\text{ mm}$ stroke'ga ega 12V chiziqli aktuator va 2 ta $\varnothing 8\text{ mm}$ silliqlangan yo'naltiruvchi vallarning 3D CAD yig'masini tayyorlash.
+- [ ] **2.2.** Yuqori va pastki chegara datchiklarini (Endstops) o'rnatish.
+- [ ] **2.3.** Yuqori lyuk qopqog'iga O-ring silikon qistirmani montaj qilish.
+- [ ] **2.4.** Ko'tariluvchi sensorlar uchun spiral sim zanjirini (Drag Chain) joylashtirish.
 
-### 3. Korpus va Gumbaz Ishlab Chiqarish (Ø 500 mm Monolit Yarim Shar)
-- [ ] **3.1.** 500 mm tashqi diametrli monolit yarim shar CAD 3D modelini (`STEP` / `STL`) tayyorlash.
-- [ ] **3.2.** Gumbazni 3D printerda 4 ta segmentda chop etish yoki 3 mm ABS listdan vakuumli qolipda tortish.
-- [ ] **3.3.** Gumbaz tepasida teleskopik minora chiqishi uchun $\varnothing 150\text{ mm}$ aylanma lyuk kesimini hosil qilish.
+### 3. Old Planshet (AI & Muloqot) Konstruksiyasi
+- [ ] **3.1.** 500 mm yarim sharning old qismida planshet uchun $65^\circ$ qiya ramkani (bezel) CAD modelda chizish.
+- [ ] **3.2.** 4 mm polikarbonat himoya oynasi va planshet ekranining o'lchamlarini moslashtirish ($215 \times 130\text{ mm}$).
+- [ ] **3.3.** Mikrofon va 5W dinamik panjarasini joylashtirish.
 
-### 4. Pastki Asos Plitasi va Motorlar Montaji
-- [ ] **4.1.** 4 mm D16T alyuminiy asos plitasining lazer kesish chizmasini (`DXF`) chiqarish.
-- [ ] **4.2.** 4 ta DC reduktorli motorni tebranishga qarshi rezina vtulkalar orqali 3 mm po'lat L-kronshteynga bolt bilan qotirish.
-- [ ] **4.3.** Mecanum g'ildirak roliklari yo'nalishini yuqoridan qaralganda qat'iy **`X`** shaklida montaj qilish.
-- [ ] **4.4.** Pastki klirensni ($35–45\text{ mm}$) piyodalar yo'lagi to'siqlariga nisbatan sinash.
+### 4. Korpus va Gumbaz Ishlab Chiqarish (Ø 500 mm Monolit Yarim Shar)
+- [ ] **4.1.** 500 mm tashqi diametrli monolit yarim shar CAD 3D modelini (`STEP` / `STL`) tayyorlash.
+- [ ] **4.2.** Gumbazni 3D printerda 4 ta segmentda chop etish yoki 3 mm ABS listdan vakuumli qolipda tortish.
+- [ ] **4.3.** Yuqorida $\varnothing 150\text{ mm}$ teleskopik lyuk darchasini ochish.
 
 ### 5. Ichki Elektronika Tokchalari va Quvvat
 - [ ] **5.1.** 12V LiFePO4 batareyani pastki markazda mahkam ushlovchi po'lat qisqich (bracket) yasash.
 - [ ] **5.2.** 2 qavatli ichki mezonin (platalar tokchasi) o'rnatish:
-  - 1-polka: Motor drayveri, Lift aktuator drayveri, UBEC DC-DC konverterlar, saqlagichlar;
+  - 1-polka: Motor drayveri (BTS7960 43A yoki L293D), UBEC konverterlar;
   - 2-polka: Arduino Uno va Raspberry Pi (silikon amortizatorlarda).
 - [ ] **5.3.** M12 germetik kabel o'tkazgichlarini kiritish.
 
@@ -154,11 +155,10 @@ graph TD
 ## 🤝 Jamoa A'zolari Bilan Integratsiya Nuqtalari
 
 1. **Dasturiy ta'minot (Software / AI Lead) guruhiga:**
-   * Teleskopik minora boshqaruvi: Arduino-ga `MAST_UP` va `MAST_DOWN` buyruqlari qo'shiladi. Patrul boshlanganda minora avtomatik ko'tariladi, robot to'xtab quvvatlanganda yoki yomg'ir aniqlanganda yashirinadi.
-   * Old planshet ekrani uchun [`tablet_face_server.py`](raspberry_pi/tablet_face_server.py) (kiber-ko'zlar va 102 SOS chaqiruvi) kiosk rejimida to'liq ekranga ulanadi.
+   * Shassi kinematikasi: Mecanum o'rniga klassik **Differensial (Skid-steer)** harakatga o'tildi. Chap motorlar oldinga, o'ng motorlar orqaga aylansa — robot joyida 360° aylanadi. Buyruqlar ancha soddalashdi (`F`, `B`, `L`, `R`, `S`).
+   * Teleskopik minora boshqaruvi: Arduino-ga `U` (`MAST_UP`) va `D` (`MAST_DOWN`) buyruqlari ajratildi.
 2. **Elektronika va Sxemotexnika (Electronics Lead) guruhiga:**
-   * Teleskopik lift aktuatori uchun 12V 2A quvvat va H-ko'prikli rele/drayver kanali ajratiladi.
-   * Minora chekkalaridagi 2 ta Endstop mikroviklyuchatellari Arduino-ning raqamli pinlariga ulanadi.
+   * Har bir 12V motorning maksimal yuki (stall current): $3.2\text{ A}$. 4 ta motor uchun kuchliroq **BTS7960 (43A dual H-bridge)** yoki parallel drayver tavsiya etiladi.
 
 ---
 
