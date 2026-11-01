@@ -1,7 +1,7 @@
 # ⚙️ QALQON v1.0 — Mexatronika va Apparat Konstruksiyasi Bo'yicha Yagona Rasmiy Hisobot va Ish Rejasi
 
 > 👤 **Mas'ul muhandis (Kim):** Asilbek — Mexatronika va apparat konstruksiyasi bo'yicha bosh muhandis (Mechatronics & Hardware Lead)  
-> 📅 **Oxirgi yangilanish (Qachon):** 02-Noyabr, 2026-yil | 00:45 (Toshkent vaqti, UTC+5)  
+> 📅 **Oxirgi yangilanish (Qachon):** 02-Noyabr, 2026-yil | 00:50 (Toshkent vaqti, UTC+5)  
 > 🔗 **Loyiha repozitoriysi:** [https://github.com/Asil2004/My-autnomius-car](https://github.com/Asil2004/My-autnomius-car)  
 > 📌 **Eslatma:** Ushbu fayl loyihadagi **yagona rasmiy hisobot hujjati** hisoblanadi. Loyihada boshqa ortiqcha hisobot fayllari yuritilmaydi, barcha yangilanishlar faqat shu faylga kiritib boriladi.
 
@@ -33,6 +33,7 @@ Quyidagi jadvalda loyiha davomida amalga oshirilgan har bir muhandislik yangilan
 | **18** | 2026-11-02 \| 00:15 | **Asilbek** (Mexatronika & AI) | **Jonli Yuz Kuzatish (Look-At Tracking) va AI Ovoz Mimikasi joriy etildi:** Planshet old kamerasi orqali inson yuzini aniqlab unga qarash (Yaw, Pitch, Roll dinamikasi), AI gapirganda og'iz/jag' va bosh tebranishi (Voice energy audio-sync), kibernetik pulsatsiya qo'shildi. Web va Android APK uchun yangilandi | `Bajarildi` |
 | **19** | 2026-11-02 \| 00:35 | **Asilbek** (Mexatronika & AI) | **Mustaqil A'zolar Kinematikasi (Individual Facial Organ Kinetics) joriy etildi:** Butun tana va boshning tebranishi/cho'zilishi to'xtatildi; a'zolar o'z biologik/kiber vazifasi bo'yicha ajratildi — ko'zlar (qorachiqlar nigoh kuzatishi, mikro-sakkadlar va har 3-5 soniyada qovoqlarning pirpirashi), og'iz va lablar (mesh vertekslarining 3D geometrik ochilishi, AI ovoziga mos fonemalar va lab harakati) to'liq integratsiya qilindi | `Bajarildi` |
 | **20** | 2026-11-02 \| 00:45 | **Asilbek** (Mexatronika & AI) | **Ko'z va Lab koordinatalari 3D model maydoniga aniq bog'landi:** Burun harakatlanishi ($y > -0.12$) to'liq to'xtatildi, deformatsiya faqat haqiqiy lab sohasiga ($y \in [-0.27, -0.15]$) yo'naltirildi; ko'zlar to'g'ri orientatsiya bilan old yuzga ($+X$) joylashtirildi, qorachiqlar nigoh kuzatishi va qovoqlar pirpirashi to'liq faollashtirildi | `Bajarildi` |
+| **21** | 2026-11-02 \| 00:50 | **Asilbek** (Mexatronika & UI) | **Foydalanuvchi talabiga ko'ra oxirgi eksperimental avatar mimika/tracking yangilanishi olib tashlandi:** 3D model toza, barqaror va yuqori unumdorlikdagi (3.9MB, 60 FPS, mayin nur va patrul nigohi) original holatiga to'liq qaytarildi | `Bajarildi` |
 
 ---
 
