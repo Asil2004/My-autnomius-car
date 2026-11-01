@@ -30,6 +30,7 @@ Quyidagi jadvalda dasturiy ta'minot va UI bo'yicha amalga oshirilgan har bir yan
 | **13** | 2026-11-02 \| 00:06 | **Boburjon** (Frontend & Optimizatsiya) | 3D model hajmi 90% ga qisqartirildi (41MB dan 3.9MB ga), Three.js mobil render sikli barqaror 60 FPS ga qulflandi, PointLight lari DirectionalLight ga o'tkazilib, GPU qizishi bartaraf etildi | `Bajarildi` |
 | **14** | 2026-11-02 \| 00:18 | **Asilbek** (Mexatronika & AI) | RobotFaceView-ga old kamera orqali real-vaqtda odam yuzini kuzatish (Look-At Tracking) va AI nutq mimikasi (Speech Mimicry) funksiyalari integratsiya qilindi | `Bajarildi` |
 | **15** | 2026-11-02 \| 00:32 | **Sarvar** (Frontend & Mobile) | Barcha yangilanishlar birlashtirildi, eng yangi yengillashtirilgan APK kompilyatsiya qilindi va smartfonga muvaffaqiyatli o'rnatildi | `Bajarildi` |
+| **16** | 2026-11-02 \| 00:38 | **Sarvar** (Frontend & Mobile) | Asilbekning `8d5e70a` commitidagi mustaqil ko'z nigohi (Eye Gaze & Blinking) va lab deformatsiyasi (Lip Mimicry) kinetikasi integratsiya qilindi; yangi APK (7.6 MB) qayta yig'ilib, Xiaomi/Redmi telefoniga o'rnatildi va jonli skrinshot bilan tekshirildi | `Bajarildi` |
 
 ---
 
