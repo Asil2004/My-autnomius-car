@@ -1,7 +1,7 @@
 # ⚙️ QALQON v1.0 — Mexatronika va Apparat Konstruksiyasi Bo'yicha Yagona Rasmiy Hisobot va Ish Rejasi
 
 > 👤 **Mas'ul muhandis (Kim):** Asilbek — Mexatronika va apparat konstruksiyasi bo'yicha bosh muhandis (Mechatronics & Hardware Lead)  
-> 📅 **Oxirgi yangilanish (Qachon):** 01-Noyabr, 2026-yil | 22:05 (Toshkent vaqti, UTC+5)  
+> 📅 **Oxirgi yangilanish (Qachon):** 01-Noyabr, 2026-yil | 23:55 (Toshkent vaqti, UTC+5)  
 > 🔗 **Loyiha repozitoriysi:** [https://github.com/Asil2004/My-autnomius-car](https://github.com/Asil2004/My-autnomius-car)  
 > 📌 **Eslatma:** Ushbu fayl loyihadagi **yagona rasmiy hisobot hujjati** hisoblanadi. Loyihada boshqa ortiqcha hisobot fayllari yuritilmaydi, barcha yangilanishlar faqat shu faylga kiritib boriladi.
 
@@ -29,6 +29,7 @@ Quyidagi jadvalda loyiha davomida amalga oshirilgan har bir muhandislik yangilan
 | **14** | 2026-11-01 \| 22:04 | **Asilbek** (Mexatronika & Navigatsiya) | **Aqlli Ko'cha Navigatsiyasi (OSRM Smart Street Routing) joriy etildi:** Uylar va tomlar ustidan to'g'ri chiziqda uchib o'tish butunlay bartaraf etildi; robot xaritadagi real ko'cha va piyodalar yo'lagi (G'alaba, Amir Temur, Navoiy ko'chalari) bo'ylab burchaklarda burilib yuradigan qilindi va lokal server (port 8080) ishga tushirildi | `Bajarildi` |
 | **15** | 2026-11-01 \| 23:25 | **Asilbek** (Mexatronika & Tizim) | **Frontend (Vite + React) GitHub Pages deploy tizimi joriy etildi:** TypeScript xatolari tuzatildi, nisbiy yo'llar (`base: './'`) sozlandi va avtomatik GitHub Actions CI/CD workflow (`deploy-pages.yml`) kiritildi | `Bajarildi` |
 | **16** | 2026-11-01 \| 23:35 | **Asilbek** (Mexatronika & Tizim) | **Frontend UI ildiz katalogiga (`/index.html`, `/assets/`, `.nojekyll`) integratsiya qilindi:** GitHub Pages `main` yoki `gh-pages` sozlamasidan qat'i nazar, to'g'ridan-to'g'ri 3D kiber-HUD interfeysini ochadigan qilindi | `Bajarildi` |
+| **17** | 2026-11-01 \| 23:54 | **Asilbek** (Mexatronika & Jamoa) | **Jamoa a'zolari (Sarvar va Boburjon)ga shaxsiy Telegram orqali yo'riqnoma yuborildi:** QALQON loyihasini o'z GitHub profillarida bosh sahifaga qadab («Pin») qo'yish, «Fork» qilish va jonli GitHub Pages havolasi yetkazildi | `Bajarildi` |
 
 ---
 
