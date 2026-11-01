@@ -72,7 +72,7 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
 
     const loader = new GLTFLoader();
     loader.load(
-      '/result.glb',
+      (import.meta.env.BASE_URL || './') + 'result.glb',
       (gltf) => {
         const model = gltf.scene;
 
