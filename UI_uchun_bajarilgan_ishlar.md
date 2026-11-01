@@ -33,6 +33,7 @@ Quyidagi jadvalda dasturiy ta'minot va UI bo'yicha amalga oshirilgan har bir yan
 | **16** | 2026-11-02 \| 00:38 | **Sarvar** (Frontend & Mobile) | Asilbekning `8d5e70a` commitidagi mustaqil ko'z nigohi (Eye Gaze & Blinking) va lab deformatsiyasi (Lip Mimicry) kinetikasi integratsiya qilindi; yangi APK (7.6 MB) qayta yig'ilib, Xiaomi/Redmi telefoniga o'rnatildi va jonli skrinshot bilan tekshirildi | `Bajarildi` |
 | **17** | 2026-11-02 \| 00:50 | **Sarvar** (Frontend & Mobile) | Asilbekning `8b75724` commitidagi ko'z qorachiqlari (Eye Tracking) va lab deformatsiyasi koordinatalari sinxronlashtirildi; yangi APK qayta yig'ilib, smartfonga o'rnatildi | `Bajarildi` |
 | **18** | 2026-11-02 \| 00:57 | **Sarvar** (Frontend & Mobile) | Asilbekning `88e7635` commitidagi toza 3D patrul modeli tiklandi (tajribaviy qorachiq qutilari olib tashlandi); yangi APK (7.2 MB) qayta yig'ilib, smartfonga o'rnatildi va estetik ko'rinish tasdiqlandi | `Bajarildi` |
+| **19** | 2026-11-02 \| 01:22 | **Sarvar** (Frontend & Mobile) | Asilbekning `22507d2` commitidagi jonli yuz kuzatish (Look-At Tracking: Yaw, Pitch, Roll kinematikasi), kamera ruxsatnomalari va AI ovoz mimikasi to'liq dasturga qo'shildi; yangi APK (7.6 MB) smartfonga o'rnatildi | `Bajarildi` |
 
 ---
 
