@@ -127,3 +127,20 @@ AI ning odatiy va zerikarli ko'k-binafsharang "neyro slop" gradientlari chetga s
 4. **Android APK Yangilanishi va Telefonga Qayta O'rnatilishi**:
    * Yangilangan kodlar asosida yangi APK kompilyatsiya qilindi (`qalqon-patrol-v1.0.apk`).
    * Ulangan Xiaomi / Redmi qurilmasiga to'g'ridan-to'g'ri o'rnatildi va ishga tushirildi.
+
+
+---
+
+## 8-BOSQICH: 3D Politsiyachi Modelining Orientatsiyasini To'g'rilash (Ekranga Yuzma-Yuz Qarash)
+
+1. **Rotatsiya Muammosini Tahlil Qilish**:
+   * `result.glb` modelining ichki koordinatalari tahlil qilindi (bitta statik mesh `tripo_node_...`). Model eksport qilinganda dastlabki yo'nalishi +X o'qiga (90 gradus o'ngga) qaragan holatda bo'lgan, natijada kamera oldida yonboshlab qolgan edi.
+2. **Kamera Markazi va Boshlang'ich Burilish (Base Rotation)**:
+   * Model markazi atrofida siljimasdan erkin aylanishi uchun `THREE.Group` wrapper tizimi joriy etildi.
+   * Asosiy burchak: `BASE_ROTATION_Y = -Math.PI / 2` (-90 gradus) o'rnatildi.
+   * Natijada politsiyachining yuzi to'ppa-to'g'ri foydalanuvchiga (ekranga) qarab turishi ta'minlandi.
+3. **Jonli Kuzatuv Ritmiga Moslash**:
+   * To'g'ri qaragan holatdan turib silliq mayin burchaklar ostida ($\pm 0.30$ rad, ya'ni $\approx \pm 17^\circ$) chapga va o'ngga atrofni sergak kuzatishi saqlab qolindi.
+4. **Android APK Yangilanishi va Qurilmaga O'rnatilishi**:
+   * Yangi to'g'rilangan APK fayli kompilyatsiya qilindi (`qalqon-patrol-v1.0.apk`).
+   * Ulangan Xiaomi / Redmi qurilmasiga to'g'ridan-to'g'ri o'rnatildi va ishga tushirildi.

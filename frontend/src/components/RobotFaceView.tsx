@@ -22,7 +22,7 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
 
     const scene = new THREE.Scene();
     // Och yashil fon (Soft pastel light green)
-    const bgColor = new THREE.Color(0xd7f5dc); // #D7F5DC
+    const bgColor = new THREE.Color(0xd7f5dc);
     scene.background = bgColor;
     scene.fog = new THREE.FogExp2(0xd7f5dc, 0.04);
 
@@ -33,16 +33,16 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.45; // Yorqin va tiniq
+    renderer.toneMappingExposure = 1.45;
     container.appendChild(renderer.domElement);
 
     // Yarqiraydigan yorug'liklar tizimi (Studio Glow & Specular Highlights)
-    const ambientLight = new THREE.AmbientLight(0xffffff, 1.8);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 2.0);
     scene.add(ambientLight);
 
     // Asosiy old-yuqori yorug'lik (Key Light)
-    const keyLight = new THREE.DirectionalLight(0xffffff, 3.2);
-    keyLight.position.set(2.0, 4.0, 3.5);
+    const keyLight = new THREE.DirectionalLight(0xffffff, 3.4);
+    keyLight.position.set(1.5, 3.8, 3.5);
     scene.add(keyLight);
 
     // Chap tomondan yarqiroq zumrad/yashil jilo (Emerald Rim Light)
@@ -60,36 +60,36 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
     topBackLight.position.set(0, 4.5, -2.0);
     scene.add(topBackLight);
 
-    let mixer: THREE.AnimationMixer | null = null;
-    let characterModel: THREE.Object3D | null = null;
-    let headBone: THREE.Object3D | null = null;
+    // Pivot Wrapper Group (model o'z markazi atrofida siljimasdan aylanishi uchun)
+    const characterWrapper = new THREE.Group();
+    characterWrapper.position.set(0, 1.28, 0);
+    scene.add(characterWrapper);
+
+    // Modelning boshlang'ich burilishi (O'ngga 90 gradus qayrilib qolgan modelni to'g'ri ekranga qaratish)
+    // -Math.PI / 2 (-90°) modelni to'ppa-to'g'ri kameraga (ekranga) qaratadi
+    const BASE_ROTATION_Y = -Math.PI / 2;
+    characterWrapper.rotation.y = BASE_ROTATION_Y;
 
     const loader = new GLTFLoader();
     loader.load(
       '/result.glb',
       (gltf) => {
-        characterModel = gltf.scene;
+        const model = gltf.scene;
 
         // Modelni markazlashtirish va mos o'lchamga keltirish
-        const box = new THREE.Box3().setFromObject(characterModel);
+        const box = new THREE.Box3().setFromObject(model);
         const center = box.getCenter(new THREE.Vector3());
         const size = box.getSize(new THREE.Vector3());
 
         const maxDim = Math.max(size.x, size.y, size.z);
-        const scale = 1.9 / (maxDim || 1);
-        characterModel.scale.set(scale, scale, scale);
+        const scale = 1.95 / (maxDim || 1);
+        model.scale.set(scale, scale, scale);
 
-        characterModel.position.x = -center.x * scale;
-        characterModel.position.y = -center.y * scale + 1.25;
-        characterModel.position.z = -center.z * scale;
+        // Modelni wrapper ichida markaziga joylashtiramiz
+        model.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
 
         // Modelni yarqiraydigan, porloq (shiny/glossy/metallic) qilish
-        characterModel.traverse((child) => {
-          const name = child.name.toLowerCase();
-          if (!headBone && (name.includes('head') || name.includes('neck') || name.includes('bip_head'))) {
-            headBone = child;
-          }
-
+        model.traverse((child) => {
           if ((child as THREE.Mesh).isMesh) {
             const mesh = child as THREE.Mesh;
             mesh.castShadow = true;
@@ -104,13 +104,7 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
           }
         });
 
-        if (gltf.animations && gltf.animations.length > 0) {
-          mixer = new THREE.AnimationMixer(characterModel);
-          const action = mixer.clipAction(gltf.animations[0]);
-          action.play();
-        }
-
-        scene.add(characterModel);
+        characterWrapper.add(model);
         setModelLoaded(true);
       },
       (xhr) => {
@@ -128,16 +122,15 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
     function enhanceMaterial(originalMat: THREE.Material): THREE.Material {
       const m = originalMat.clone() as THREE.MeshStandardMaterial;
       if (m.isMeshStandardMaterial) {
-        m.roughness = 0.12; // Juda silliq, ko'zgu kabi yarqiraydigan
+        m.roughness = 0.12; // Silliq ko'zgu jilosi
         m.metalness = 0.55; // Porloq metallik/plastik yarqirash
-        // Nozik yarqiroq jilo
         m.emissive = new THREE.Color(0x0f3318);
         m.emissiveIntensity = 0.28;
       }
       return m;
     }
 
-    // Animatsiya sikli: bir o'ngga, bir chapga qarab vaziyatni kuzatish
+    // Animatsiya sikli: To'g'ri ekranga qarab turib, bir o'ngga, bir chapga qarab vaziyatni kuzatish
     let reqId: number;
     const clock = new THREE.Clock();
     let currentLookAngle = 0;
@@ -149,29 +142,21 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
       const delta = clock.getDelta();
       const time = clock.getElapsedTime();
 
-      if (mixer) {
-        mixer.update(delta);
-      }
-
-      // O'ngga va chapga sergak qarab kuzatish ritmi
+      // To'g'ri ekranga qarab turgan holatdan mayin chapga (-0.28 rad) va o'ngga (+0.28 rad) qarash
       if (time > nextLookChange) {
-        const angles = [-0.44, 0.44, 0.0, -0.38, 0.38];
+        const angles = [-0.30, 0.30, 0.0, -0.22, 0.22, 0.0];
         targetLookAngle = angles[Math.floor(Math.random() * angles.length)];
         nextLookChange = time + 2.4 + Math.random() * 2.0;
       }
 
       currentLookAngle += (targetLookAngle - currentLookAngle) * (delta * 2.5);
 
-      if (headBone) {
-        headBone.rotation.y = currentLookAngle * 0.8;
-        headBone.rotation.x = Math.sin(time * 1.5) * 0.04;
-      } else if (characterModel) {
-        characterModel.rotation.y = currentLookAngle;
-        characterModel.position.y = 1.25 + Math.sin(time * 1.8) * 0.015;
-      }
+      // Model to'ppa-to'g'ri ekranga qaraydi (BASE_ROTATION_Y) va mayin atrofni kuzatadi
+      characterWrapper.rotation.y = BASE_ROTATION_Y + currentLookAngle;
+      characterWrapper.position.y = 1.28 + Math.sin(time * 1.8) * 0.015; // mayin nafas olish tebranishi
 
       // Kamera mayin nafas tebranishi
-      camera.position.x = Math.sin(time * 0.6) * 0.03;
+      camera.position.x = Math.sin(time * 0.6) * 0.025;
       camera.position.y = 1.42 + Math.cos(time * 0.8) * 0.015;
 
       renderer.render(scene, camera);
@@ -215,7 +200,7 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
         </div>
       )}
 
-      {/* Minimalist Ekran chetidagi Operator Kirish Tugmasi (faqat burchakda, chalg'itmaydi) */}
+      {/* Minimalist Ekran chetidagi Operator Kirish Tugmasi */}
       <button
         onClick={() => {
           tacticalAudio.playClick();
