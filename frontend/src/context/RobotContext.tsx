@@ -235,7 +235,9 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         R: 'O\'ngga Burilish (R)',
         Q: 'Chapga Strafe Yonlama (Q)',
         E: 'O\'ngga Strafe Yonlama (E)',
-        S: 'To\'xtash (S)'
+        S: 'To\'xtash (S)',
+        U: 'Minora Yuqoriga (U)',
+        D: 'Minora Pastga (D)'
       };
       addLog('SERIAL', 'info', `Buyruq uzatildi: ${cmdNames[cmd]}`);
     }
