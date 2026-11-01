@@ -112,7 +112,7 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
     }
   };
 
-  // 2. AI OVOZI VA NUTQQA MOS LAB/OG'IZ MIMIKASI
+  // 2. AI OVOZI VA NUTQQA MOS LAB MIMIKASI
   const triggerAiSpeechDemo = () => {
     if (isSpeaking) return;
     setIsSpeaking(true);
@@ -138,7 +138,6 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
       };
 
       utter.onboundary = () => {
-        // Har bir bo'g'inda og'iz ochilishi va lab harakati
         speechEnergyRef.current = 1.0;
       };
 
@@ -218,106 +217,105 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
     const BASE_ROTATION_Y = -Math.PI / 2;
     characterWrapper.rotation.y = BASE_ROTATION_Y;
 
-    // A'ZOLAR: KO'ZLAR VA QORACHIQLAR UCHUN GURUHLAR
-    // Yuzdagi ko'zlar koordinatalari: Left (-0.165, 0.200, 0.575), Right (0.155, 0.200, 0.575)
-    function createCyberEye(xOffset: number) {
-      const eyeGroup = new THREE.Group();
-      eyeGroup.position.set(xOffset, 0.200, 0.575);
+    // A'ZOLAR: KO'ZLAR MODULI
+    // Yuz koordinatalari: Left (x: 0.285, y: 0.145, z: 0.116), Right (x: 0.285, y: 0.143, z: -0.106)
+    // Model yuzining old tomoni +X bo'lgani sababli, ko'zlar rotation.y = Math.PI / 2 bilan qaratiladi
+    interface CyberEyeModule {
+      group: THREE.Group;
+      pupilGroup: THREE.Group;
+      upperLid: THREE.Mesh;
+      lowerLid: THREE.Mesh;
+    }
 
-      // Ko'z qorachiq va kamalak parda guruhi (Look-At da harakatlanuvchi qism)
+    function createCyberEye(posX: number, posY: number, posZ: number): CyberEyeModule {
+      const group = new THREE.Group();
+      group.position.set(posX, posY, posZ);
+      group.rotation.y = Math.PI / 2; // Old tomonga qaratish (+X yo'nalishiga)
+
+      // 1. Oq sklera / ko'z asosi
+      const scleraGeo = new THREE.CircleGeometry(0.046, 32);
+      const scleraMat = new THREE.MeshBasicMaterial({
+        color: 0xf0f7fa,
+        side: THREE.DoubleSide
+      });
+      const sclera = new THREE.Mesh(scleraGeo, scleraMat);
+      sclera.position.z = 0.001;
+      group.add(sclera);
+
+      // 2. Qorachiq va kamalak parda guruhi (Look-At da erkin harakatlanadi)
       const pupilGroup = new THREE.Group();
+      pupilGroup.position.z = 0.002;
 
-      // Kamalak parda (Iris — Neon Cyan ring)
-      const irisGeo = new THREE.RingGeometry(0.007, 0.024, 24);
+      // Kamalak parda (Iris - Neon Cyan halqa)
+      const irisGeo = new THREE.RingGeometry(0.014, 0.033, 32);
       const irisMat = new THREE.MeshBasicMaterial({
-        color: 0x00f0ff,
+        color: 0x00d8ff,
         side: THREE.DoubleSide
       });
       const iris = new THREE.Mesh(irisGeo, irisMat);
       pupilGroup.add(iris);
 
-      // Qorachiq markazi (Pupil center - qora)
-      const pupilGeo = new THREE.CircleGeometry(0.008, 24);
+      // Qorachiq markazi (Pupil - qora)
+      const pupilGeo = new THREE.CircleGeometry(0.016, 32);
       const pupilMat = new THREE.MeshBasicMaterial({
-        color: 0x050d12,
+        color: 0x081018,
         side: THREE.DoubleSide
       });
       const pupil = new THREE.Mesh(pupilGeo, pupilMat);
       pupil.position.z = 0.001;
       pupilGroup.add(pupil);
 
-      // Yorug'lik nuri (Specular reflection nuqtasi)
-      const shineGeo = new THREE.CircleGeometry(0.003, 12);
+      // Yorug'lik jilosi (Ko'z jonliligi uchun oq aks)
+      const shineGeo = new THREE.CircleGeometry(0.006, 16);
       const shineMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
       const shine = new THREE.Mesh(shineGeo, shineMat);
-      shine.position.set(0.006, 0.006, 0.002);
+      shine.position.set(0.009, 0.009, 0.002);
       pupilGroup.add(shine);
 
-      eyeGroup.add(pupilGroup);
+      group.add(pupilGroup);
 
-      // Yuqori qovoq (Pirpirash / Blinking qopqog'i)
-      const upperLidGeo = new THREE.PlaneGeometry(0.065, 0.045);
+      // 3. Qovoqlar (Pirpirash / Blinking)
+      const lidGeo = new THREE.PlaneGeometry(0.098, 0.052);
       const lidMat = new THREE.MeshStandardMaterial({
-        color: 0x223528,
+        color: 0x1f382b,
         roughness: 0.35,
-        metalness: 0.5
+        metalness: 0.45
       });
-      const upperLid = new THREE.Mesh(upperLidGeo, lidMat);
-      upperLid.position.set(0, 0.038, 0.004);
-      eyeGroup.add(upperLid);
 
-      // Pastki qovoq
-      const lowerLid = new THREE.Mesh(upperLidGeo, lidMat);
-      lowerLid.position.set(0, -0.038, 0.004);
-      eyeGroup.add(lowerLid);
+      const upperLid = new THREE.Mesh(lidGeo, lidMat);
+      upperLid.position.set(0, 0.052, 0.004);
+      group.add(upperLid);
 
-      return { eyeGroup, pupilGroup, upperLid, lowerLid };
+      const lowerLid = new THREE.Mesh(lidGeo, lidMat);
+      lowerLid.position.set(0, -0.052, 0.004);
+      group.add(lowerLid);
+
+      return { group, pupilGroup, upperLid, lowerLid };
     }
 
-    const leftEye = createCyberEye(-0.165);
-    const rightEye = createCyberEye(0.155);
+    let leftEye: CyberEyeModule | null = null;
+    let rightEye: CyberEyeModule | null = null;
 
-    characterWrapper.add(leftEye.eyeGroup);
-    characterWrapper.add(rightEye.eyeGroup);
+    // LAB VA OG'IZ UCHUN 3D BO'SHLIQ
+    // Model og'zi: x: 0.285, y: -0.210, z: 0.000
+    const mouthApertureGroup = new THREE.Group();
+    mouthApertureGroup.position.set(0.285, -0.210, 0.0);
+    mouthApertureGroup.rotation.y = Math.PI / 2;
 
-    // LABLAR VA OG'IZ UCHUN MAXSUS DINAMIK ORAQ (Acoustic Oral Aperture)
-    // Og'iz markazi: (0, -0.160, 0.635)
-    const mouthGroup = new THREE.Group();
-    mouthGroup.position.set(0, -0.160, 0.635);
-
-    // Ichki og'iz bo'shlig'i (qorong'u va ovoz paytida neon pulsatsiyalanuvchi)
-    const oralCavityGeo = new THREE.PlaneGeometry(0.08, 0.03);
-    const oralCavityMat = new THREE.MeshBasicMaterial({
-      color: 0x07150c,
+    const oralInnerGeo = new THREE.PlaneGeometry(0.075, 0.012);
+    const oralInnerMat = new THREE.MeshBasicMaterial({
+      color: 0x061109,
       side: THREE.DoubleSide
     });
-    const oralCavity = new THREE.Mesh(oralCavityGeo, oralCavityMat);
-    mouthGroup.add(oralCavity);
-
-    // Yuqori lab (Upper Lip)
-    const upperLipGeo = new THREE.BoxGeometry(0.09, 0.012, 0.01);
-    const lipMat = new THREE.MeshStandardMaterial({
-      color: 0x1a452a,
-      roughness: 0.25,
-      metalness: 0.6,
-      emissive: new THREE.Color(0x0a2012),
-      emissiveIntensity: 0.3
-    });
-    const upperLip = new THREE.Mesh(upperLipGeo, lipMat);
-    upperLip.position.set(0, 0.006, 0.003);
-    mouthGroup.add(upperLip);
-
-    // Pastki lab (Lower Lip — gapirganda pastga tushuvchi)
-    const lowerLip = new THREE.Mesh(upperLipGeo, lipMat);
-    lowerLip.position.set(0, -0.006, 0.003);
-    mouthGroup.add(lowerLip);
-
-    characterWrapper.add(mouthGroup);
+    const oralInnerMesh = new THREE.Mesh(oralInnerGeo, oralInnerMat);
+    oralInnerMesh.position.z = 0.001;
+    mouthApertureGroup.add(oralInnerMesh);
 
     // GLTF 3D MESH YUKLASH VA LAB VERTEKSLARINI AJRATIB OLISH
     interface MouthVertInfo {
       index: number;
       origY: number;
+      origX: number;
       weight: number;
       isLower: boolean;
     }
@@ -352,6 +350,13 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
         model.scale.set(scale, scale, scale);
         model.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
 
+        // Ko'z modullari va og'iz bo'shlig'ini to'g'ridan-to'g'ri modelga joylashtiramiz
+        leftEye = createCyberEye(0.282, 0.145, 0.116);
+        rightEye = createCyberEye(0.282, 0.143, -0.106);
+        model.add(leftEye.group);
+        model.add(rightEye.group);
+        model.add(mouthApertureGroup);
+
         model.traverse((child) => {
           if ((child as THREE.Mesh).isMesh) {
             const mesh = child as THREE.Mesh;
@@ -363,27 +368,23 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
               originalPositions = new Float32Array(posAttr.array);
               mouthVerts = [];
 
-              // Og'iz va jag' vertekslarini topib, harakat vaznlarini (weights) hisoblash
+              // Haqiqiy lablar sohasi (Burun tegilmaydi! Faqat y: [-0.27, -0.15])
               for (let i = 0; i < posAttr.count; i++) {
                 const x = originalPositions[i * 3];
                 const y = originalPositions[i * 3 + 1];
                 const z = originalPositions[i * 3 + 2];
 
-                // world koordinatalariga o'tkazish
-                const wx = -(z - center.z) * scale;
-                const wy = (y - center.y) * scale;
-                const wz = (x - center.x) * scale;
-
-                // Og'iz va lablar sohasi: wy [-0.30, -0.06], wz > 0.45, |wx| < 0.22
-                if (wy >= -0.30 && wy <= -0.06 && wz > 0.45 && Math.abs(wx) < 0.20) {
-                  const dist = Math.sqrt(Math.pow(wx / 0.18, 2) + Math.pow((wy - (-0.16)) / 0.13, 2));
+                // Burun y > -0.12 da joylashgan. Lablar esa y: [-0.27, -0.15] oralig'ida
+                if (y >= -0.27 && y <= -0.15 && x > 0.15 && Math.abs(z) < 0.14) {
+                  const dist = Math.sqrt(Math.pow(z / 0.12, 2) + Math.pow((y - (-0.210)) / 0.055, 2));
                   if (dist < 1.0) {
                     const weight = Math.cos(dist * Math.PI * 0.5);
                     mouthVerts.push({
                       index: i,
                       origY: y,
+                      origX: x,
                       weight,
-                      isLower: wy < -0.155
+                      isLower: y < -0.205
                     });
                   }
                 }
@@ -444,15 +445,12 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
       const speechEnergy = speechEnergyRef.current;
 
       // -------------------------------------------------------------
-      // 1. TANA VA BOSH: BUTUNLAY BARQAROR (Qimirlamaydi!)
-      // Faqatgina inson yo'nalishiga minimal mikro-diqqat (~1.5 daraja)
+      // 1. TANA VA BOSH: BUTUNLAY BARQAROR (Qimirlamaydi)
       // -------------------------------------------------------------
-      const subtleHeadYaw = target.active ? target.x * 0.03 : 0;
-      const subtleHeadPitch = target.active ? -target.y * 0.02 : 0;
-      characterWrapper.rotation.y = BASE_ROTATION_Y + subtleHeadYaw;
-      characterWrapper.rotation.x = subtleHeadPitch;
+      characterWrapper.rotation.y = BASE_ROTATION_Y;
+      characterWrapper.rotation.x = 0;
       characterWrapper.rotation.z = 0;
-      characterWrapper.position.set(0, 1.28, 0); // Butun bosh/tana sakramaydi
+      characterWrapper.position.set(0, 1.28, 0);
 
       // -------------------------------------------------------------
       // 2. KO'ZLAR: FAQAT QORACHIQ VA NIGOH BURILADI (Look-At Gaze)
@@ -462,85 +460,87 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
       let desiredGazeY = 0;
 
       if (target.active) {
-        desiredGazeX = target.x * 0.015;  // Qorachiq gorizontal siljishi
-        desiredGazeY = -target.y * 0.012; // Qorachiq vertikal siljishi
+        // Inson yuzining ekrandagi koordinatalari bo'yicha qorachiq siljishi
+        desiredGazeX = -target.x * 0.016; // Gorizontal (chap-o'ng)
+        desiredGazeY = -target.y * 0.012; // Vertikal (tepa-past)
       } else {
-        // Tabiiy mikro-sakkadlar (insoniy tirik ko'z nigohi)
-        desiredGazeX = Math.sin(time * 0.8) * 0.006;
-        desiredGazeY = Math.cos(time * 1.2) * 0.004;
+        // Tabiiy insoniy mikro-sakkadlar (jonli nigoh o'ynashi)
+        desiredGazeX = Math.sin(time * 0.9) * 0.007;
+        desiredGazeY = Math.cos(time * 1.3) * 0.005;
       }
 
-      currentGazeX += (desiredGazeX - currentGazeX) * (delta * 7.0);
-      currentGazeY += (desiredGazeY - currentGazeY) * (delta * 7.0);
+      currentGazeX += (desiredGazeX - currentGazeX) * (delta * 8.0);
+      currentGazeY += (desiredGazeY - currentGazeY) * (delta * 8.0);
 
-      leftEye.pupilGroup.position.set(currentGazeX, currentGazeY, 0.001);
-      rightEye.pupilGroup.position.set(currentGazeX, currentGazeY, 0.001);
+      if (leftEye && rightEye) {
+        leftEye.pupilGroup.position.set(currentGazeX, currentGazeY, 0.002);
+        rightEye.pupilGroup.position.set(currentGazeX, currentGazeY, 0.002);
 
-      // KO'Z QOVOQLARINING PIRPIRASHI (Blinking)
-      if (!isBlinking && time > nextBlinkTime) {
-        isBlinking = true;
-        blinkStartTime = time;
-        nextBlinkTime = time + 3.0 + Math.random() * 2.5; // Har 3-5 soniyada pirpirash
-      }
-
-      let blinkLidOffset = 0.038;
-      if (isBlinking) {
-        const blinkElapsed = time - blinkStartTime;
-        const blinkDuration = 0.16; // 160 ms lik silliq pirpirash
-        if (blinkElapsed < blinkDuration) {
-          const blinkProgress = Math.sin((blinkElapsed / blinkDuration) * Math.PI);
-          blinkLidOffset = 0.038 - blinkProgress * 0.028; // Qovoqlar yopilib ochiladi
-        } else {
-          isBlinking = false;
+        // KO'Z QOVOQLARINING PIRPIRASHI (Blinking)
+        if (!isBlinking && time > nextBlinkTime) {
+          isBlinking = true;
+          blinkStartTime = time;
+          nextBlinkTime = time + 3.0 + Math.random() * 2.5; // Har 3-5 soniyada pirpirash
         }
-      }
 
-      leftEye.upperLid.position.y = blinkLidOffset;
-      leftEye.lowerLid.position.y = -blinkLidOffset;
-      rightEye.upperLid.position.y = blinkLidOffset;
-      rightEye.lowerLid.position.y = -blinkLidOffset;
+        let blinkLidOffset = 0.052;
+        if (isBlinking) {
+          const blinkElapsed = time - blinkStartTime;
+          const blinkDuration = 0.16; // 160 ms lik silliq pirpirash
+          if (blinkElapsed < blinkDuration) {
+            const blinkProgress = Math.sin((blinkElapsed / blinkDuration) * Math.PI);
+            blinkLidOffset = 0.052 - blinkProgress * 0.046; // Qovoqlar yopilib ochiladi
+          } else {
+            isBlinking = false;
+          }
+        }
+
+        leftEye.upperLid.position.y = blinkLidOffset;
+        leftEye.lowerLid.position.y = -blinkLidOffset;
+        rightEye.upperLid.position.y = blinkLidOffset;
+        rightEye.lowerLid.position.y = -blinkLidOffset;
+      }
 
       // -------------------------------------------------------------
-      // 3. OG'IZ VA LABLAR: FAQAT LABLAR OCHILADI VA GAPIRADI!
-      // Butun bosh cho'zilmaydi, faqat og'iz/lab qismlari o'z vazifasini bajaradi
+      // 3. OG'IZ VA LABLAR: BURUN EMAS, AYNAN LABLAR OCHILIB-YOPILADI!
+      // Faqat y: [-0.27, -0.15] oralig'idagi lab vertekslari deformatsiyalanadi
       // -------------------------------------------------------------
       let mouthAperture = 0;
 
       if (speechEnergy > 0.02) {
-        // Gapirayotganda fonemalarga mos ochilib-yopilish
-        const speechPhoneme = Math.abs(Math.sin(time * 16.0)) * 0.016 + Math.abs(Math.cos(time * 9.0)) * 0.008;
+        // So'z urg'usi va bo'g'inlarga mos dinamika
+        const speechPhoneme = Math.abs(Math.sin(time * 16.0)) * 0.022 + Math.abs(Math.cos(time * 9.0)) * 0.010;
         mouthAperture = speechEnergy * speechPhoneme;
 
         // Nutq energiyasini so'ndirish
         speechEnergyRef.current = Math.max(0, speechEnergyRef.current - delta * 0.45);
 
-        // Ovoz chiqayotganda akustik bo'shliqning nurlanishi
-        oralCavityMat.color.setHex(0x00ff88);
+        // Ovoz paytida og'iz ichi nuri
+        oralInnerMat.color.setHex(0x00ff88);
       } else {
         mouthAperture = 0;
-        oralCavityMat.color.setHex(0x07150c);
+        oralInnerMat.color.setHex(0x061109);
       }
 
-      // 3D Lab modullari ochilishi
-      upperLip.position.y = 0.006 + mouthAperture * 0.3;
-      lowerLip.position.y = -0.006 - mouthAperture * 1.2; // Pastki lab ko'proq ochiladi
-      oralCavity.scale.set(1.0 + mouthAperture * 8.0, 1.0 + mouthAperture * 25.0, 1.0);
+      // Og'iz bo'shlig'i ko'rinishi
+      oralInnerMesh.scale.set(1.0 + mouthAperture * 6.0, 1.0 + mouthAperture * 25.0, 1.0);
 
-      // 3D Modelning o'zidagi lab vertekslarini deformatsiyalash (Geometric Lip-Sync)
+      // 3D Modelning o'zidagi LAB vertekslarini deformatsiyalash (Geometric Lip-Sync)
       if (headMesh && originalPositions && mouthVerts.length > 0) {
         const posArray = headMesh.geometry.attributes.position.array as Float32Array;
-        const deformFactor = mouthAperture * 2.5;
 
         for (let j = 0; j < mouthVerts.length; j++) {
           const v = mouthVerts[j];
           const idxY = v.index * 3 + 1;
+          const idxX = v.index * 3;
 
           if (v.isLower) {
-            // Pastki lab va jag' pastga tushadi
-            posArray[idxY] = v.origY - deformFactor * v.weight;
+            // Pastki lab pastga ochiladi va jag' biroz oldinga ochiladi
+            posArray[idxY] = v.origY - mouthAperture * v.weight * 1.8;
+            posArray[idxX] = v.origX + mouthAperture * v.weight * 0.3;
           } else {
-            // Yuqori lab sal ko'tariladi
-            posArray[idxY] = v.origY + deformFactor * v.weight * 0.25;
+            // Yuqori lab biroz yuqoriga ko'tariladi (burun tegilmaydi)
+            posArray[idxY] = v.origY + mouthAperture * v.weight * 0.4;
           }
         }
         headMesh.geometry.attributes.position.needsUpdate = true;
