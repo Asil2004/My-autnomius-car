@@ -22,8 +22,8 @@ interface LogMessage {
 }
 
 interface RobotContextType {
-  activeTab: 'hud' | 'sos' | 'ai' | 'telemetry' | 'settings';
-  setActiveTab: (tab: 'hud' | 'sos' | 'ai' | 'telemetry' | 'settings') => void;
+  activeTab: 'hud' | 'sos' | 'ai' | 'telemetry' | 'maps' | 'settings';
+  setActiveTab: (tab: 'hud' | 'sos' | 'ai' | 'telemetry' | 'maps' | 'settings') => void;
   
   // Motion & Mecanum
   lastCommand: MecanumCommand;
@@ -77,7 +77,7 @@ interface RobotContextType {
 const RobotContext = createContext<RobotContextType | null>(null);
 
 export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [activeTab, setActiveTab] = useState<'hud' | 'sos' | 'ai' | 'telemetry' | 'settings'>('hud');
+  const [activeTab, setActiveTab] = useState<'hud' | 'sos' | 'ai' | 'telemetry' | 'maps' | 'settings'>('hud');
   
   const [lastCommand, setLastCommand] = useState<MecanumCommand>('S');
   const [speedLevel, setSpeedLevelState] = useState<SpeedLevel>(2);

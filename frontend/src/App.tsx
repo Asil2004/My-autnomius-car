@@ -6,6 +6,7 @@ import { HUDView } from './components/HUDView';
 import { SOSView } from './components/SOSView';
 import { AIAutonomousView } from './components/AIAutonomousView';
 import { LidarRadarView } from './components/LidarRadarView';
+import { GoogleMapsPatrolView } from './components/GoogleMapsPatrolView';
 import { SettingsView } from './components/SettingsView';
 import { RobotFaceView } from './components/RobotFaceView';
 import { OperatorAuthModal } from './components/OperatorAuthModal';
@@ -16,6 +17,7 @@ const MainContent: React.FC = () => {
   return (
     <main className="flex-1 flex flex-col overflow-hidden relative">
       {activeTab === 'hud' && <HUDView />}
+      {activeTab === 'maps' && <GoogleMapsPatrolView />}
       {activeTab === 'sos' && <SOSView />}
       {activeTab === 'ai' && <AIAutonomousView />}
       {activeTab === 'telemetry' && <LidarRadarView />}

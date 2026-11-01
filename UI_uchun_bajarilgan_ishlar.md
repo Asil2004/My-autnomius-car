@@ -1,172 +1,113 @@
-# 📋 "QALQON" IIV Avtonom Patrul Roboti — UI Uchun Bajarilgan Ishlar Hisoboti
+# 💻 QALQON v1.0 — Frontend, Taktik UI va Mobil Dastur Bo'yicha Yagona Rasmiy Hisobot va Ish Rejasi
 
-Ushbu hisobot "QALQON" loyihasining `qalqon.pdf` texnik hujjatini to'liq o'rganish, uning frontend boshqaruv markazini zamonaviy harbiy-taktik uslubda yaratish, Android APK formatida kompilyatsiya qilish, smartfonga o'rnatish va GitHub repozitoriyasiga muvaffaqiyatli kollobratsiya qilish bo'yicha bosqichma-bosqich bajarilgan ishlarni o'z ichiga oladi.
-
----
-
-## 1-BOSQICH: Texnik Hujjat (`qalqon.pdf`) Tahlili
-
-`qalqon.pdf` ("QALQON" IIV Avtonom Patrul Roboti: Yagona Jamlangan Texnik Qo'llanma) to'liq tahlil qilindi:
-1. **Loyiha Konsepsiyasi va Form-faktori**:
-   * Balandligi ~1.15 m, asosi 45x45 sm bo'lgan vertikal kiber-kuzatuv minorasi.
-   * Amortizatorsiz qattiq shassi (LiDAR va PTZ kamera gorizonti qimirlamasligi uchun).
-   * 8.7 dyuymli planshet: bronlangan 4 mm polikarbonat (Lexan) ortida, tashqi ochiq vintlarsiz.
-   * Politsiya stroboskop chiroqlari (qizil/ko'k) va 12V LiFePO4 batareya quvvati.
-2. **Mexatronika & Mecanum Kinematikasi**:
-   * 4WD Mecanum mustaqil harakat: Oldinga (`F`), Orqaga (`B`), Chapga (`L`), O'ngga (`R`), Strafe Chap (`Q`), Strafe O'ng (`E`), Joyida 360° burilish, To'xtatish (`S`).
-   * 3 darajali tezlik PWM: 1 (130), 2 (190), 3 (250).
-3. **Datchiklar & Xavfsizlik**:
-   * 4 ta HC-SR04 ultratovush: Old (A0/A1), Orqa (A2/A3), Chap, O'ng.
-   * Xavfsizlik sharti: Old masofa < 22 sm bo'lganda avtomatik to'xtash (`WARN:OBSTACLE_FRONT`).
-4. **Tarmoq va Dasturiy Interfeys**:
-   * Raspberry Pi veb-kontroller: `pi_patrol.py` (port 8000), MJPEG video strimi, `AUTO_CAMERA` va `MANUAL` rejimlari.
-   * Arduino L293D Shield (115200 baud, `/dev/ttyACM0`).
-5. **AI Intellekt & Loyihalar Integratsiyasi**:
-   * UIUC CS437 IoT Lab 1 TFLite modeli (`road_signs_quantized.tflite`): Odam (Piyoda), STOP belgisi, Svetoforlar (Qizil/Yashil), Tezlik 25/40 belgilari.
-   * F1TENTH TTC (Time to Collision) avtotormoz va Gap-Follow (to'siqlardan bo'sh yo'lak topish) algoritmi.
-   * Masofani kadr orqali hisoblash: $D = \frac{W \times F}{P}$ (Known Object Size) va OpenCV Aruco markerlari.
+> 👤 **Mas'ul muhandis (Kim):** Sarvar — Frontend va dasturiy ta'minot bo'yicha bosh muhandis (Frontend & Software Lead)  
+> 📅 **Oxirgi yangilanish (Qachon):** 02-Noyabr, 2026-yil | 00:32 (Toshkent vaqti, UTC+5)  
+> 🔗 **Loyiha repozitoriysi:** [https://github.com/Asil2004/My-autnomius-car](https://github.com/Asil2004/My-autnomius-car)  
+> 🌐 **Jonli Veb-Versiya (Demo):** [https://asil2004.github.io/My-autnomius-car/](https://asil2004.github.io/My-autnomius-car/)  
+> 📱 **Android APK:** [`qalqon-patrol-v1.0.apk`](qalqon-patrol-v1.0.apk) (Yengillashtirilgan: ~4.2 MB)  
+> 📌 **Eslatma:** Ushbu fayl dasturning Frontend, Taktik UI, Mobil APK va Veb-versiyasi bo'yicha **yagona rasmiy hisobot hujjati** hisoblanadi. Barcha frontend yangilanishlari faqat shu faylga qayd etib boriladi.
 
 ---
 
-## 2-BOSQICH: Taktik Kiber-HUD Frontend Arxitekturasi ("Anti-Neuro-Slop")
+## 🕒 QADAMMA-QADAM YANGILANISHLAR VA IJRO JURNALI (AUDIT LOG)
 
-AI ning odatiy va zerikarli ko'k-binafsharang "neyro slop" gradientlari chetga surilib, professional IIV va harbiy-kiber dispetcherlik dizayni ishlab chiqildi:
+Quyidagi jadvalda dasturiy ta'minot va UI bo'yicha amalga oshirilgan har bir yangilanish, kim tomonidan va qaysi vaqtda bajarilgani qayd etib boriladi:
 
-1. **Dizayn Tizimi (Design System)**:
-   * **Ranglar**: Chuqur himoyalangan taktik qora (`#06090e`, `#0a0f18`), politsiya ko'ki (`#1d63ff`), radar siani (`#00e5ff`), avariya qizili (`#ff2238`) va ogohlantiruvchi yantar (`#ffb300`).
-   * **Vizual effektlar**: Optik scanline panjaralari, HUD burchak krestlari (crosshair), chamfered taktik panellar, monospaced telemetriya shriftlari.
-2. **Web Audio Sintizatori (`audioService.ts`)**:
-   * Tashqi audio fayllarsiz Web Audio API orqali generatsiya qilinadigan operativ taktil click tovushlari, Mecanum komanda biplari, to'siq signali va politsiya 2.2Hz LFO sirena modulyatsiyasi.
-3. **Asosiy Modullar va Komponentlar**:
-   * `Navbar.tsx`: IIV "QALQON" gerbi, robot holati, ping (ms), LiFePO4 batareya (V va %), stroboskop/sirena tugmalari, E-STOP favqulodda to'xtatish.
-   * `HUDView.tsx`: Jonli video stream (MJPEG), 360° PTZ kamera boshqaruvi (pan/tilt burchaklari), 8 yo'nalishli Mecanum 4WD sensorli d-pad + klaviatura navigatsiyasi (`W, A, S, D, Q, E, Space, 1-3`), 4x HC-SR04 datchiklar masofa ko'rsatkichlari (<22sm xavf zonasi).
-   * `SOSView.tsx`: 8.7" bronlangan minora ekrani uchun gigant pulsatsiyalovchi **SOS 102** tugmasi, dispetcher (Katta leytenant Sh. Rahimov) bilan audio/video aloqa interfeysi, tezkor xizmatlar (102 Politsiya, 103 Tez Yordam, 101 FVV).
-   * `AIAutonomousView.tsx`: Edge TFLite ob'ektlar deteksiyasi, masofa hisoblash formulasi, svetofor va STOP belgisi reaksiyalari, F1TENTH real-vaqtdagi TTC (Time to Collision) ko'rsatkichi, 4 bosqichli amaliy yo'l xaritasi (Roadmap).
-   * `LidarRadarView.tsx`: HTML5 Canvas da to'liq 360° LD19 / RPLiDAR radar sweeps, 1m-5m masofa doiralari, burchaklar, to'siqlar nuqtalari buluti, 12V LiFePO4 batareya stansiyasi va M1-M4 motorlar holati.
-   * `SettingsView.tsx`: Raspberry Pi IP va portini boshqarish, Arduino serial protokoli, to'liq apparat pinout jadvali (Pinout, USB, sariq jumper xavfsizligi).
-   * `RobotContext.tsx`: Butun tizim holatini markazlashtiruvchi, simulyatsiya va real robot o'rtasida o'tishni ta'minlovchi global reaktiv boshqaruv yadrosi.
-
----
-
-## 3-BOSQICH: Android Platformasi va APK Kompilyatsiyasi
-
-1. **Capacitor Integratsiyasi**:
-   * `@capacitor/core`, `@capacitor/cli`, `@capacitor/android` o'rnatildi.
-   * Loyiha ID: `uz.iiv.qalqon`, Ilova nomi: `Qalqon`.
-2. **Java Moslashuvi va Xatolikni Bartaraf Etish**:
-   * Tizimda Java 17 o'rnatilganligi sababli, sukut bo'yicha Java 21 ni so'ragan Capacitor va Gradle konfiguratsiyalari to'liq `JavaVersion.VERSION_17` ga moslashtirildi.
-3. **APK Yig'ilishi (Gradle assembleDebug)**:
-   * Android SDK platforma vositalari (Build-Tools 35, Platform 36) yuklandi.
-   * `gradlew.bat assembleDebug` orqali muvaffaqiyatli APK yaratildi.
-   * **Natija fayl**: `qalqon-patrol-v1.0.apk` (Hajmi: 4.23 MB) loyiha asosiy papkasiga nusxalandi.
+| № | Qachon (Sana va Vaqt) | Kim (Mas'ul xodim) | Bajarilgan vazifa va Yangilanish mazmuni | Holat / Natija |
+| :---: | :---: | :---: | :--- | :---: |
+| **01** | 2026-10-31 \| 15:39 | **Sarvar** (Frontend) | `qalqon.pdf` texnik qo'llanmasi to'liq tahlil qilindi; mexatronika, L293D, RPi 8000 veb-serveri va UIUC TFLite talablari o'rganildi | `Bajarildi` |
+| **02** | 2026-10-31 \| 15:41 | **Sarvar** (Frontend) | Taktik Kiber-HUD arxitekturasi ("Anti-Neuro-Slop") yaratildi; Tailwind CSS, chuqur antratsit va IIV kobalt ranglar tizimi ishlab chiqildi | `Bajarildi` |
+| **03** | 2026-10-31 \| 15:42 | **Sarvar** (Frontend) | Web Audio API orqali maxsus kiber-ovoz sintizatori (`audioService.ts`) joriy etildi: taktil chertish, biplar, to'siq signali va 2.2Hz LFO sirena | `Bajarildi` |
+| **04** | 2026-10-31 \| 15:43 | **Sarvar** (Frontend) | 5 ta asosiy taktik modul ishlab chiqildi: `HUDView`, `SOSView`, `AIAutonomousView`, `LidarRadarView` (360° Canvas) va `SettingsView` | `Bajarildi` |
+| **05** | 2026-10-31 \| 15:52 | **Sarvar** (Frontend) | Capacitor Android platformasi ulandi, Java 17 ziddiyati bartaraf etildi va `qalqon-patrol-v1.0.apk` muvaffaqiyatli kompilyatsiya qilindi | `Bajarildi` |
+| **06** | 2026-10-31 \| 15:55 | **Sarvar** (Frontend) | ADB orqali ulangan Xiaomi / Redmi Note 11 Pro (`86064beb0013`) telefoniga dastur to'g'ridan-to'g'ri o'rnatildi va ishga tushirildi | `Bajarildi` |
+| **07** | 2026-10-31 \| 16:11 | **Sarvar** (Frontend) | GitHub repozitoriyasiga kollobratorlik huquqi tasdiqlandi va barcha kodlar `main` tarmog'iga push qilindi (`24cc868`) | `Bajarildi` |
+| **08** | 2026-10-31 \| 17:21 | **Sarvar** (Frontend) | Planshet uchun gorizontal rejim (`sensorLandscape`), 3D `result.glb` oyna ortidagi odam va xavfsiz Operator PIN/Parol modali yaratildi | `Bajarildi` |
+| **09** | 2026-10-31 \| 17:37 | **Sarvar** (Frontend) | Bosh sahifa minimalist holga keltirildi (yozuv va vidjetlar tozalandi), fon och yashil qilinib, 3D model yarqiroq jilo bilan yangilandi | `Bajarildi` |
+| **10** | 2026-11-01 \| 22:05 | **Sarvar** (Frontend) | 3D politsiyachi yuzining 90° o'ngga burilib qolishi to'g'rilandi: wrapper guruhi va `-Math.PI / 2` orqali to'ppa-to'g'ri ekranga qaratildi | `Bajarildi` |
+| **11** | 2026-11-01 \| 22:19 | **Sarvar** (Frontend) | Mustaqil Veb-versiya nisbiy yo'l bilan (`base: './'`) sozlandi va GitHub Actions orqali avtomatlashtirilgan GitHub Pages CI/CD yo'lga qo'yildi | `Bajarildi` |
+| **12** | 2026-11-01 \| 23:59 | **Sarvar** (Frontend) | `google_maps_qalqon_patrol.html` o'rganilib, Operator Paneliga yangi `Google Xarita` (Digital Twin & Avtonom Patrul) bo'limi qo'shildi: Leaflet Google Hybrid/Roadmap qatlamlari, QALQON SVG markeri, OSRM ko'cha navigatsiyasi, G'alaba/Navoiy presetlari va RPi WebSocket integratsiyasi | `Bajarildi` |
+| **13** | 2026-11-02 \| 00:06 | **Boburjon** (Frontend & Optimizatsiya) | 3D model hajmi 90% ga qisqartirildi (41MB dan 3.9MB ga), Three.js mobil render sikli barqaror 60 FPS ga qulflandi, PointLight lari DirectionalLight ga o'tkazilib, GPU qizishi bartaraf etildi | `Bajarildi` |
+| **14** | 2026-11-02 \| 00:18 | **Asilbek** (Mexatronika & AI) | RobotFaceView-ga old kamera orqali real-vaqtda odam yuzini kuzatish (Look-At Tracking) va AI nutq mimikasi (Speech Mimicry) funksiyalari integratsiya qilindi | `Bajarildi` |
+| **15** | 2026-11-02 \| 00:32 | **Sarvar** (Frontend & Mobile) | Barcha yangilanishlar birlashtirildi, eng yangi yengillashtirilgan APK kompilyatsiya qilindi va smartfonga muvaffaqiyatli o'rnatildi | `Bajarildi` |
 
 ---
 
-## 4-BOSQICH: Android Smartfonga Avtomatik O'rnatish
+## 📌 Asosiy Dasturiy Konsepsiya va Foydalanuvchi Tajribasi (UX/UI)
 
-1. **ADB orqali Qurilma Aniqlanishi**:
-   * Ulangan qurilma: `Xiaomi / Redmi Note 11 Pro (2209116AG - Sweet)`.
-   * Qurilma ID: `86064beb0013`.
-2. **O'rnatish va Ishga Tushirish**:
-   * `adb install -r -d qalqon-patrol-v1.0.apk` buyrug'i orqali o'rnatildi (`Success`).
-   * `adb shell am start -n uz.iiv.qalqon/.MainActivity` orqali to'g'ridan-to'g'ri telefonda ishga tushirildi.
-   * Dastur smartfon ekranida to'liq interaktiv rejimda ochildi.
+Dastur 2 ta asosiy mustaqil ishchi muhitdan iborat:
 
----
+### 1. Robotning Yuz Displeyi (Robot Face / Kiosk View)
+Robot minorasining old qismidagi 8.7 dyuymli gorizontal ekranda xizmat qiladi:
+* **Yengillashtirilgan 3D Posbon (3.9 MB)**: 41 MB dan 3.9 MB ga keltirilgan, 60 FPS silliqlikda ishlovchi yarqiroq kiber-politsiyachi (`result.glb`).
+* **Kamera Orqali Yuzni Kuzatish (Look-At Tracking)**: Planshetning old kamerasi orqali unga yaqinlashgan odamni aniqlaydi va uning ko'zlariga qarab turadi.
+* **Nutq Mimikasi (Speech Mimicry)**: Fuqaro bilan ovozli muloqot chog'ida nutq chastotasiga qarab dinamik tebranuvchi jonli mimika.
+* **Estetik Och Yashil Fon**: Tinchlantiruvchi, professional och yashil (`#D7F5DC`) fon.
+* **Yashirin Operator Kirishi**: Ekran burchagidagi minimalist qulf belgisi orqali xizmat xodimlari PIN/parol bilan boshqaruv markaziga o'ta oladi.
 
-## 5-BOSQICH: GitHub Repozitoriyasiga Kollobratsiya
-
-1. **Git Initsializatsiyasi**:
-   * Repozitoriy: `https://github.com/Asil2004/My-autnomius-car.git`.
-   * Mavjud `main` tarmog'i bilan rebase va sinxronizatsiya qilindi.
-2. **Gitignore va Kesh Tozalash**:
-   * Og'ir `node_modules`, `build` keshlar chiqarib tashlanib, loyihaning toza manba kodlari qoldirildi.
-3. **Kollobratorlik Ruxsati va Push**:
-   * Taklifnoma tasdiqlangach, `git push origin main` muvaffaqiyatli bajarildi.
-   * **Commit kodi**: `24cc868` (*feat: Add tactical cyber-HUD frontend & Android APK control center for QALQON*).
-
+### 2. Taktik Boshqaruv Markazi (Operator Mission Control HUD)
+Operator yoki dispetcher uchun to'liq boshqaruv ekrani:
+* **Mecanum & Differensial Pult**: `W, A, S, D, Q, E, Space, 1, 2, 3` hamda teleskopik minora buyruqlari (`U`, `D`).
+* **Google Xarita & Digital Twin SLAM**: Leaflet asosidagi Google Hybrid (Sun'iy yo'ldosh) va Roadmap xaritasi, QALQON roboti 56x58 mm aniq masshtabli SVG Digital Twin markeri (LiDAR sweep, Mecanum shinalar, gumbaz, teleskopik minora va yo'nalish nuri bilan). OSRM orqali ko'cha va yo'lkalardan bino/uylarga kirmasdan avtonom patrul marshruti tuzish, G'alaba va Navoiy ko'chalari tayyor marshrut presetlari, 10Hz patrul simulyatsiyasi hamda Raspberry Pi 4 WebSocket orqali jonli GPS kuzatuv.
+* **Sensorlar va Avtotormoz**: 4 ta HC-SR04 masofalari, old to'siq $\le 22\text{ sm}$ bo'lganda avtomatik to'xtash (`WARN:OBSTACLE_FRONT`).
+* **360° LD19 LiDAR Radar**: Real-vaqtdagi radar sweeps (1m – 5m radiusli nurlar).
+* **SOS 102 va Dispetcherlik**: Jonli video/audio aloqa, politsiya, tez tibbiy yordam va qutqaruv yo'nalishlari.
+* **AI Ko'rishi**: Odam (Piyoda), STOP belgisi, svetoforlar va tezlik cheklovlari deteksiyasi.
 
 ---
 
-## 6-BOSQICH: Robot Displeyi Gorizontal Rejimi & 3D `result.glb` Oyna Ortidagi Odam Integratsiyasi
+## 📐 Dasturiy Arxitektura va Texnik Ko'rsatkichlar
 
-1. **Gorizontal (Landscape) Orientatsiya**:
-   * Dastur robot minorasining 8.7" planshet ekrani uchun to'liq gorizontal (landscape) rejimga o'tkazildi.
-   * `AndroidManifest.xml` da `android:screenOrientation="sensorLandscape"` o'rnatildi.
-2. **Oyna Ortida Turgan 3D Odam (`result.glb`) Bosh Sahifasi**:
-   * Three.js (`three` va `GLTFLoader`) orqali `result.glb` 3D modeli yuklandi.
-   * Minora ichidagi kiber-yorug'lik (police cyan rim light, blue/red ambient) va 4 mm bronlangan Lexan oynasi effekti (glare, scanlines, zirhli burchaklar) qo'shildi.
-   * **Jonli Sergak Harakat**: Model bir o'ngga, bir chapga silliq qarab (`targetLookAngle` sinusoidal ritmi), vaziyatni sergak kuzatayotgandek animatsiya qilindi.
-   * Ekran pastida fuqarolar uchun tezkor **SOS 102** tugmasi, sana/vaqt va jamoat xavfsizligi statusi joylashtirildi.
-3. **Xavfsiz Operator Kirish Tizimi (PIN/Parol)**:
-   * Ekran yuqori o'ng chetida "OPERATOR KIRISH" taktik tugmasi o'rnatildi.
-   * Bosilganda zamonaviy `OperatorAuthModal` ochiladi (Login: `operator`, Parol: `102`).
-   * Touchscreen planshetlar uchun qulay raqamli sensor numpad bilan jihozlandi.
-   * To'g'ri kiritilgach, to'liq Operator Boshqaruv Markazi ochiladi.
-   * Operator markazida "YUZ EKRANI" tugmasi orqali istalgan vaqtda qayta 3D yuz rejimiga qulflanish imkoniyati yaratildi.
-4. **Android APK Yangilanishi va Qurilmaga O'rnatilishi**:
-   * Yangi gorizontal va 3D modifikatsiyalangan versiya `gradlew.bat assembleDebug` orqali yig'ildi.
-   * Ulangan Xiaomi / Redmi Note 11 Pro qurilmasiga to'g'ridan-to'g'ri yangilanib o'rnatildi va ishga tushirildi.
-
+* **Frontend Asosi:** React 19, TypeScript 5, Vite 6, Tailwind CSS 3.4.
+* **Xarita va Geo-Navigatsiya Dvigateli:** Leaflet.js 1.9.4, Google Maps Tiles (Hybrid/Roadmap), OSRM Foot Routing Engine.
+* **3D Grafika Dvigateli:** Three.js (r182), GLTFLoader, ACESFilmicToneMapping (Exposure: 1.45), 60 FPS cheklov.
+* **Mobil Platforma:** Capacitor 7 Android (`uz.iiv.qalqon`), Java 17 mosligi, `sensorLandscape` gorizontal qulfi.
+* **Audio Engine:** Sintetik Web Audio API (LFO 2.2Hz modulyatsiyalangan sirena va taktil chastotalar).
+* **Tarmoq va Integratsiya:** WebSocket / REST API orqali Raspberry Pi veb-serveri (`ws://<rpi_ip>/ws`) va Arduino Serial (`/dev/ttyACM0`, 115200 baud).
+* **Deploy Quvuri:** GitHub Actions CI/CD (`deploy-pages.yml`) orqali GitHub Pages-ga avtomatik yetkazish.
 
 ---
 
-## 7-BOSQICH: Minimalist Och Yashil Fon, 3D Modelni Yarqiratish va Ekrandagi Ortiqcha Elementlarni Tozalash
+## 🏗️ Frontend va Taktik Dasturiy Ta'minot Strukturasi
 
-1. **Bosh Sahifani Tozalash (Distraction-Free Face Mode)**:
-   * Ekrandagi barcha chalg'ituvchi yozuvlar, ma'lumot vidjetlari (soat, sana, sektor, batareya holati) va ulkan SOS tugmalari to'liq olib tashlandi.
-   * Ekran toza va estetik holatga keltirildi.
-   * Faqat burchakda sezilar-sezilmas, ixcham va minimalist qulf tugmasi qoldirildi (operator bosib PIN/parol bilan boshqaruv paneliga o'tishi uchun).
-2. **Och Yashil Fon (Soft Pastel Light Green)**:
-   * HTML konteyner va Three.js sahnasi foni chiroyli och yashil rangga (`#D7F5DC`) o'tkazildi.
-   * Tuman (fog) rangi ham och yashil qilib sozlandi.
-3. **3D Modelni Yarqiraydigan (Glossy/Metallic/Specular) Qilish**:
-   * Materiallar yaltiroq va silliq parametrlar bilan yangilandi (`roughness = 0.12`, `metalness = 0.55`).
-   * Zümrad va sian rangdagi kuchli yon yorug'liklar (Rim Lights, intensity 4.5), asosiy tepa quyosh nuri (intensity 3.2) va orqa soch/yelka jilosi qo'shildi.
-   * Natijada 3D model och yashil fonda yaltiroq, yarqiragan va jozibador ko'rinishga ega bo'ldi.
-4. **Android APK Yangilanishi va Telefonga Qayta O'rnatilishi**:
-   * Yangilangan kodlar asosida yangi APK kompilyatsiya qilindi (`qalqon-patrol-v1.0.apk`).
-   * Ulangan Xiaomi / Redmi qurilmasiga to'g'ridan-to'g'ri o'rnatildi va ishga tushirildi.
+```mermaid
+graph TD
+    subgraph 1-Qatlam [Displey va Taqdimot Qatlami: UI Views]
+        FACE[RobotFaceView: Oyna ortidagi 3.9MB 3D Model & Camera Tracking]
+        AUTH[OperatorAuthModal: Xavfsiz PIN / Parol Tizimi]
+        HUD[HUDView: Jonli Strim, PTZ Kamera & 4WD Boshqaruv]
+        MAPS[GoogleMapsPatrolView: Google Maps Hybrid & Digital Twin SLAM]
+        RADAR[LidarRadarView: 360° Canvas Radar & Telemetriya]
+        AI_VIEW[AIAutonomousView: TFLite Deteksiya & F1TENTH TTC]
+        SOS_VIEW[SOSView: 102 Favqulodda Chaqiruv Paneli]
+        SETTINGS[SettingsView: Uskunalar va Pinout Sozlamalari]
+    end
 
+    subgraph 2-Qatlam [Mantiq va Holat Boshqaruvi: State & Services]
+        CTX[RobotContext: Global Reaktiv Tizim Yadrosi]
+        AUDIO[TacticalAudioService: Web Audio API Sintezatori]
+        THREE_CORE[Three.js Scene, Key & Rim Lights, Animation Loop]
+        LEAFLET_CORE[Leaflet Map Engine & OSRM Path Routing]
+    end
 
----
+    subgraph 3-Qatlam [Platforma va Integratsiya: Native & Web]
+        WEB_DIST[Vite SPA: Nisbiy Base bilan Web Versiya]
+        CAPACITOR[Capacitor Android: Native Bridge]
+        ACTIONS[GitHub Actions CI/CD: GitHub Pages Avto-Deploy]
+    end
 
-## 8-BOSQICH: 3D Politsiyachi Modelining Orientatsiyasini To'g'rilash (Ekranga Yuzma-Yuz Qarash)
+    subgraph 4-Qatlam [Apparat va Server Qatlami: Hardware & RPi]
+        RPI[Raspberry Pi 8000 Port: WebSocket Telemetriya & MJPEG]
+        ARDUINO[Arduino Uno: L293D / Motorlar & HC-SR04 Sonarlar]
+        PHONE[Android Planshet / Smartfon Qurilmasi]
+    end
 
-1. **Rotatsiya Muammosini Tahlil Qilish**:
-   * `result.glb` modelining ichki koordinatalari tahlil qilindi (bitta statik mesh `tripo_node_...`). Model eksport qilinganda dastlabki yo'nalishi +X o'qiga (90 gradus o'ngga) qaragan holatda bo'lgan, natijada kamera oldida yonboshlab qolgan edi.
-2. **Kamera Markazi va Boshlang'ich Burilish (Base Rotation)**:
-   * Model markazi atrofida siljimasdan erkin aylanishi uchun `THREE.Group` wrapper tizimi joriy etildi.
-   * Asosiy burchak: `BASE_ROTATION_Y = -Math.PI / 2` (-90 gradus) o'rnatildi.
-   * Natijada politsiyachining yuzi to'ppa-to'g'ri foydalanuvchiga (ekranga) qarab turishi ta'minlandi.
-3. **Jonli Kuzatuv Ritmiga Moslash**:
-   * To'g'ri qaragan holatdan turib silliq mayin burchaklar ostida ($\pm 0.30$ rad, ya'ni $\approx \pm 17^\circ$) chapga va o'ngga atrofni sergak kuzatishi saqlab qolindi.
-4. **Android APK Yangilanishi va Qurilmaga O'rnatilishi**:
-   * Yangi to'g'rilangan APK fayli kompilyatsiya qilindi (`qalqon-patrol-v1.0.apk`).
-   * Ulangan Xiaomi / Redmi qurilmasiga to'g'ridan-to'g'ri o'rnatildi va ishga tushirildi.
-
-
----
-
-## 9-BOSQICH: Mobil Qurilmalar va Veb-Ilova Uchun Yuqori Unumdorlikdagi Optimizatsiya (60 FPS & 90% Hajm Qisqarishi)
-
-1. **3D Modelni 90% ga Yengillatish (`result.glb`)**:
-   * Dastlabki `result.glb` modeli 41 MB bo'lib, 1 430 000 ta uchburchak va 733 000 ta cho'qqidan iborat edi. Bu mobil protsessor (JavaScript) xotirasini to'ldirib, sayt va APK ochilishida 4-6 soniya qotish (freeze) keltirib chiqarayotgan edi.
-   * `gltfpack` (meshoptimizer) orqali vizual sifatni yo'qotmagan holda model poligoni 114 000 tagacha soddalashtirildi va fayl hajmi **41 MB dan 3.9 MB ga (90.4% ga) tushirildi**.
-   * Model yuklanish vaqti 500 ms dan kam vaqtga qisqardi.
-
-2. **Three.js WebGL Mobil Shassi Moslashuvi**:
-   * **DPR va Rezolyutsiya**: Mobil qurilmalarda (Galaxy A56, Redmi va boshqalar) ekran zichligi DPR 2.8+ bo'lganligi sababli, `setPixelRatio` mobil rejimda `1.2` ga chegaralandi.
-   * **Yorug'lik Shaders Optimizatsiyasi**: Har bir fragment uchun og'ir kvadrat-masofa hisoblaydigan `PointLight` lar o'rniga engil vektorli `DirectionalLight` rim yorug'liklar qo'yildi (GPU dagi fragment yuklamasi 3 baravarga kamaytirildi).
-   * **120Hz Ekranlarda 60 FPS Chiziqli Cheklov**: Galaxy A56 kabi 120Hz ekranlarda ortiqcha kadrlar chizilib batareya va GPU qizib ketmasligi uchun render sikli barqaror 60 FPS ga qulflab qo'yildi.
-   * **Matritsa Tejamkorligi**: Submeshlar uchun `matrixAutoUpdate = false` o'rnatilib, per-frame hisoblashlar bekor qilindi.
-
-3. **CSS va Canvas Interfeysini Tezlashtirish**:
-   * Mobil brauzerlarda va Android WebView da kadr tushishiga (jank) sabab bo'ladigan og'ir `backdrop-filter: blur(8px)` o'rniga apparat tezlatgichli (GPU `translateZ(0)`) yengil taktik fonlar o'rnatildi.
-   * Stroboskop animatsiyalaridagi dasturiy `filter: drop-shadow` o'rniga GPU-tezkor `box-shadow` ga o'tildi.
-   * LiDAR Radar Canvas da har kadrda blur filtr ishlatuvchi og'ir `ctx.shadowBlur` olib tashlanib, radar chizish 30 FPS ga optimallashtirildi.
-
-4. **Samsung Galaxy A56 (`SM-A566E`) ga ADB orqali Yangi Yengil APK O'rnatilishi**:
-   * Yangi APK kompilyatsiya qilindi (`qalqon-patrol-v1.0.apk`).
-   * Kabel orqali ulangan `SM-A566E` telefoniga ADB orqali o'rnatilib, qayta ishga tushirildi.
-   * Natijada telefon ekranida ham, saytda ham hech qanday qotishlarsiz, barqaror silliq 60 FPS animatsiya ta'minlandi.
+    FACE --> THREE_CORE
+    AUTH --> CTX
+    HUD --> CTX
+    MAPS --> LEAFLET_CORE
+    MAPS --> CTX
+    RADAR --> CTX
+    AI_VIEW --> CTX
+    SOS_VIEW --> CTX
+```
