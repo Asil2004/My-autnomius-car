@@ -101,9 +101,9 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
                 const faceX = 1.0 - normX;
                 const faceY = normY;
 
-                gazeRef.current.targetYaw = (faceX - 0.5) * -0.95; // o'ng-chap burilish
+                gazeRef.current.targetYaw = (faceX - 0.5) * 0.95; // o'ng-chap burilish
                 gazeRef.current.targetPitch = (faceY - 0.5) * 0.55; // yuqori-pastga qiyalik
-                gazeRef.current.targetRoll = (faceX - 0.5) * -0.15; // mayin quloqqa yonboshlash
+                gazeRef.current.targetRoll = (faceX - 0.5) * 0.15; // mayin quloqqa yonboshlash
                 gazeRef.current.hasFace = true;
                 setIsFaceDetected(true);
                 return;
@@ -145,9 +145,9 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
               const faceX = 1.0 - avgX; // oyna effekti
               const faceY = avgY;
 
-              gazeRef.current.targetYaw = (faceX - 0.5) * -0.90;
+              gazeRef.current.targetYaw = (faceX - 0.5) * 0.90;
               gazeRef.current.targetPitch = (faceY - 0.5) * 0.50;
-              gazeRef.current.targetRoll = (faceX - 0.5) * -0.12;
+              gazeRef.current.targetRoll = (faceX - 0.5) * 0.12;
               gazeRef.current.hasFace = true;
               setIsFaceDetected(true);
             } else {
@@ -356,9 +356,9 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
       const normX = clientX / window.innerWidth;
       const normY = clientY / window.innerHeight;
 
-      gazeRef.current.targetYaw = (normX - 0.5) * -0.85;
+      gazeRef.current.targetYaw = (normX - 0.5) * 0.85;
       gazeRef.current.targetPitch = (normY - 0.5) * 0.45;
-      gazeRef.current.targetRoll = (normX - 0.5) * -0.10;
+      gazeRef.current.targetRoll = (normX - 0.5) * 0.10;
     };
 
     window.addEventListener('mousemove', handlePointerMove);
