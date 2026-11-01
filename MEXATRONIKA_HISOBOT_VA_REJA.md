@@ -1,7 +1,7 @@
 # ⚙️ QALQON v1.0 — Mexatronika va Apparat Konstruksiyasi Bo'yicha Yagona Rasmiy Hisobot va Ish Rejasi
 
 > 👤 **Mas'ul muhandis (Kim):** Asilbek — Mexatronika va apparat konstruksiyasi bo'yicha bosh muhandis (Mechatronics & Hardware Lead)  
-> 📅 **Oxirgi yangilanish (Qachon):** 01-Noyabr, 2026-yil | 21:50 (Toshkent vaqti, UTC+5)  
+> 📅 **Oxirgi yangilanish (Qachon):** 01-Noyabr, 2026-yil | 22:05 (Toshkent vaqti, UTC+5)  
 > 🔗 **Loyiha repozitoriysi:** [https://github.com/Asil2004/My-autnomius-car](https://github.com/Asil2004/My-autnomius-car)  
 > 📌 **Eslatma:** Ushbu fayl loyihadagi **yagona rasmiy hisobot hujjati** hisoblanadi. Loyihada boshqa ortiqcha hisobot fayllari yuritilmaydi, barcha yangilanishlar faqat shu faylga kiritib boriladi.
 
@@ -26,6 +26,7 @@ Quyidagi jadvalda loyiha davomida amalga oshirilgan har bir muhandislik yangilan
 | **11** | 2026-10-31 \| 22:38 | **Asilbek** (Mexatronika & Apparat) | **Kanonik 3D render va rasmiy CAD chizmasi (SVG) yaratildi:** Konstruktorlar Muhammadali va Lazizbekka o'lchamlar va shassi/gumbaz chizmalari, elektron muhandisi Abduvaliga 12V LiFePO4 quvvat ta'minoti va avto-zaryadlash stansiyasi talablari yuborilib, tasdiq va takliflar so'raldi | `Bajarildi` |
 | **12** | 2026-10-31 \| 22:43 | **Asilbek** (Mexatronika & Jamoa) | **Boburjonga Telethon + Antigravity integratsiyasi qo'llanmasi yuborildi:** Shaxsiy Telegram (`@Boburjon2108`) orqali `my.telegram.org` API kalitlarini olish, sessiya yaratish va MCP server orqali Antigravity agentiga ulash yo'riqnomasi yetkazildi | `Bajarildi` |
 | **13** | 2026-11-01 \| 21:50 | **Asilbek** (Mexatronika & Navigatsiya) | **Metrik masshtabdagi Virtual Model (Digital Twin), Planshet GPS integratsiyasi va 360° LiDAR avtonom patrul simulyatori yaratildi:** Planshet ichki GPS'ini WebSocket orqali ROS 2 / Pi ga uzatish va Google Maps ustida aniq masshtabli avtonom yurish mantiqi joriy etildi | `Bajarildi` |
+| **14** | 2026-11-01 \| 22:04 | **Asilbek** (Mexatronika & Navigatsiya) | **Aqlli Ko'cha Navigatsiyasi (OSRM Smart Street Routing) joriy etildi:** Uylar va tomlar ustidan to'g'ri chiziqda uchib o'tish butunlay bartaraf etildi; robot xaritadagi real ko'cha va piyodalar yo'lagi (G'alaba, Amir Temur, Navoiy ko'chalari) bo'ylab burchaklarda burilib yuradigan qilindi va lokal server (port 8080) ishga tushirildi | `Bajarildi` |
 
 ---
 
