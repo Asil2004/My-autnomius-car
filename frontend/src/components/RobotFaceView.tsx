@@ -17,58 +17,80 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
     const container = containerRef.current;
     if (!container) return;
 
-    const width = container.clientWidth;
-    const height = container.clientHeight;
+    // Mobile / Low-power device detection for adaptive high-performance rendering
+    const isMobile =
+      /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+      window.innerWidth < 768;
+
+    const width = container.clientWidth || window.innerWidth;
+    const height = container.clientHeight || window.innerHeight;
 
     const scene = new THREE.Scene();
     // Och yashil fon (Soft pastel light green)
     const bgColor = new THREE.Color(0xd7f5dc);
     scene.background = bgColor;
-    scene.fog = new THREE.FogExp2(0xd7f5dc, 0.04);
+    if (!isMobile) {
+      scene.fog = new THREE.FogExp2(0xd7f5dc, 0.04);
+    }
 
-    const camera = new THREE.PerspectiveCamera(38, width / height, 0.1, 100);
+    const camera = new THREE.PerspectiveCamera(38, width / height, 0.1, 50);
     camera.position.set(0, 1.42, 2.7);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
+    // Optimized WebGLRenderer for mobile: disable antialias on high-DPI mobile, clamp DPR to 1.2
+    const renderer = new THREE.WebGLRenderer({
+      antialias: !isMobile,
+      alpha: false,
+      powerPreference: isMobile ? 'default' : 'high-performance',
+      precision: isMobile ? 'mediump' : 'highp',
+      stencil: false,
+      depth: true
+    });
     renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    const maxDpr = isMobile ? 1.2 : 1.75;
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, maxDpr));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.45;
+    renderer.toneMappingExposure = 1.38;
     container.appendChild(renderer.domElement);
 
-    // Yarqiraydigan yorug'liklar tizimi (Studio Glow & Specular Highlights)
-    const ambientLight = new THREE.AmbientLight(0xffffff, 2.0);
+    // Optimized Lighting: High performance Directional Lights instead of heavy point lights
+    const ambientLight = new THREE.AmbientLight(0xd7f5dc, isMobile ? 2.4 : 2.0);
     scene.add(ambientLight);
 
     // Asosiy old-yuqori yorug'lik (Key Light)
-    const keyLight = new THREE.DirectionalLight(0xffffff, 3.4);
-    keyLight.position.set(1.5, 3.8, 3.5);
+    const keyLight = new THREE.DirectionalLight(0xffffff, 3.2);
+    keyLight.position.set(1.5, 3.5, 3.0);
     scene.add(keyLight);
 
-    // Chap tomondan yarqiroq zumrad/yashil jilo (Emerald Rim Light)
-    const rimLightLeft = new THREE.PointLight(0x00ff88, 4.5, 10);
-    rimLightLeft.position.set(-2.5, 2.5, 1.0);
+    // Chap tomondan zumrad jilo (Emerald Rim Light — Directional for zero mobile fragment shader cost)
+    const rimLightLeft = new THREE.DirectionalLight(0x00ff88, 2.2);
+    rimLightLeft.position.set(-2.5, 2.0, 1.0);
     scene.add(rimLightLeft);
 
-    // O'ng tomondan yarqiroq oq-sian jilo (Cyan Specular Rim Light)
-    const rimLightRight = new THREE.PointLight(0x66ffff, 4.5, 10);
-    rimLightRight.position.set(2.5, 2.2, 0.8);
+    // O'ng tomondan sian jilo (Cyan Specular Rim Light)
+    const rimLightRight = new THREE.DirectionalLight(0x66ffff, 2.2);
+    rimLightRight.position.set(2.5, 1.8, 1.0);
     scene.add(rimLightRight);
-
-    // Tepa orqa yarqiroq jilo (Top Hair/Shoulder Highlight)
-    const topBackLight = new THREE.DirectionalLight(0xffffff, 3.0);
-    topBackLight.position.set(0, 4.5, -2.0);
-    scene.add(topBackLight);
 
     // Pivot Wrapper Group (model o'z markazi atrofida siljimasdan aylanishi uchun)
     const characterWrapper = new THREE.Group();
     characterWrapper.position.set(0, 1.28, 0);
     scene.add(characterWrapper);
 
-    // Modelning boshlang'ich burilishi (O'ngga 90 gradus qayrilib qolgan modelni to'g'ri ekranga qaratish)
-    // -Math.PI / 2 (-90°) modelni to'ppa-to'g'ri kameraga (ekranga) qaratadi
+    // Modelning boshlang'ich burilishi (ekranga qaratish)
     const BASE_ROTATION_Y = -Math.PI / 2;
     characterWrapper.rotation.y = BASE_ROTATION_Y;
+
+    // Materialni yaltiroq va engil qilish funksiyasi
+    function enhanceMaterial(mat: THREE.Material): THREE.Material {
+      const m = mat as THREE.MeshStandardMaterial;
+      if (m && m.isMeshStandardMaterial) {
+        m.roughness = 0.22;
+        m.metalness = 0.40;
+        m.emissive = new THREE.Color(0x0f3318);
+        m.emissiveIntensity = 0.22;
+      }
+      return m;
+    }
 
     const loader = new GLTFLoader();
     loader.load(
@@ -88,12 +110,13 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
         // Modelni wrapper ichida markaziga joylashtiramiz
         model.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
 
-        // Modelni yarqiraydigan, porloq (shiny/glossy/metallic) qilish
+        // Mobile optimization: disable auto matrix update on submeshes, enable frustum culling
         model.traverse((child) => {
           if ((child as THREE.Mesh).isMesh) {
             const mesh = child as THREE.Mesh;
-            mesh.castShadow = true;
-            mesh.receiveShadow = true;
+            mesh.frustumCulled = true;
+            mesh.matrixAutoUpdate = false;
+            mesh.updateMatrix();
 
             const mat = mesh.material;
             if (Array.isArray(mat)) {
@@ -118,67 +141,72 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
       }
     );
 
-    // Materialni yaltiroq va yarqiraydigan qilish funksiyasi
-    function enhanceMaterial(originalMat: THREE.Material): THREE.Material {
-      const m = originalMat.clone() as THREE.MeshStandardMaterial;
-      if (m.isMeshStandardMaterial) {
-        m.roughness = 0.12; // Silliq ko'zgu jilosi
-        m.metalness = 0.55; // Porloq metallik/plastik yarqirash
-        m.emissive = new THREE.Color(0x0f3318);
-        m.emissiveIntensity = 0.28;
-      }
-      return m;
-    }
-
-    // Animatsiya sikli: To'g'ri ekranga qarab turib, bir o'ngga, bir chapga qarab vaziyatni kuzatish
+    // Animatsiya sikli: 60 FPS da chegaralash (120Hz ekranlarda batareya va GPU ni qizitmaslik uchun)
     let reqId: number;
     const clock = new THREE.Clock();
     let currentLookAngle = 0;
     let targetLookAngle = 0;
     let nextLookChange = 0;
 
-    const animate = () => {
+    let lastFrameTime = performance.now();
+    const targetFps = isMobile ? 55 : 60;
+    const frameInterval = 1000 / targetFps;
+
+    const animate = (currentTime: number) => {
       reqId = requestAnimationFrame(animate);
+
+      // Tab ko'rinmayotgan bo'lsa render qilmaslik
+      if (document.hidden) return;
+
+      const elapsed = currentTime - lastFrameTime;
+      if (elapsed < frameInterval - 1) return;
+      lastFrameTime = currentTime - (elapsed % frameInterval);
+
       const delta = clock.getDelta();
       const time = clock.getElapsedTime();
 
       // To'g'ri ekranga qarab turgan holatdan mayin chapga (-0.28 rad) va o'ngga (+0.28 rad) qarash
       if (time > nextLookChange) {
-        const angles = [-0.30, 0.30, 0.0, -0.22, 0.22, 0.0];
+        const angles = [-0.28, 0.28, 0.0, -0.20, 0.20, 0.0];
         targetLookAngle = angles[Math.floor(Math.random() * angles.length)];
-        nextLookChange = time + 2.4 + Math.random() * 2.0;
+        nextLookChange = time + 2.5 + Math.random() * 2.0;
       }
 
-      currentLookAngle += (targetLookAngle - currentLookAngle) * (delta * 2.5);
+      currentLookAngle += (targetLookAngle - currentLookAngle) * Math.min(1.0, delta * 2.5);
 
       // Model to'ppa-to'g'ri ekranga qaraydi (BASE_ROTATION_Y) va mayin atrofni kuzatadi
       characterWrapper.rotation.y = BASE_ROTATION_Y + currentLookAngle;
-      characterWrapper.position.y = 1.28 + Math.sin(time * 1.8) * 0.015; // mayin nafas olish tebranishi
+      characterWrapper.position.y = 1.28 + Math.sin(time * 1.8) * 0.012; // mayin nafas olish tebranishi
 
       // Kamera mayin nafas tebranishi
-      camera.position.x = Math.sin(time * 0.6) * 0.025;
-      camera.position.y = 1.42 + Math.cos(time * 0.8) * 0.015;
+      camera.position.x = Math.sin(time * 0.6) * 0.02;
+      camera.position.y = 1.42 + Math.cos(time * 0.8) * 0.012;
 
       renderer.render(scene, camera);
     };
 
-    animate();
+    reqId = requestAnimationFrame(animate);
 
+    let resizeTimeout: ReturnType<typeof setTimeout>;
     const handleResize = () => {
-      if (!container) return;
-      const w = container.clientWidth;
-      const h = container.clientHeight;
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-      renderer.setSize(w, h);
+      clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        if (!container) return;
+        const w = container.clientWidth || window.innerWidth;
+        const h = container.clientHeight || window.innerHeight;
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, h);
+      }, 100);
     };
 
-    window.addEventListener('resize', handleResize);
+    window.addEventListener('resize', handleResize, { passive: true });
 
     return () => {
       cancelAnimationFrame(reqId);
       window.removeEventListener('resize', handleResize);
-      if (container && renderer.domElement) {
+      clearTimeout(resizeTimeout);
+      if (container && renderer.domElement && container.contains(renderer.domElement)) {
         container.removeChild(renderer.domElement);
       }
       renderer.dispose();

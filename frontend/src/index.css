@@ -5,7 +5,7 @@
 :root {
   color-scheme: dark;
   --bg-primary: #070a0f;
-  --panel-bg: rgba(14, 21, 36, 0.75);
+  --panel-bg: rgba(14, 21, 36, 0.92);
   --border-color: rgba(43, 60, 94, 0.45);
 }
 
@@ -47,13 +47,13 @@ body {
   background: #3d527d;
 }
 
-/* Tactical chamfered borders & HUD styling */
+/* Tactical chamfered borders & HUD styling (Optimized for Mobile GPUs: Zero backdrop-filter lag) */
 .hud-panel {
-  background: linear-gradient(135deg, rgba(16, 24, 40, 0.85) 0%, rgba(10, 15, 24, 0.95) 100%);
+  background: linear-gradient(135deg, rgba(16, 24, 40, 0.94) 0%, rgba(10, 15, 24, 0.98) 100%);
   border: 1px solid rgba(43, 60, 94, 0.55);
-  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 16px -2px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04);
   position: relative;
+  transform: translateZ(0);
 }
 
 .hud-panel::before {
@@ -86,7 +86,7 @@ body {
   text-transform: uppercase;
 }
 
-/* Scanline effect for video & radar */
+/* Lightweight scanline effect */
 .scanlines {
   position: relative;
   overflow: hidden;
@@ -96,20 +96,19 @@ body {
   display: block;
   position: absolute;
   top: 0; left: 0; bottom: 0; right: 0;
-  background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.03), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.03));
-  z-index: 5;
-  background-size: 100% 4px, 6px 100%;
+  background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.15) 50%);
+  background-size: 100% 4px;
   pointer-events: none;
 }
 
-/* Strobe indicators */
+/* Strobe indicators (Optimized: box-shadow instead of expensive filter: drop-shadow) */
 @keyframes redFlash {
-  0%, 100% { opacity: 0.15; filter: drop-shadow(0 0 0 transparent); }
-  50% { opacity: 1; filter: drop-shadow(0 0 12px #ff2238); }
+  0%, 100% { opacity: 0.2; box-shadow: 0 0 0 transparent; }
+  50% { opacity: 1; box-shadow: 0 0 14px rgba(255, 34, 56, 0.85); }
 }
 @keyframes blueFlash {
-  0%, 100% { opacity: 0.15; filter: drop-shadow(0 0 0 transparent); }
-  50% { opacity: 1; filter: drop-shadow(0 0 12px #1d63ff); }
+  0%, 100% { opacity: 0.2; box-shadow: 0 0 0 transparent; }
+  50% { opacity: 1; box-shadow: 0 0 14px rgba(29, 99, 255, 0.85); }
 }
 
 .strobe-red-active {

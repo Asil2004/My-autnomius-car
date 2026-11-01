@@ -9,18 +9,33 @@ import {
 export const LidarRadarView: React.FC = () => {
   const { lidarPoints, battery, isMoving } = useRobot();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const pointsRef = useRef(lidarPoints);
 
-  // Render High-tech LiDAR Radar sweep on HTML5 Canvas
+  useEffect(() => {
+    pointsRef.current = lidarPoints;
+  }, [lidarPoints]);
+
+  // Render High-tech LiDAR Radar sweep on HTML5 Canvas (Optimized 30 FPS, zero shadowBlur)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) return;
 
     let animationId: number;
     let sweepAngle = 0;
+    let lastTime = performance.now();
+    const frameInterval = 1000 / 30; // Lock canvas to 30 FPS for battery & GPU savings
 
-    const render = () => {
+    const render = (currentTime: number) => {
+      animationId = requestAnimationFrame(render);
+
+      if (document.hidden) return;
+
+      const elapsed = currentTime - lastTime;
+      if (elapsed < frameInterval - 1) return;
+      lastTime = currentTime - (elapsed % frameInterval);
+
       const width = canvas.width;
       const height = canvas.height;
       const cx = width / 2;
@@ -67,7 +82,7 @@ export const LidarRadarView: React.FC = () => {
       ctx.fillText('90° (O\'NG)', width - 60, cy - 4);
 
       // Sweeping Beam Gradient
-      sweepAngle = (sweepAngle + 0.04) % (2 * Math.PI);
+      sweepAngle = (sweepAngle + 0.05) % (2 * Math.PI);
       const sweepGradient = ctx.createRadialGradient(cx, cy, 10, cx, cy, maxRadius);
       sweepGradient.addColorStop(0, 'rgba(0, 229, 255, 0.25)');
       sweepGradient.addColorStop(1, 'rgba(0, 229, 255, 0.0)');
@@ -92,30 +107,30 @@ export const LidarRadarView: React.FC = () => {
       ctx.stroke();
       ctx.restore();
 
-      // Render LiDAR obstacles/points
-      lidarPoints.forEach((pt) => {
+      // Render LiDAR obstacles/points (fast draw without expensive canvas blur)
+      const currentPoints = pointsRef.current || [];
+      for (let j = 0; j < currentPoints.length; j++) {
+        const pt = currentPoints[j];
         const rad = ((pt.angle - 90) * Math.PI) / 180;
         const distRatio = Math.min(pt.distance, 5.0) / 5.0;
         const px = cx + Math.cos(rad) * (distRatio * maxRadius);
         const py = cy + Math.sin(rad) * (distRatio * maxRadius);
 
         ctx.beginPath();
-        ctx.arc(px, py, pt.distance < 1.0 ? 3.5 : 2, 0, 2 * Math.PI);
         if (pt.distance < 1.0) {
           ctx.fillStyle = '#ff2238';
-          ctx.shadowColor = '#ff2238';
-          ctx.shadowBlur = 6;
+          ctx.arc(px, py, 3.5, 0, 2 * Math.PI);
+          ctx.fill();
         } else if (pt.distance < 2.5) {
           ctx.fillStyle = '#ffb300';
-          ctx.shadowColor = '#ffb300';
-          ctx.shadowBlur = 3;
+          ctx.arc(px, py, 2.5, 0, 2 * Math.PI);
+          ctx.fill();
         } else {
           ctx.fillStyle = '#00e676';
-          ctx.shadowColor = 'transparent';
+          ctx.arc(px, py, 2, 0, 2 * Math.PI);
+          ctx.fill();
         }
-        ctx.fill();
-      });
-      ctx.shadowBlur = 0;
+      }
 
       // Center Robot Icon / Chassis footprint
       ctx.fillStyle = '#1d63ff';
@@ -130,14 +145,12 @@ export const LidarRadarView: React.FC = () => {
       ctx.fillRect(cx + 9, cy - 12, 3, 8);  // FR
       ctx.fillRect(cx - 12, cy + 4, 3, 8);  // RL
       ctx.fillRect(cx + 9, cy + 4, 3, 8);   // RR
-
-      animationId = requestAnimationFrame(render);
     };
 
-    render();
+    animationId = requestAnimationFrame(render);
 
     return () => cancelAnimationFrame(animationId);
-  }, [lidarPoints]);
+  }, []);
 
   return (
     <div className="flex-1 flex flex-col lg:flex-row gap-4 p-3 sm:p-5 overflow-y-auto max-w-6xl mx-auto w-full select-none">
