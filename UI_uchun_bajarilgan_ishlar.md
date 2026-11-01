@@ -31,6 +31,8 @@ Quyidagi jadvalda dasturiy ta'minot va UI bo'yicha amalga oshirilgan har bir yan
 | **14** | 2026-11-02 \| 00:18 | **Asilbek** (Mexatronika & AI) | RobotFaceView-ga old kamera orqali real-vaqtda odam yuzini kuzatish (Look-At Tracking) va AI nutq mimikasi (Speech Mimicry) funksiyalari integratsiya qilindi | `Bajarildi` |
 | **15** | 2026-11-02 \| 00:32 | **Sarvar** (Frontend & Mobile) | Barcha yangilanishlar birlashtirildi, eng yangi yengillashtirilgan APK kompilyatsiya qilindi va smartfonga muvaffaqiyatli o'rnatildi | `Bajarildi` |
 | **16** | 2026-11-02 \| 00:38 | **Sarvar** (Frontend & Mobile) | Asilbekning `8d5e70a` commitidagi mustaqil ko'z nigohi (Eye Gaze & Blinking) va lab deformatsiyasi (Lip Mimicry) kinetikasi integratsiya qilindi; yangi APK (7.6 MB) qayta yig'ilib, Xiaomi/Redmi telefoniga o'rnatildi va jonli skrinshot bilan tekshirildi | `Bajarildi` |
+| **17** | 2026-11-02 \| 00:50 | **Sarvar** (Frontend & Mobile) | Asilbekning `8b75724` commitidagi ko'z qorachiqlari (Eye Tracking) va lab deformatsiyasi koordinatalari sinxronlashtirildi; yangi APK qayta yig'ilib, smartfonga o'rnatildi | `Bajarildi` |
+| **18** | 2026-11-02 \| 00:57 | **Sarvar** (Frontend & Mobile) | Asilbekning `88e7635` commitidagi toza 3D patrul modeli tiklandi (tajribaviy qorachiq qutilari olib tashlandi); yangi APK (7.2 MB) qayta yig'ilib, smartfonga o'rnatildi va estetik ko'rinish tasdiqlandi | `Bajarildi` |
 
 ---
 
