@@ -1,5 +1,6 @@
 import sarvarPhotoUrl from '../assets/faces/koldoshev_sarvar.jpg';
 import asilbekPhotoUrl from '../assets/faces/asilbek_ravshanov.png';
+import boburjonPhotoUrl from '../assets/faces/boburjon_bozorov.jpg';
 
 export interface KnownPerson {
   id: string;
@@ -26,6 +27,14 @@ export const INITIAL_FACE_DATABASE: KnownPerson[] = [
     role: 'Loyiha Muhandisi / Boshqaruvchi',
     photoUrl: asilbekPhotoUrl,
     color: '#38bdf8', // Tsian / Moviy neon
+    badge: 'IIV VERIFIED'
+  },
+  {
+    id: 'bozorov-boburjon',
+    fullName: 'Bozorov Boburjon',
+    role: 'Loyiha Muhandisi / Konstruktor',
+    photoUrl: boburjonPhotoUrl,
+    color: '#f59e0b', // Sariq / Oltin neon
     badge: 'IIV VERIFIED'
   }
 ];
@@ -69,7 +78,7 @@ class FaceRecognitionEngine {
     return this.database;
   }
 
-  // Rasmdan aynan YUZ sohasini (kostyum, ko'ylak va fonsiz) qirqib olish
+  // Rasmdan aynan YUZ sohasini (kostyum, ko'ylak va fonsiz) formatga moslab qirqib olish
   private cropFaceToCanvas(img: HTMLImageElement): HTMLCanvasElement {
     const canvas = document.createElement('canvas');
     canvas.width = 64;
@@ -84,15 +93,20 @@ class FaceRecognitionEngine {
     let sw = w;
     let sh = h;
 
-    // Agar rasm vertikal portret bo'lsa (Asilbek Ravshanov rasmi kabi)
     if (h > w * 1.15) {
-      // Kostyum va yelkalarni tashlab, faqat yuz sohasini (bosh, peshona, ko'z, burun, iyak) qirqamiz
+      // Vertikal portret (Asilbek Ravshanov rasmi kabi)
       sx = w * 0.16;
       sw = w * 0.68;
       sy = h * 0.14;
       sh = h * 0.52;
+    } else if (w > h * 1.25) {
+      // Keng landshaft rasm (Boburjon Bozorov rasmi: 1024x576)
+      sx = w * 0.33;
+      sw = w * 0.35;
+      sy = h * 0.03;
+      sh = h * 0.72;
     } else {
-      // Deyarli kvadrat rasm bo'lsa (Sarvar rasmi kabi), biroz markazlashtiramiz
+      // Deyarli kvadrat rasm (Sarvar rasmi kabi)
       sx = w * 0.05;
       sw = w * 0.90;
       sy = h * 0.05;
