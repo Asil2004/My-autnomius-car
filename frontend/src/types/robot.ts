@@ -25,11 +25,25 @@ export interface PTZState {
 
 export interface DetectedObject {
   id: string;
-  label: 'Odam (Piyoda)' | 'STOP Belgisi' | 'Qizil Svetofor' | 'Yashil Svetofor' | 'Tezlik 25' | 'Tezlik 40' | 'Noma\'lum To\'siq';
+  label: string;
   confidence: number; // 0 - 1
   distance: number;   // meters (calculated via Known Object Size / Focal)
   box: { x: number; y: number; width: number; height: number }; // percentages 0-100
   color: string;
+  category?: 'person' | 'car' | 'vehicle' | 'sign' | 'other';
+}
+
+export interface GPSState {
+  latitude: number;
+  longitude: number;
+  altitude: number | null;
+  accuracy: number | null; // meters
+  speed: number | null;    // km/h
+  heading: number | null;  // degrees
+  timestamp: number;
+  isReal: boolean;
+  status: 'ONLINE' | 'SEARCHING' | 'DENIED' | 'UNAVAILABLE' | 'SIMULATED';
+  error?: string;
 }
 
 export interface LidarPoint {

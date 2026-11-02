@@ -9,14 +9,15 @@ import type {
   LidarPoint,
   PatrolMode,
   SystemStatus,
-  SOSState
+  SOSState,
+  GPSState
 } from '../types/robot';
 import { tacticalAudio } from '../services/audioService';
 
-interface LogMessage {
+export interface LogMessage {
   id: string;
   time: string;
-  source: 'SERIAL' | 'RPI' | 'AI' | 'SONAR' | 'SYSTEM';
+  source: 'SERIAL' | 'RPI' | 'AI' | 'SONAR' | 'SYSTEM' | 'GPS';
   level: 'info' | 'warn' | 'error' | 'success';
   text: string;
 }
@@ -54,6 +55,7 @@ interface RobotContextType {
   
   // AI Vision
   detectedObjects: DetectedObject[];
+  setDetectedObjects: React.Dispatch<React.SetStateAction<DetectedObject[]>>;
   aiProcessingFps: number;
   
   // SOS 102
@@ -72,6 +74,11 @@ interface RobotContextType {
   toggleMute: () => void;
   isSimulationMode: boolean;
   toggleSimulationMode: () => void;
+
+  // Real & Simulated GPS Telemetry
+  gps: GPSState;
+  startRealGPS: () => void;
+  toggleGPSMode: () => void;
 }
 
 const RobotContext = createContext<RobotContextType | null>(null);
@@ -110,24 +117,39 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [patrolMode, setPatrolMode] = useState<PatrolMode>('MANUAL');
 
   const [aiProcessingFps] = useState<number>(24);
-  const [detectedObjects] = useState<DetectedObject[]>([
+  const [detectedObjects, setDetectedObjects] = useState<DetectedObject[]>([
     {
       id: 'obj-1',
       label: 'Odam (Piyoda)',
       confidence: 0.94,
       distance: 2.8,
       box: { x: 38, y: 22, width: 24, height: 56 },
-      color: '#00e676'
+      color: '#00e676',
+      category: 'person'
     },
     {
       id: 'obj-2',
-      label: 'STOP Belgisi',
-      confidence: 0.98,
-      distance: 4.1,
-      box: { x: 74, y: 15, width: 14, height: 20 },
-      color: '#ff2238'
+      label: 'Mashina (Avtomobil)',
+      confidence: 0.91,
+      distance: 6.2,
+      box: { x: 68, y: 35, width: 26, height: 38 },
+      color: '#00e5ff',
+      category: 'car'
     }
   ]);
+
+  // GPS Telemetry State (Haqiqiy Geolocation yoki Simulyatsiya)
+  const [gps, setGps] = useState<GPSState>({
+    latitude: 40.09985,
+    longitude: 65.36835,
+    altitude: 348,
+    accuracy: 3.5,
+    speed: 0,
+    heading: 135,
+    timestamp: Date.now(),
+    isReal: false,
+    status: 'SEARCHING'
+  });
 
   const [sos, setSos] = useState<SOSState>({
     active: false,
@@ -157,7 +179,7 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     { id: '1', time: '15:30:12', source: 'SYSTEM', level: 'info', text: 'Qalqon OS v2.4 yuklandi. Barcha datchiklar onlayn.' },
     { id: '2', time: '15:30:14', source: 'SERIAL', level: 'success', text: 'Arduino Uno ulandi: /dev/ttyACM0 @ 115200 baud.' },
     { id: '3', time: '15:30:15', source: 'RPI', level: 'info', text: 'Raspberry Pi veb-server ishga tushirildi (port 8000).' },
-    { id: '4', time: '15:30:16', source: 'AI', level: 'info', text: 'UIUC tflite modeli yuklandi: road_signs_quantized.tflite' },
+    { id: '4', time: '15:30:16', source: 'AI', level: 'info', text: 'TensorFlow COCO-SSD & Mobil kameralar detektori tayyor.' },
   ]);
 
   const addLog = useCallback((source: LogMessage['source'], level: LogMessage['level'], text: string) => {
@@ -171,6 +193,103 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
     setLogs((prev) => [newLog, ...prev.slice(0, 49)]);
   }, []);
+
+  // =========================================================================
+  // HAQIQIY GPS (GEOLOCATION API) SIKLI
+  // =========================================================================
+  const watchIdRef = useRef<number | null>(null);
+
+  const startRealGPS = useCallback(() => {
+    if (!('geolocation' in navigator)) {
+      setGps((prev) => ({
+        ...prev,
+        isReal: false,
+        status: 'UNAVAILABLE',
+        error: "Qurilmangizda GPS / Geolocation qo'llab-quvvatlanmaydi"
+      }));
+      addLog('GPS', 'error', "GPS xatosi: Qurilmada geolokatsiya datchigi topilmadi");
+      return;
+    }
+
+    setGps((prev) => ({ ...prev, status: 'SEARCHING' }));
+    addLog('GPS', 'info', "Haqiqiy GPS sun'iy yo'ldosh signallari qidirilmoqda...");
+
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+    }
+
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      (pos) => {
+        const speedKmH = pos.coords.speed !== null && pos.coords.speed !== undefined
+          ? +(pos.coords.speed * 3.6).toFixed(1)
+          : 0;
+
+        setGps({
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          altitude: pos.coords.altitude !== null ? +pos.coords.altitude.toFixed(1) : 340,
+          accuracy: pos.coords.accuracy ? +pos.coords.accuracy.toFixed(1) : 4.0,
+          speed: speedKmH,
+          heading: pos.coords.heading !== null && !isNaN(pos.coords.heading) ? Math.round(pos.coords.heading) : 0,
+          timestamp: pos.timestamp,
+          isReal: true,
+          status: 'ONLINE',
+          error: undefined
+        });
+      },
+      (err) => {
+        let msg = "GPS ulanishida xatolik";
+        if (err.code === 1) msg = "GPS ruxsati berilmadi (Brauzerda geolokatsiyaga ruxsat bering)";
+        else if (err.code === 2) msg = "GPS koordinatalarini aniqlab bo'lmadi";
+        else if (err.code === 3) msg = "GPS vaqti tugadi (Timeout)";
+
+        setGps((prev) => ({
+          ...prev,
+          status: err.code === 1 ? 'DENIED' : 'UNAVAILABLE',
+          error: msg
+        }));
+        addLog('GPS', 'warn', `GPS Ogohlantirish: ${msg}`);
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 2000,
+        timeout: 10000
+      }
+    );
+  }, [addLog]);
+
+  const toggleGPSMode = useCallback(() => {
+    if (gps.isReal) {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+      setGps({
+        latitude: 40.09985,
+        longitude: 65.36835,
+        altitude: 348,
+        accuracy: 3.5,
+        speed: 0,
+        heading: 135,
+        timestamp: Date.now(),
+        isReal: false,
+        status: 'SIMULATED'
+      });
+      addLog('GPS', 'info', "GPS: Simulyatsiya rejimiga o'tildi (Navoiy ko'chasi)");
+    } else {
+      startRealGPS();
+    }
+  }, [gps.isReal, startRealGPS, addLog]);
+
+  // Sayt ochilganda avtomatik haqiqiy GPS ni ishga tushirish
+  useEffect(() => {
+    startRealGPS();
+    return () => {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+      }
+    };
+  }, [startRealGPS]);
 
   const toggleMute = () => {
     const next = !isMuted;
@@ -344,6 +463,19 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             if (d.lidar && d.lidar.points) {
               lidarPointsRef.current = d.lidar.points;
             }
+            if (d.gps && d.gps.has_fix) {
+              setGps((prev) => ({
+                ...prev,
+                latitude: d.gps.latitude,
+                longitude: d.gps.longitude,
+                altitude: d.gps.altitude ?? prev.altitude,
+                speed: d.gps.speed ?? prev.speed,
+                heading: d.gps.heading ?? prev.heading,
+                isReal: true,
+                status: 'ONLINE',
+                timestamp: Date.now()
+              }));
+            }
             if (d.motion) {
               if (d.motion.last_cmd) setLastCommand(d.motion.last_cmd);
               if (d.motion.speed_level) setSpeedLevelState(d.motion.speed_level);
@@ -445,6 +577,7 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         patrolMode,
         setPatrolMode,
         detectedObjects,
+        setDetectedObjects,
         aiProcessingFps,
         sos,
         triggerSOS,
@@ -456,7 +589,10 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         isMuted,
         toggleMute,
         isSimulationMode,
-        toggleSimulationMode
+        toggleSimulationMode,
+        gps,
+        startRealGPS,
+        toggleGPSMode
       }}
     >
       {children}

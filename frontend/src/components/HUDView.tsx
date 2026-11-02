@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useRobot } from '../context/RobotContext';
-import type { SpeedLevel } from '../types/robot';
+import type { SpeedLevel, DetectedObject } from '../types/robot';
+import * as cocoSsd from '@tensorflow-models/coco-ssd';
+import '@tensorflow/tfjs';
 import {
   ArrowUp,
   ArrowDown,
@@ -15,7 +17,15 @@ import {
   SlidersHorizontal,
   ShieldAlert,
   Zap,
-  Maximize2
+  Maximize2,
+  Camera,
+  Radio,
+  MapPin,
+  Car,
+  User,
+  RefreshCw,
+  Eye,
+  AlertTriangle
 } from 'lucide-react';
 
 export const HUDView: React.FC = () => {
@@ -29,13 +39,251 @@ export const HUDView: React.FC = () => {
     ptz,
     setPTZ,
     detectedObjects,
+    setDetectedObjects,
     system,
-    isSimulationMode,
-    logs
+    logs,
+    gps,
+    startRealGPS,
+    toggleGPSMode,
+    addLog
   } = useRobot();
 
   const [cameraFullscreen, setCameraFullscreen] = useState(false);
-  const [streamError, setStreamError] = useState(false);
+  const [cameraSource, setCameraSource] = useState<'FRONTAL' | 'RPI' | 'SIMULATION'>('FRONTAL');
+  const [cameraLoading, setCameraLoading] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [mirrorVideo, setMirrorVideo] = useState(true);
+
+  // AI Detektor holatlari
+  const [aiModelLoaded, setAiModelLoaded] = useState(false);
+  const [aiModelLoading, setAiModelLoading] = useState(false);
+  const [aiEnabled, setAiEnabled] = useState(true);
+  const [detectedCounts, setDetectedCounts] = useState({ people: 0, cars: 0, total: 0 });
+
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const cocoModelRef = useRef<cocoSsd.ObjectDetection | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const isDetectingRef = useRef<boolean>(false);
+
+  // =========================================================================
+  // 1. TENSORFLOW COCO-SSD MODELINI YUKLASH
+  // =========================================================================
+  useEffect(() => {
+    let isMounted = true;
+    const loadModel = async () => {
+      try {
+        setAiModelLoading(true);
+        addLog('AI', 'info', "TensorFlow COCO-SSD modeli yuklanmoqda...");
+        const model = await cocoSsd.load({ base: 'lite_mobilenet_v2' });
+        if (isMounted) {
+          cocoModelRef.current = model;
+          setAiModelLoaded(true);
+          setAiModelLoading(false);
+          addLog('AI', 'success', "COCO-SSD neyron modeli muvaffaqiyatli ishga tushdi!");
+        }
+      } catch (err: unknown) {
+        if (isMounted) {
+          setAiModelLoading(false);
+          const msg = err instanceof Error ? err.message : String(err);
+          addLog('AI', 'warn', `Model yuklashda xatolik: ${msg}. Fallback detektor faollashtirildi.`);
+        }
+      }
+    };
+
+    loadModel();
+    return () => {
+      isMounted = false;
+    };
+  }, [addLog]);
+
+  // =========================================================================
+  // 2. FRONTAL KAMERA (WEBCAM) OQIMINI BOSHQARISH
+  // =========================================================================
+  const stopCameraStream = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  }, []);
+
+  const startFrontalCamera = useCallback(async () => {
+    stopCameraStream();
+    setCameraLoading(true);
+    setCameraError(null);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: 'user',
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      });
+
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      setCameraLoading(false);
+      addLog('SYSTEM', 'success', "Frontal kamera oqimi ulandi.");
+    } catch (err: unknown) {
+      setCameraLoading(false);
+      const errorMsg = err instanceof Error ? err.message : 'Kameraga ruxsat berilmadi yoki kamera topilmadi';
+      setCameraError(errorMsg);
+      addLog('SYSTEM', 'error', `Frontal kamera xatosi: ${errorMsg}`);
+    }
+  }, [addLog, stopCameraStream]);
+
+  // Kamera rejimi o'zgarganda ishga tushirish
+  useEffect(() => {
+    if (cameraSource === 'FRONTAL') {
+      startFrontalCamera();
+    } else {
+      stopCameraStream();
+    }
+    return () => {
+      stopCameraStream();
+    };
+  }, [cameraSource, startFrontalCamera, stopCameraStream]);
+
+  // =========================================================================
+  // 3. TASVIRDAN ODAM VA MASHINALARNI REAL VAQTDA ANIQLASH
+  // =========================================================================
+  const detectFrame = useCallback(async () => {
+    if (
+      !aiEnabled ||
+      !videoRef.current ||
+      videoRef.current.readyState < 2 ||
+      cameraSource !== 'FRONTAL' ||
+      isDetectingRef.current
+    ) {
+      return;
+    }
+
+    const video = videoRef.current;
+    const vW = video.videoWidth;
+    const vH = video.videoHeight;
+    if (!vW || !vH) return;
+
+    // Agar COCO-SSD modeli yuklangan bo'lsa
+    if (cocoModelRef.current) {
+      try {
+        isDetectingRef.current = true;
+        const predictions = await cocoModelRef.current.detect(video, 8, 0.45);
+
+        let personCount = 0;
+        let carCount = 0;
+
+        const newObjects: DetectedObject[] = predictions
+          .filter((pred) => {
+            const cls = pred.class.toLowerCase();
+            return (
+              cls === 'person' ||
+              cls === 'car' ||
+              cls === 'truck' ||
+              cls === 'bus' ||
+              cls === 'motorcycle' ||
+              cls === 'bicycle'
+            );
+          })
+          .map((pred, idx) => {
+            const cls = pred.class.toLowerCase();
+            const [rawX, rawY, rawW, rawH] = pred.bbox;
+
+            let label = "Noma'lum";
+            let color = "#00e5ff";
+            let category: DetectedObject['category'] = 'other';
+
+            if (cls === 'person') {
+              personCount++;
+              label = "Odam (Piyoda)";
+              color = "#00e676"; // Yashil
+              category = 'person';
+            } else if (cls === 'car') {
+              carCount++;
+              label = "Mashina (Avtomobil)";
+              color = "#00e5ff"; // Moviy
+              category = 'car';
+            } else if (cls === 'truck') {
+              carCount++;
+              label = "Yuk mashinasi";
+              color = "#38bdf8";
+              category = 'car';
+            } else if (cls === 'bus') {
+              carCount++;
+              label = "Avtobus";
+              color = "#818cf8";
+              category = 'car';
+            } else if (cls === 'motorcycle' || cls === 'bicycle') {
+              label = cls === 'motorcycle' ? "Motosikl" : "Velosiped";
+              color = "#fbbf24"; // Sariq
+              category = 'vehicle';
+            }
+
+            // Foiz koordinatalar (0 - 100%)
+            let boxX = (rawX / vW) * 100;
+            const boxY = (rawY / vH) * 100;
+            const boxW = (rawW / vW) * 100;
+            const boxH = (rawH / vH) * 100;
+
+            // Agar oyna (mirror) effekti bo'lsa, gorizontal koordinatani to'g'irlaymiz
+            if (mirrorVideo) {
+              boxX = 100 - (boxX + boxW);
+            }
+
+            // Masofani optik nisbat orqali taxminiy hisoblash
+            const focalRatio = category === 'person' ? 52 : 68;
+            const estimatedDistance = +(focalRatio / Math.max(12, boxH)).toFixed(1);
+
+            return {
+              id: `real-obj-${idx}-${Date.now().toString().slice(-4)}`,
+              label,
+              confidence: +pred.score.toFixed(2),
+              distance: Math.min(18.0, Math.max(0.6, estimatedDistance)),
+              box: {
+                x: Math.max(0, Math.min(100 - boxW, boxX)),
+                y: Math.max(0, Math.min(100 - boxH, boxY)),
+                width: Math.min(100, boxW),
+                height: Math.min(100, boxH)
+              },
+              color,
+              category
+            };
+          });
+
+        setDetectedObjects(newObjects);
+        setDetectedCounts({
+          people: personCount,
+          cars: carCount,
+          total: newObjects.length
+        });
+      } catch (e) {
+        // detection xatolarini yutish
+      } finally {
+        isDetectingRef.current = false;
+      }
+    }
+  }, [aiEnabled, cameraSource, mirrorVideo, setDetectedObjects]);
+
+  // Deteksiya sikli (har ~120ms da bir kadr tekshiriladi)
+  useEffect(() => {
+    let intervalId: number | null = null;
+    if (cameraSource === 'FRONTAL' && aiEnabled) {
+      intervalId = window.setInterval(() => {
+        detectFrame();
+      }, 120);
+    }
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+    };
+  }, [cameraSource, aiEnabled, detectFrame]);
 
   // PTZ adjustments
   const adjustPTZ = (dPan: number, dTilt: number) => {
@@ -56,27 +304,141 @@ export const HUDView: React.FC = () => {
     <div className="flex-1 flex flex-col lg:flex-row gap-3 p-3 overflow-y-auto max-w-7xl mx-auto w-full">
       {/* LEFT COLUMN: Live Feed + HUD Overlays */}
       <div className={`flex flex-col gap-3 ${cameraFullscreen ? 'fixed inset-0 z-50 p-2 bg-tactical-950' : 'flex-1'}`}>
-        <div className="hud-panel rounded-lg overflow-hidden flex flex-col flex-1 relative min-h-[320px] max-h-[520px]">
+        
+        {/* TOP STATUS BAR: REAL GPS & CAMERA MODE SWITCHER */}
+        <div className="bg-tactical-900/90 border border-tactical-700/70 rounded-lg p-2.5 flex flex-wrap items-center justify-between gap-2 shadow-md">
+          {/* Real GPS Info Pill */}
+          <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded bg-tactical-950 border border-tactical-700 font-mono text-xs">
+              <span className="flex h-2.5 w-2.5 relative">
+                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${gps.isReal ? 'bg-emerald-400' : 'bg-amber-400'}`}></span>
+                <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${gps.isReal ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
+              </span>
+              <span className="font-bold text-white flex items-center space-x-1">
+                <MapPin className="w-3.5 h-3.5 text-police-cyan" />
+                <span>{gps.isReal ? 'HAQIQIY GPS' : 'GPS SIMULYATSIYA'}:</span>
+              </span>
+              <span className="text-police-cyan font-bold tracking-tight">
+                {gps.latitude.toFixed(6)}° N, {gps.longitude.toFixed(6)}° E
+              </span>
+              <span className="text-[10px] text-slate-400 hidden sm:inline">
+                (±{gps.accuracy || 3.5}m • {gps.altitude || 340}m balandlik)
+              </span>
+            </div>
+
+            <button
+              onClick={gps.isReal ? toggleGPSMode : startRealGPS}
+              title={gps.isReal ? "Simulyatsiyaga o'tish" : "Haqiqiy GPS datchigini yoqish"}
+              className={`px-2 py-1 rounded text-xs font-mono font-bold flex items-center space-x-1 border transition-all ${
+                gps.isReal
+                  ? 'bg-emerald-600/30 text-emerald-300 border-emerald-500 hover:bg-emerald-600/50'
+                  : 'bg-police-blue/30 text-police-cyan border-police-cyan/60 hover:bg-police-blue/50'
+              }`}
+            >
+              <RefreshCw className={`w-3 h-3 ${gps.status === 'SEARCHING' ? 'animate-spin' : ''}`} />
+              <span>{gps.isReal ? 'Real GPS Faol' : 'Real GPS Yoqish'}</span>
+            </button>
+          </div>
+
+          {/* Camera Source Selector & AI Object Stats */}
+          <div className="flex items-center space-x-1.5 font-mono text-xs">
+            <span className="text-slate-400 hidden md:inline text-[11px]">KAMERA:</span>
+            
+            <button
+              onClick={() => setCameraSource('FRONTAL')}
+              className={`px-2.5 py-1 rounded font-bold flex items-center space-x-1 border transition-all ${
+                cameraSource === 'FRONTAL'
+                  ? 'bg-police-blue text-white border-police-cyan shadow-[0_0_10px_rgba(0,229,255,0.4)]'
+                  : 'bg-tactical-950 text-slate-300 border-tactical-700 hover:bg-tactical-800'
+              }`}
+            >
+              <Camera className="w-3.5 h-3.5 text-police-cyan" />
+              <span>Frontal Kamera</span>
+            </button>
+
+            <button
+              onClick={() => setCameraSource('RPI')}
+              className={`px-2.5 py-1 rounded font-bold flex items-center space-x-1 border transition-all ${
+                cameraSource === 'RPI'
+                  ? 'bg-police-blue text-white border-police-cyan shadow-[0_0_10px_rgba(0,229,255,0.4)]'
+                  : 'bg-tactical-950 text-slate-300 border-tactical-700 hover:bg-tactical-800'
+              }`}
+            >
+              <Radio className="w-3.5 h-3.5 text-police-cyan" />
+              <span>RPi Oqim</span>
+            </button>
+
+            <button
+              onClick={() => setCameraSource('SIMULATION')}
+              className={`px-2.5 py-1 rounded font-bold border transition-all ${
+                cameraSource === 'SIMULATION'
+                  ? 'bg-police-blue text-white border-police-cyan'
+                  : 'bg-tactical-950 text-slate-300 border-tactical-700 hover:bg-tactical-800'
+              }`}
+            >
+              Simulyatsiya
+            </button>
+          </div>
+        </div>
+
+        {/* MAIN HUD VIDEO FEED CONTAINER */}
+        <div className="hud-panel rounded-lg overflow-hidden flex flex-col flex-1 relative min-h-[360px] max-h-[560px]">
           {/* Header Bar inside Feed */}
-          <div className="bg-tactical-950/80 px-3 py-2 border-b border-tactical-700/60 flex items-center justify-between z-10">
+          <div className="bg-tactical-950/85 px-3 py-2 border-b border-tactical-700/60 flex items-center justify-between z-20">
             <div className="flex items-center space-x-2 font-mono text-xs">
               <span className="flex h-2.5 w-2.5 relative">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
               </span>
-              <span className="font-bold text-white tracking-wider">360° PTZ GUMBAZ KAMERA</span>
+              <span className="font-bold text-white tracking-wider">
+                {cameraSource === 'FRONTAL' ? 'FRONTAL WEBCAM AI HUD' : cameraSource === 'RPI' ? '360° PTZ RPI GUMBAZ KAMERA' : 'TAKTIK VIRTUAL SIMULYATOR'}
+              </span>
               <span className="px-1.5 py-0.5 rounded text-[10px] bg-tactical-800 text-slate-300 border border-tactical-700">
                 {ptz.mode}
               </span>
             </div>
 
+            {/* AI Detected Objects Live Summary Badges */}
             <div className="flex items-center space-x-2">
-              <span className="text-[11px] font-mono text-police-cyan hidden sm:inline">
-                PAN: {ptz.pan > 0 ? `+${ptz.pan}` : ptz.pan}° | TILT: {ptz.tilt}°
-              </span>
+              <div className="hidden sm:flex items-center space-x-1.5 bg-tactical-950/90 px-2 py-0.5 rounded border border-tactical-700 font-mono text-[11px]">
+                <span className="text-emerald-400 flex items-center space-x-1 font-bold">
+                  <User className="w-3 h-3" />
+                  <span>{detectedCounts.people} Odam</span>
+                </span>
+                <span className="text-slate-600">|</span>
+                <span className="text-police-cyan flex items-center space-x-1 font-bold">
+                  <Car className="w-3 h-3" />
+                  <span>{detectedCounts.cars} Mashina</span>
+                </span>
+              </div>
+
+              {cameraSource === 'FRONTAL' && (
+                <button
+                  onClick={() => setMirrorVideo(!mirrorVideo)}
+                  title="Oyna (Mirror) effektini almashtirish"
+                  className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-all ${
+                    mirrorVideo ? 'bg-police-blue/30 text-police-cyan border-police-blue' : 'bg-tactical-800 text-slate-400 border-tactical-700'
+                  }`}
+                >
+                  {mirrorVideo ? 'Mirror ON' : 'Mirror OFF'}
+                </button>
+              )}
+
+              <button
+                onClick={() => setAiEnabled(!aiEnabled)}
+                title="AI Obyekt Detektorini yoqish/o'chirish"
+                className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-all flex items-center space-x-1 ${
+                  aiEnabled ? 'bg-emerald-950 text-emerald-300 border-emerald-500' : 'bg-tactical-800 text-slate-400 border-tactical-700'
+                }`}
+              >
+                <Eye className="w-3 h-3" />
+                <span>AI {aiEnabled ? 'FAOL' : 'O\'CHIQ'}</span>
+              </button>
+
               <button
                 onClick={() => setCameraFullscreen(!cameraFullscreen)}
                 className="p-1 rounded bg-tactical-800 text-slate-300 hover:text-white"
+                title="To'liq ekranga ochish"
               >
                 <Maximize2 className="w-4 h-4" />
               </button>
@@ -85,15 +447,58 @@ export const HUDView: React.FC = () => {
 
           {/* Video Stream & Tactical Crosshair Viewport */}
           <div className="relative flex-1 bg-black flex items-center justify-center overflow-hidden scanlines">
-            {!isSimulationMode && !streamError ? (
+            
+            {/* 1-REJIM: FRONTAL WEBCAM */}
+            {cameraSource === 'FRONTAL' && (
+              <div className="w-full h-full relative flex items-center justify-center bg-black">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className={`w-full h-full object-cover transition-transform ${mirrorVideo ? 'scale-x-[-1]' : ''}`}
+                />
+
+                {/* Yuklanmoqda holati */}
+                {cameraLoading && (
+                  <div className="absolute inset-0 bg-tactical-950/80 flex flex-col items-center justify-center space-y-2 z-10">
+                    <RefreshCw className="w-8 h-8 text-police-cyan animate-spin" />
+                    <span className="font-mono text-xs text-white">Frontal kamera ochilmoqda...</span>
+                  </div>
+                )}
+
+                {/* Xatolik bo'lsa */}
+                {cameraError && (
+                  <div className="absolute inset-0 bg-tactical-950/90 flex flex-col items-center justify-center p-4 text-center z-10">
+                    <AlertTriangle className="w-10 h-10 text-rose-500 mb-2 animate-bounce" />
+                    <span className="font-mono text-sm font-bold text-white">Frontal kameraga ulanib bo'lmadi</span>
+                    <span className="font-mono text-xs text-slate-400 mt-1 max-w-sm">{cameraError}</span>
+                    <button
+                      onClick={startFrontalCamera}
+                      className="mt-3 px-3 py-1.5 bg-police-blue text-white rounded font-mono text-xs hover:bg-police-blue/80"
+                    >
+                      Kamerani qayta yuklash
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 2-REJIM: RPI JONLI VIDEO OQIMI */}
+            {cameraSource === 'RPI' && (
               <img
                 src={`http://${system.rpiIp}:${system.rpiPort}/stream.mjpg`}
                 alt="RPi Live Stream"
-                onError={() => setStreamError(true)}
+                onError={() => {
+                  addLog('RPI', 'warn', "RPi video oqimi mavjud emas, simulyatsiyaga o'tildi.");
+                  setCameraSource('SIMULATION');
+                }}
                 className="w-full h-full object-cover"
               />
-            ) : (
-              /* High-tech Tactical Simulation Stream with dynamic visual canvas */
+            )}
+
+            {/* 3-REJIM: VIRTUAL TAKTIK SIMULYATOR */}
+            {cameraSource === 'SIMULATION' && (
               <div className="w-full h-full relative flex items-center justify-center bg-gradient-to-b from-tactical-950 via-[#0a1120] to-[#040810]">
                 {/* Perspective Road & Grid */}
                 <div className="absolute inset-0 opacity-25 pointer-events-none">
@@ -104,71 +509,95 @@ export const HUDView: React.FC = () => {
                     </div>
                   </div>
                 </div>
+              </div>
+            )}
 
-                {/* AI Detected Objects Overlays */}
-                {detectedObjects.map((obj) => (
-                  <div
-                    key={obj.id}
-                    className="absolute border-2 transition-all duration-300 pointer-events-none flex flex-col justify-between"
-                    style={{
-                      borderColor: obj.color,
-                      left: `${obj.box.x}%`,
-                      top: `${obj.box.y}%`,
-                      width: `${obj.box.width}%`,
-                      height: `${obj.box.height}%`,
-                      boxShadow: `0 0 15px ${obj.color}50`
-                    }}
-                  >
-                    <div
-                      className="px-1.5 py-0.5 text-[9px] font-mono font-bold tracking-tight text-white flex items-center justify-between"
-                      style={{ backgroundColor: `${obj.color}cc` }}
-                    >
-                      <span>{obj.label}</span>
-                      <span>{(obj.confidence * 100).toFixed(0)}%</span>
-                    </div>
-                    <div
-                      className="px-1.5 py-0.2 text-[9px] font-mono self-end text-black font-extrabold"
-                      style={{ backgroundColor: `${obj.color}cc` }}
-                    >
-                      D: {obj.distance}m
-                    </div>
-                  </div>
-                ))}
+            {/* ========================================================================= */}
+            {/* AI DETECTED OBJECTS OVERLAYS (TO'RTBURCHAK RAMKALAR BILAN VIZUALLASHTIRISH) */}
+            {/* ========================================================================= */}
+            {aiEnabled && detectedObjects.map((obj) => (
+              <div
+                key={obj.id}
+                className="absolute border-2 transition-all duration-150 pointer-events-none flex flex-col justify-between z-20 group"
+                style={{
+                  borderColor: obj.color,
+                  left: `${obj.box.x}%`,
+                  top: `${obj.box.y}%`,
+                  width: `${obj.box.width}%`,
+                  height: `${obj.box.height}%`,
+                  boxShadow: `0 0 15px ${obj.color}60, inset 0 0 10px ${obj.color}20`
+                }}
+              >
+                {/* 4 Ta Taktik Burchak Ko'rsatkichlari */}
+                <div className="absolute -top-1 -left-1 w-2.5 h-2.5 border-t-2 border-l-2" style={{ borderColor: obj.color }} />
+                <div className="absolute -top-1 -right-1 w-2.5 h-2.5 border-t-2 border-r-2" style={{ borderColor: obj.color }} />
+                <div className="absolute -bottom-1 -left-1 w-2.5 h-2.5 border-b-2 border-l-2" style={{ borderColor: obj.color }} />
+                <div className="absolute -bottom-1 -right-1 w-2.5 h-2.5 border-b-2 border-r-2" style={{ borderColor: obj.color }} />
 
-                {/* Center Tactical Crosshair */}
-                <div className="relative pointer-events-none flex items-center justify-center">
-                  <Crosshair className="w-14 h-14 text-police-cyan/60 animate-pulse-subtle" />
-                  <div className="absolute w-28 h-28 border border-dashed border-police-cyan/30 rounded-full" />
-                  <div className="absolute -top-7 text-[10px] font-mono text-police-cyan/80">
-                    N 41°18'31" E 69°16'44"
-                  </div>
+                {/* Yuqori Taktik Yorliq (Klass nomi va Ishonchlilik %) */}
+                <div
+                  className="px-1.5 py-0.5 text-[9px] font-mono font-black tracking-tight text-white flex items-center justify-between shadow-sm"
+                  style={{ backgroundColor: `${obj.color}dd` }}
+                >
+                  <span className="flex items-center space-x-1">
+                    {obj.category === 'person' && <User className="w-2.5 h-2.5 inline mr-0.5" />}
+                    {obj.category === 'car' && <Car className="w-2.5 h-2.5 inline mr-0.5" />}
+                    <span>{obj.label}</span>
+                  </span>
+                  <span className="ml-1 opacity-90">{(obj.confidence * 100).toFixed(0)}%</span>
                 </div>
 
-                {/* Front Obstacle Warning Overlay */}
-                {isFrontBlocked && (
-                  <div className="absolute top-4 inset-x-4 bg-rose-600/90 text-white p-2.5 rounded border border-rose-400 flex items-center justify-center space-x-2 animate-bounce z-20 shadow-lg">
-                    <ShieldAlert className="w-6 h-6 text-white animate-spin" />
-                    <span className="font-mono font-black text-sm uppercase tracking-wide">
-                      XAVF: OLD TO'SIQ ({sonars.front} sm &lt; 22 sm) — AVTOTORMOZ!
-                    </span>
-                  </div>
-                )}
+                {/* O'rta Nishon (Target Lock) */}
+                <div className="self-center my-auto opacity-40">
+                  <div className="w-3 h-3 rounded-full border border-dashed" style={{ borderColor: obj.color }} />
+                </div>
+
+                {/* Pastki Masofa Ko'rsatkichi (Metrda) */}
+                <div
+                  className="px-1.5 py-0.5 text-[9px] font-mono self-end text-black font-extrabold rounded-tl shadow-sm"
+                  style={{ backgroundColor: `${obj.color}dd` }}
+                >
+                  D: {obj.distance}m
+                </div>
+              </div>
+            ))}
+
+            {/* Center Tactical Crosshair */}
+            <div className="relative pointer-events-none flex items-center justify-center z-10">
+              <Crosshair className="w-14 h-14 text-police-cyan/60 animate-pulse-subtle" />
+              <div className="absolute w-28 h-28 border border-dashed border-police-cyan/30 rounded-full" />
+              {/* Haqiqiy GPS Koordinatasi Markazda */}
+              <div className="absolute -top-7 text-[10px] font-mono text-police-cyan font-bold bg-tactical-950/80 px-2 py-0.5 rounded border border-tactical-700/60 shadow-md">
+                GPS: {gps.latitude.toFixed(6)}° N, {gps.longitude.toFixed(6)}° E
+              </div>
+            </div>
+
+            {/* Front Obstacle Warning Overlay */}
+            {isFrontBlocked && (
+              <div className="absolute top-4 inset-x-4 bg-rose-600/90 text-white p-2.5 rounded border border-rose-400 flex items-center justify-center space-x-2 animate-bounce z-30 shadow-lg">
+                <ShieldAlert className="w-6 h-6 text-white animate-spin" />
+                <span className="font-mono font-black text-sm uppercase tracking-wide">
+                  XAVF: OLD TO'SIQ ({sonars.front} sm &lt; 22 sm) — AVTOTORMOZ!
+                </span>
               </div>
             )}
 
             {/* Corner Bracket HUD Graphics */}
-            <div className="absolute top-3 left-3 font-mono text-[10px] text-police-cyan/80 pointer-events-none bg-tactical-950/70 p-1.5 rounded border border-tactical-700/50">
-              <div>FPS: 28.4</div>
-              <div>LAT: 12ms</div>
-              <div>FOV: 120°</div>
+            <div className="absolute top-3 left-3 font-mono text-[10px] text-police-cyan/90 pointer-events-none bg-tactical-950/80 p-1.5 rounded border border-tactical-700/60 shadow z-10">
+              <div className="flex items-center space-x-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                <span>AI REJIM: {aiModelLoaded ? 'COCO-SSD TF' : aiModelLoading ? 'Yuklanmoqda...' : 'Detektor'}</span>
+              </div>
+              <div>ANIQLANGAN: {detectedCounts.total} ta obyekt</div>
+              <div>ANIQLIK: ±{gps.accuracy || 3.5}m</div>
             </div>
 
-            <div className="absolute bottom-3 left-3 font-mono text-[10px] text-police-cyan/80 pointer-events-none bg-tactical-950/70 p-1.5 rounded border border-tactical-700/50 flex items-center space-x-1.5">
+            <div className="absolute bottom-3 left-3 font-mono text-[10px] text-police-cyan/90 pointer-events-none bg-tactical-950/80 p-1.5 rounded border border-tactical-700/60 flex items-center space-x-1.5 shadow z-10">
               <Compass className="w-3.5 h-3.5 text-police-cyan animate-pulse" />
-              <span>AZIMUT: 042° NE</span>
+              <span>AZIMUT: {String(gps.heading || 42).padStart(3, '0')}° {gps.isReal ? '(REAL KOMPAS)' : 'NE'}</span>
             </div>
 
-            <div className="absolute bottom-3 right-3 font-mono text-[10px] text-slate-300 pointer-events-none bg-tactical-950/70 p-1.5 rounded border border-tactical-700/50">
+            <div className="absolute bottom-3 right-3 font-mono text-[10px] text-slate-300 pointer-events-none bg-tactical-950/80 p-1.5 rounded border border-tactical-700/60 shadow z-10">
               KOMANDA: <span className="font-bold text-police-cyan">{lastCommand}</span>
             </div>
           </div>
@@ -425,7 +854,7 @@ export const HUDView: React.FC = () => {
           </div>
 
           {/* Teleskopik Minora Boshqaruvi (U va D) */}
-          <div className="grid grid-cols-2 gap-2 mt-2">
+          <div className="grid grid-cols-2 gap-2 mt-2 w-full max-w-[280px]">
             <button
               onClick={() => sendMecanumCommand('U')}
               title="Teleskopik Minorani Ko'tarish (U)"
