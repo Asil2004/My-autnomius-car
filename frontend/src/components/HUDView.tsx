@@ -224,28 +224,35 @@ export const HUDView: React.FC = () => {
               personCount++;
               category = 'person';
 
-              // Yuz qismini qirqib olib tanish tizimiga yuborish
+              // Yuz qismini inson tanasining yuqori 38% qismidan aniqroq qirqib olish
               const faceCanvas = document.createElement('canvas');
-              faceCanvas.width = 48;
-              faceCanvas.height = 48;
+              faceCanvas.width = 64;
+              faceCanvas.height = 64;
               const fCtx = faceCanvas.getContext('2d');
               if (fCtx) {
-                // Inson tanasining yuqori 45% qismi yuz maydoni hisoblanadi
-                const cropHeight = Math.max(20, rawH * 0.45);
-                fCtx.drawImage(video, rawX, rawY, rawW, cropHeight, 0, 0, 48, 48);
+                const headW = rawW * 0.72;
+                const headH = Math.max(24, rawH * 0.38);
+                const headX = rawX + (rawW - headW) / 2;
+                const headY = rawY;
+                fCtx.drawImage(video, Math.max(0, headX), Math.max(0, headY), headW, headH, 0, 0, 64, 64);
               }
 
-              // Yuzni bazadagi shaxslar (Qo'ldoshev Sarvar va b.) bilan solishtirish
+              // Qat'iy Face ID tekshiruvi: faqat qat'iy o'xshasa ism chiqadi, aks holda PIYODA!
               const match = faceRecognitionService.identifyFace(faceCanvas);
-              if (match.person) {
+              if (match.isIdentified && match.person) {
+                // Faqat haqiqiy shaxs aniqlanganda (Qo'ldoshev Sarvar)
                 label = match.person.fullName;
                 personName = match.person.fullName;
                 color = match.person.color || '#00e676';
                 isIdentifiedPerson = true;
                 confidence = match.confidence;
               } else {
-                label = "Odam (Piyoda)";
-                color = "#00e676"; // Yashil
+                // Boshqa odam qarasa yoki taniy olmasa -> Faqat 'Piyoda'!
+                label = "Piyoda";
+                personName = undefined;
+                color = "#38bdf8";
+                isIdentifiedPerson = false;
+                confidence = +pred.score.toFixed(2);
               }
             } else if (cls === 'car') {
               carCount++;
@@ -639,13 +646,22 @@ export const HUDView: React.FC = () => {
 
                 {/* RAMKANING PASTKI CHETIDA TO'LIQ ISM-FAMILIYA VA MAQOM VIDJETI */}
                 <div className="flex items-end justify-between w-full p-1 pointer-events-none">
-                  {obj.isIdentifiedPerson ? (
+                  {obj.isIdentifiedPerson && obj.personName ? (
                     <div
                       className="px-1.5 py-0.5 rounded font-mono font-bold text-[9px] text-white shadow-md flex items-center space-x-1"
-                      style={{ backgroundColor: 'rgba(2, 6, 23, 0.9)', border: `1.5px solid ${obj.color}` }}
+                      style={{ backgroundColor: 'rgba(2, 6, 23, 0.92)', border: `1.5px solid ${obj.color}` }}
                     >
                       <UserCheck className="w-3 h-3 text-emerald-400" />
-                      <span className="text-emerald-300 font-extrabold">{obj.personName || "Qo'ldoshev Sarvar"}</span>
+                      <span className="text-emerald-300 font-extrabold">{obj.personName}</span>
+                      <span className="text-[7.5px] bg-emerald-950 px-1 py-0.2 rounded text-emerald-300 font-mono ml-0.5">IIV</span>
+                    </div>
+                  ) : obj.category === 'person' ? (
+                    <div
+                      className="px-1.5 py-0.5 rounded font-mono text-[9px] text-slate-300 shadow-md flex items-center space-x-1"
+                      style={{ backgroundColor: 'rgba(2, 6, 23, 0.85)', border: `1px solid ${obj.color}80` }}
+                    >
+                      <User className="w-3 h-3 text-slate-400" />
+                      <span className="text-slate-300 font-bold">Piyoda</span>
                     </div>
                   ) : (
                     <div />
