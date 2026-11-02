@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useRobot } from '../context/RobotContext';
 import type { SpeedLevel, DetectedObject } from '../types/robot';
+import { faceRecognitionService, type KnownPerson } from '../services/faceRecognitionService';
 import * as cocoSsd from '@tensorflow-models/coco-ssd';
 import '@tensorflow/tfjs';
 import {
@@ -23,9 +24,14 @@ import {
   MapPin,
   Car,
   User,
+  UserCheck,
   RefreshCw,
   Eye,
-  AlertTriangle
+  AlertTriangle,
+  Users,
+  Plus,
+  X,
+  CheckCircle2
 } from 'lucide-react';
 
 export const HUDView: React.FC = () => {
@@ -60,38 +66,50 @@ export const HUDView: React.FC = () => {
   const [aiEnabled, setAiEnabled] = useState(true);
   const [detectedCounts, setDetectedCounts] = useState({ people: 0, cars: 0, total: 0 });
 
+  // Yuzlar bazasi modali va ro'yxati
+  const [showFaceDbModal, setShowFaceDbModal] = useState(false);
+  const [knownPersons, setKnownPersons] = useState<KnownPerson[]>(faceRecognitionService.getPersons());
+  const [newPersonName, setNewPersonName] = useState('');
+  const [newPersonRole, setNewPersonRole] = useState('');
+  const [newPersonPhoto, setNewPersonPhoto] = useState<string | null>(null);
+
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const cocoModelRef = useRef<cocoSsd.ObjectDetection | null>(null);
-  const animationFrameRef = useRef<number | null>(null);
   const isDetectingRef = useRef<boolean>(false);
 
   // =========================================================================
-  // 1. TENSORFLOW COCO-SSD MODELINI YUKLASH
+  // 1. TENSORFLOW COCO-SSD VA YUZ BAZASINI YUKLASH
   // =========================================================================
   useEffect(() => {
     let isMounted = true;
-    const loadModel = async () => {
+    const loadAiServices = async () => {
       try {
         setAiModelLoading(true);
-        addLog('AI', 'info', "TensorFlow COCO-SSD modeli yuklanmoqda...");
+        addLog('AI', 'info', "Neyron tarmoq va yuzlar bazasi yuklanmoqda...");
+        
+        // Yuzlar bazasini initsializatsiya qilish
+        await faceRecognitionService.initDatabase();
+
+        // COCO-SSD modelini yuklash
         const model = await cocoSsd.load({ base: 'lite_mobilenet_v2' });
         if (isMounted) {
           cocoModelRef.current = model;
           setAiModelLoaded(true);
           setAiModelLoading(false);
-          addLog('AI', 'success', "COCO-SSD neyron modeli muvaffaqiyatli ishga tushdi!");
+          setKnownPersons([...faceRecognitionService.getPersons()]);
+          addLog('AI', 'success', "Yuzni tanish va COCO-SSD modeli tayyor: Qo'ldoshev Sarvar ro'yxatda!");
         }
       } catch (err: unknown) {
         if (isMounted) {
           setAiModelLoading(false);
           const msg = err instanceof Error ? err.message : String(err);
-          addLog('AI', 'warn', `Model yuklashda xatolik: ${msg}. Fallback detektor faollashtirildi.`);
+          addLog('AI', 'warn', `AI yuklashda ogohlantirish: ${msg}`);
         }
       }
     };
 
-    loadModel();
+    loadAiServices();
     return () => {
       isMounted = false;
     };
@@ -131,7 +149,7 @@ export const HUDView: React.FC = () => {
         await videoRef.current.play();
       }
       setCameraLoading(false);
-      addLog('SYSTEM', 'success', "Frontal kamera oqimi ulandi.");
+      addLog('SYSTEM', 'success', "Frontal kamera oqimi tiniq rejimda ulandi.");
     } catch (err: unknown) {
       setCameraLoading(false);
       const errorMsg = err instanceof Error ? err.message : 'Kameraga ruxsat berilmadi yoki kamera topilmadi';
@@ -153,7 +171,7 @@ export const HUDView: React.FC = () => {
   }, [cameraSource, startFrontalCamera, stopCameraStream]);
 
   // =========================================================================
-  // 3. TASVIRDAN ODAM VA MASHINALARNI REAL VAQTDA ANIQLASH
+  // 3. TASVIRDAN ODAM VA MASHINALARNI HAMDA SHAXSNI ANIQLASH
   // =========================================================================
   const detectFrame = useCallback(async () => {
     if (
@@ -171,11 +189,10 @@ export const HUDView: React.FC = () => {
     const vH = video.videoHeight;
     if (!vW || !vH) return;
 
-    // Agar COCO-SSD modeli yuklangan bo'lsa
     if (cocoModelRef.current) {
       try {
         isDetectingRef.current = true;
-        const predictions = await cocoModelRef.current.detect(video, 8, 0.45);
+        const predictions = await cocoModelRef.current.detect(video, 8, 0.40);
 
         let personCount = 0;
         let carCount = 0;
@@ -199,16 +216,41 @@ export const HUDView: React.FC = () => {
             let label = "Noma'lum";
             let color = "#00e5ff";
             let category: DetectedObject['category'] = 'other';
+            let personName: string | undefined = undefined;
+            let isIdentifiedPerson = false;
+            let confidence = +pred.score.toFixed(2);
 
             if (cls === 'person') {
               personCount++;
-              label = "Odam (Piyoda)";
-              color = "#00e676"; // Yashil
               category = 'person';
+
+              // Yuz qismini qirqib olib tanish tizimiga yuborish
+              const faceCanvas = document.createElement('canvas');
+              faceCanvas.width = 48;
+              faceCanvas.height = 48;
+              const fCtx = faceCanvas.getContext('2d');
+              if (fCtx) {
+                // Inson tanasining yuqori 45% qismi yuz maydoni hisoblanadi
+                const cropHeight = Math.max(20, rawH * 0.45);
+                fCtx.drawImage(video, rawX, rawY, rawW, cropHeight, 0, 0, 48, 48);
+              }
+
+              // Yuzni bazadagi shaxslar (Qo'ldoshev Sarvar va b.) bilan solishtirish
+              const match = faceRecognitionService.identifyFace(faceCanvas);
+              if (match.person) {
+                label = match.person.fullName;
+                personName = match.person.fullName;
+                color = match.person.color || '#00e676';
+                isIdentifiedPerson = true;
+                confidence = match.confidence;
+              } else {
+                label = "Odam (Piyoda)";
+                color = "#00e676"; // Yashil
+              }
             } else if (cls === 'car') {
               carCount++;
               label = "Mashina (Avtomobil)";
-              color = "#00e5ff"; // Moviy
+              color = "#00e5ff"; // Tsian / Moviy
               category = 'car';
             } else if (cls === 'truck') {
               carCount++;
@@ -232,19 +274,19 @@ export const HUDView: React.FC = () => {
             const boxW = (rawW / vW) * 100;
             const boxH = (rawH / vH) * 100;
 
-            // Agar oyna (mirror) effekti bo'lsa, gorizontal koordinatani to'g'irlaymiz
+            // Oyna (mirror) effekti bo'lsa gorizontal koordinatani moslash
             if (mirrorVideo) {
               boxX = 100 - (boxX + boxW);
             }
 
-            // Masofani optik nisbat orqali taxminiy hisoblash
+            // Masofani optik nisbat orqali hisoblash
             const focalRatio = category === 'person' ? 52 : 68;
             const estimatedDistance = +(focalRatio / Math.max(12, boxH)).toFixed(1);
 
             return {
               id: `real-obj-${idx}-${Date.now().toString().slice(-4)}`,
               label,
-              confidence: +pred.score.toFixed(2),
+              confidence,
               distance: Math.min(18.0, Math.max(0.6, estimatedDistance)),
               box: {
                 x: Math.max(0, Math.min(100 - boxW, boxX)),
@@ -253,7 +295,9 @@ export const HUDView: React.FC = () => {
                 height: Math.min(100, boxH)
               },
               color,
-              category
+              category,
+              personName,
+              isIdentifiedPerson
             };
           });
 
@@ -263,8 +307,8 @@ export const HUDView: React.FC = () => {
           cars: carCount,
           total: newObjects.length
         });
-      } catch (e) {
-        // detection xatolarini yutish
+      } catch {
+        // AI detection pass
       } finally {
         isDetectingRef.current = false;
       }
@@ -281,9 +325,41 @@ export const HUDView: React.FC = () => {
     }
     return () => {
       if (intervalId) clearInterval(intervalId);
-      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
     };
   }, [cameraSource, aiEnabled, detectFrame]);
+
+  // Yangi shaxsni bazaga qo'shish
+  const handleAddNewPerson = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPersonName.trim()) return;
+
+    const newPerson: KnownPerson = {
+      id: `person-${Date.now()}`,
+      fullName: newPersonName.trim(),
+      role: newPersonRole.trim() || 'Ruxsat berilgan shaxs',
+      photoUrl: newPersonPhoto || '',
+      color: '#38bdf8',
+      badge: 'VERIFIED'
+    };
+
+    await faceRecognitionService.addPerson(newPerson);
+    setKnownPersons([...faceRecognitionService.getPersons()]);
+    addLog('AI', 'success', `Yuzlar bazasiga yangi shaxs qo'shildi: ${newPerson.fullName}`);
+    setNewPersonName('');
+    setNewPersonRole('');
+    setNewPersonPhoto(null);
+  };
+
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setNewPersonPhoto(event.target?.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
   // PTZ adjustments
   const adjustPTZ = (dPan: number, dTilt: number) => {
@@ -340,10 +416,17 @@ export const HUDView: React.FC = () => {
             </button>
           </div>
 
-          {/* Camera Source Selector & AI Object Stats */}
+          {/* Camera Source Selector & Database Trigger */}
           <div className="flex items-center space-x-1.5 font-mono text-xs">
-            <span className="text-slate-400 hidden md:inline text-[11px]">KAMERA:</span>
-            
+            <button
+              onClick={() => setShowFaceDbModal(true)}
+              className="px-2 py-1 rounded bg-tactical-950 border border-tactical-700 text-slate-300 hover:text-white flex items-center space-x-1 transition-all"
+              title="Yuzlar bazasini ko'rish va yangi odamlarni qo'shish"
+            >
+              <Users className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Yuzlar Bazasi ({knownPersons.length})</span>
+            </button>
+
             <button
               onClick={() => setCameraSource('FRONTAL')}
               className={`px-2.5 py-1 rounded font-bold flex items-center space-x-1 border transition-all ${
@@ -381,7 +464,7 @@ export const HUDView: React.FC = () => {
           </div>
         </div>
 
-        {/* MAIN HUD VIDEO FEED CONTAINER */}
+        {/* MAIN HUD VIDEO FEED CONTAINER (Chiziq-chiziq filtr olib tashlangan - Tiniq HD kadr) */}
         <div className="hud-panel rounded-lg overflow-hidden flex flex-col flex-1 relative min-h-[360px] max-h-[560px]">
           {/* Header Bar inside Feed */}
           <div className="bg-tactical-950/85 px-3 py-2 border-b border-tactical-700/60 flex items-center justify-between z-20">
@@ -391,7 +474,7 @@ export const HUDView: React.FC = () => {
                 <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
               </span>
               <span className="font-bold text-white tracking-wider">
-                {cameraSource === 'FRONTAL' ? 'FRONTAL WEBCAM AI HUD' : cameraSource === 'RPI' ? '360° PTZ RPI GUMBAZ KAMERA' : 'TAKTIK VIRTUAL SIMULYATOR'}
+                {cameraSource === 'FRONTAL' ? 'FRONTAL TINIK AI KAMERA' : cameraSource === 'RPI' ? '360° PTZ RPI GUMBAZ KAMERA' : 'TAKTIK VIRTUAL SIMULYATOR'}
               </span>
               <span className="px-1.5 py-0.5 rounded text-[10px] bg-tactical-800 text-slate-300 border border-tactical-700">
                 {ptz.mode}
@@ -402,7 +485,7 @@ export const HUDView: React.FC = () => {
             <div className="flex items-center space-x-2">
               <div className="hidden sm:flex items-center space-x-1.5 bg-tactical-950/90 px-2 py-0.5 rounded border border-tactical-700 font-mono text-[11px]">
                 <span className="text-emerald-400 flex items-center space-x-1 font-bold">
-                  <User className="w-3 h-3" />
+                  <UserCheck className="w-3 h-3" />
                   <span>{detectedCounts.people} Odam</span>
                 </span>
                 <span className="text-slate-600">|</span>
@@ -445,8 +528,8 @@ export const HUDView: React.FC = () => {
             </div>
           </div>
 
-          {/* Video Stream & Tactical Crosshair Viewport */}
-          <div className="relative flex-1 bg-black flex items-center justify-center overflow-hidden scanlines">
+          {/* Video Stream & Viewport: scanlines olib tashlangan, tiniq tasvir */}
+          <div className="relative flex-1 bg-black flex items-center justify-center overflow-hidden">
             
             {/* 1-REJIM: FRONTAL WEBCAM */}
             {cameraSource === 'FRONTAL' && (
@@ -459,7 +542,6 @@ export const HUDView: React.FC = () => {
                   className={`w-full h-full object-cover transition-transform ${mirrorVideo ? 'scale-x-[-1]' : ''}`}
                 />
 
-                {/* Yuklanmoqda holati */}
                 {cameraLoading && (
                   <div className="absolute inset-0 bg-tactical-950/80 flex flex-col items-center justify-center space-y-2 z-10">
                     <RefreshCw className="w-8 h-8 text-police-cyan animate-spin" />
@@ -467,7 +549,6 @@ export const HUDView: React.FC = () => {
                   </div>
                 )}
 
-                {/* Xatolik bo'lsa */}
                 {cameraError && (
                   <div className="absolute inset-0 bg-tactical-950/90 flex flex-col items-center justify-center p-4 text-center z-10">
                     <AlertTriangle className="w-10 h-10 text-rose-500 mb-2 animate-bounce" />
@@ -500,7 +581,6 @@ export const HUDView: React.FC = () => {
             {/* 3-REJIM: VIRTUAL TAKTIK SIMULYATOR */}
             {cameraSource === 'SIMULATION' && (
               <div className="w-full h-full relative flex items-center justify-center bg-gradient-to-b from-tactical-950 via-[#0a1120] to-[#040810]">
-                {/* Perspective Road & Grid */}
                 <div className="absolute inset-0 opacity-25 pointer-events-none">
                   <div className="w-full h-full flex flex-col justify-end">
                     <div className="h-1/2 w-full bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-blue-900/30 via-transparent to-transparent" />
@@ -513,51 +593,71 @@ export const HUDView: React.FC = () => {
             )}
 
             {/* ========================================================================= */}
-            {/* AI DETECTED OBJECTS OVERLAYS (TO'RTBURCHAK RAMKALAR BILAN VIZUALLASHTIRISH) */}
+            {/* AI DETECTED OBJECTS: RAMKA CHETIDA ISM-FAMILIYA BILAN VIZUALLASHTIRISH   */}
             {/* ========================================================================= */}
             {aiEnabled && detectedObjects.map((obj) => (
               <div
                 key={obj.id}
-                className="absolute border-2 transition-all duration-150 pointer-events-none flex flex-col justify-between z-20 group"
+                className="absolute border-2 transition-all duration-150 pointer-events-none flex flex-col justify-between z-20"
                 style={{
                   borderColor: obj.color,
                   left: `${obj.box.x}%`,
                   top: `${obj.box.y}%`,
                   width: `${obj.box.width}%`,
                   height: `${obj.box.height}%`,
-                  boxShadow: `0 0 15px ${obj.color}60, inset 0 0 10px ${obj.color}20`
+                  boxShadow: `0 0 16px ${obj.color}70, inset 0 0 10px ${obj.color}25`
                 }}
               >
                 {/* 4 Ta Taktik Burchak Ko'rsatkichlari */}
-                <div className="absolute -top-1 -left-1 w-2.5 h-2.5 border-t-2 border-l-2" style={{ borderColor: obj.color }} />
-                <div className="absolute -top-1 -right-1 w-2.5 h-2.5 border-t-2 border-r-2" style={{ borderColor: obj.color }} />
-                <div className="absolute -bottom-1 -left-1 w-2.5 h-2.5 border-b-2 border-l-2" style={{ borderColor: obj.color }} />
-                <div className="absolute -bottom-1 -right-1 w-2.5 h-2.5 border-b-2 border-r-2" style={{ borderColor: obj.color }} />
+                <div className="absolute -top-1.5 -left-1.5 w-3 h-3 border-t-2 border-l-2" style={{ borderColor: obj.color }} />
+                <div className="absolute -top-1.5 -right-1.5 w-3 h-3 border-t-2 border-r-2" style={{ borderColor: obj.color }} />
+                <div className="absolute -bottom-1.5 -left-1.5 w-3 h-3 border-b-2 border-l-2" style={{ borderColor: obj.color }} />
+                <div className="absolute -bottom-1.5 -right-1.5 w-3 h-3 border-b-2 border-r-2" style={{ borderColor: obj.color }} />
 
-                {/* Yuqori Taktik Yorliq (Klass nomi va Ishonchlilik %) */}
+                {/* YUQORI TAKTIK YORLIQ: ISM FAMILIYA YOKI OBYEKT TOIFASI */}
                 <div
-                  className="px-1.5 py-0.5 text-[9px] font-mono font-black tracking-tight text-white flex items-center justify-between shadow-sm"
-                  style={{ backgroundColor: `${obj.color}dd` }}
+                  className="px-2 py-0.5 text-[10px] font-mono font-black tracking-tight text-white flex items-center justify-between shadow-md"
+                  style={{ backgroundColor: `${obj.color}ee` }}
                 >
-                  <span className="flex items-center space-x-1">
-                    {obj.category === 'person' && <User className="w-2.5 h-2.5 inline mr-0.5" />}
-                    {obj.category === 'car' && <Car className="w-2.5 h-2.5 inline mr-0.5" />}
-                    <span>{obj.label}</span>
+                  <span className="flex items-center space-x-1 truncate max-w-[170px]">
+                    {obj.isIdentifiedPerson ? (
+                      <CheckCircle2 className="w-3 h-3 inline text-white shrink-0" />
+                    ) : obj.category === 'person' ? (
+                      <User className="w-3 h-3 inline text-white shrink-0" />
+                    ) : (
+                      <Car className="w-3 h-3 inline text-white shrink-0" />
+                    )}
+                    <span className="truncate">{obj.label}</span>
                   </span>
-                  <span className="ml-1 opacity-90">{(obj.confidence * 100).toFixed(0)}%</span>
+                  <span className="ml-1 opacity-90 text-[9px]">{(obj.confidence * 100).toFixed(0)}%</span>
                 </div>
 
                 {/* O'rta Nishon (Target Lock) */}
                 <div className="self-center my-auto opacity-40">
-                  <div className="w-3 h-3 rounded-full border border-dashed" style={{ borderColor: obj.color }} />
+                  <div className="w-4 h-4 rounded-full border border-dashed animate-pulse" style={{ borderColor: obj.color }} />
                 </div>
 
-                {/* Pastki Masofa Ko'rsatkichi (Metrda) */}
-                <div
-                  className="px-1.5 py-0.5 text-[9px] font-mono self-end text-black font-extrabold rounded-tl shadow-sm"
-                  style={{ backgroundColor: `${obj.color}dd` }}
-                >
-                  D: {obj.distance}m
+                {/* RAMKANING PASTKI CHETIDA TO'LIQ ISM-FAMILIYA VA MAQOM VIDJETI */}
+                <div className="flex items-end justify-between w-full p-1 pointer-events-none">
+                  {obj.isIdentifiedPerson ? (
+                    <div
+                      className="px-1.5 py-0.5 rounded font-mono font-bold text-[9px] text-white shadow-md flex items-center space-x-1"
+                      style={{ backgroundColor: 'rgba(2, 6, 23, 0.9)', border: `1.5px solid ${obj.color}` }}
+                    >
+                      <UserCheck className="w-3 h-3 text-emerald-400" />
+                      <span className="text-emerald-300 font-extrabold">{obj.personName || "Qo'ldoshev Sarvar"}</span>
+                    </div>
+                  ) : (
+                    <div />
+                  )}
+
+                  {/* Pastki Masofa Ko'rsatkichi (Metrda) */}
+                  <div
+                    className="px-1.5 py-0.5 text-[9px] font-mono text-black font-black rounded shadow-md ml-auto"
+                    style={{ backgroundColor: `${obj.color}ee` }}
+                  >
+                    D: {obj.distance}m
+                  </div>
                 </div>
               </div>
             ))}
@@ -566,7 +666,6 @@ export const HUDView: React.FC = () => {
             <div className="relative pointer-events-none flex items-center justify-center z-10">
               <Crosshair className="w-14 h-14 text-police-cyan/60 animate-pulse-subtle" />
               <div className="absolute w-28 h-28 border border-dashed border-police-cyan/30 rounded-full" />
-              {/* Haqiqiy GPS Koordinatasi Markazda */}
               <div className="absolute -top-7 text-[10px] font-mono text-police-cyan font-bold bg-tactical-950/80 px-2 py-0.5 rounded border border-tactical-700/60 shadow-md">
                 GPS: {gps.latitude.toFixed(6)}° N, {gps.longitude.toFixed(6)}° E
               </div>
@@ -586,7 +685,7 @@ export const HUDView: React.FC = () => {
             <div className="absolute top-3 left-3 font-mono text-[10px] text-police-cyan/90 pointer-events-none bg-tactical-950/80 p-1.5 rounded border border-tactical-700/60 shadow z-10">
               <div className="flex items-center space-x-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
-                <span>AI REJIM: {aiModelLoaded ? 'COCO-SSD TF' : aiModelLoading ? 'Yuklanmoqda...' : 'Detektor'}</span>
+                <span>AI: {aiModelLoaded ? 'COCO-SSD & YUZ' : aiModelLoading ? 'YUKLANMOQDA...' : 'DETEKTOR'}</span>
               </div>
               <div>ANIQLANGAN: {detectedCounts.total} ta obyekt</div>
               <div>ANIQLIK: ±{gps.accuracy || 3.5}m</div>
@@ -656,7 +755,6 @@ export const HUDView: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {/* Front */}
             <div className={`p-2 rounded border font-mono flex flex-col items-center justify-center transition-all ${getSonarColor(sonars.front, isFrontBlocked)}`}>
               <span className="text-[10px] text-slate-300 font-bold">OLD (TRIG A0, ECHO A1)</span>
               <span className="text-xl font-black mt-0.5">{sonars.front} sm</span>
@@ -665,7 +763,6 @@ export const HUDView: React.FC = () => {
               </span>
             </div>
 
-            {/* Rear */}
             <div className={`p-2 rounded border font-mono flex flex-col items-center justify-center transition-all ${getSonarColor(sonars.rear)}`}>
               <span className="text-[10px] text-slate-300 font-bold">ORQA (TRIG A2, ECHO A3)</span>
               <span className="text-xl font-black mt-0.5">{sonars.rear} sm</span>
@@ -674,14 +771,12 @@ export const HUDView: React.FC = () => {
               </span>
             </div>
 
-            {/* Left */}
             <div className={`p-2 rounded border font-mono flex flex-col items-center justify-center transition-all ${getSonarColor(sonars.left)}`}>
               <span className="text-[10px] text-slate-300 font-bold">CHAP YONLAMA</span>
               <span className="text-xl font-black mt-0.5">{sonars.left} sm</span>
               <span className="text-[9px] mt-0.5 font-semibold">Ochiq</span>
             </div>
 
-            {/* Right */}
             <div className={`p-2 rounded border font-mono flex flex-col items-center justify-center transition-all ${getSonarColor(sonars.right)}`}>
               <span className="text-[10px] text-slate-300 font-bold">O'NG YONLAMA</span>
               <span className="text-xl font-black mt-0.5">{sonars.right} sm</span>
@@ -731,7 +826,6 @@ export const HUDView: React.FC = () => {
 
           {/* 3x3 Mecanum Tactical Keypad */}
           <div className="grid grid-cols-3 gap-2 w-full max-w-[280px]">
-            {/* Strafe Left (Q) */}
             <button
               onClick={() => sendMecanumCommand('Q')}
               title="Chapga Yonlama (Strafe Q)"
@@ -745,7 +839,6 @@ export const HUDView: React.FC = () => {
               <span className="text-[11px]">STRAFE Q</span>
             </button>
 
-            {/* Forward (F) */}
             <button
               onClick={() => sendMecanumCommand('F')}
               disabled={isFrontBlocked}
@@ -762,7 +855,6 @@ export const HUDView: React.FC = () => {
               <span className="text-xs">OLDINGA (F)</span>
             </button>
 
-            {/* Strafe Right (E) */}
             <button
               onClick={() => sendMecanumCommand('E')}
               title="O'ngga Yonlama (Strafe E)"
@@ -776,7 +868,6 @@ export const HUDView: React.FC = () => {
               <span className="text-[11px]">STRAFE E</span>
             </button>
 
-            {/* Turn Left (L) */}
             <button
               onClick={() => sendMecanumCommand('L')}
               title="Chapga Burilish (L)"
@@ -790,7 +881,6 @@ export const HUDView: React.FC = () => {
               <span className="text-xs">CHAP (L)</span>
             </button>
 
-            {/* STOP (S) */}
             <button
               onClick={() => sendMecanumCommand('S')}
               title="To'xtatish (S)"
@@ -804,7 +894,6 @@ export const HUDView: React.FC = () => {
               <span className="text-xs">STOP (S)</span>
             </button>
 
-            {/* Turn Right (R) */}
             <button
               onClick={() => sendMecanumCommand('R')}
               title="O'ngga Burilish (R)"
@@ -818,7 +907,6 @@ export const HUDView: React.FC = () => {
               <span className="text-xs">O'NG (R)</span>
             </button>
 
-            {/* 360 Spin Left */}
             <button
               onClick={() => sendMecanumCommand('L')}
               title="360° Joyida Burilish"
@@ -828,7 +916,6 @@ export const HUDView: React.FC = () => {
               <span>360° BURIL</span>
             </button>
 
-            {/* Backward (B) */}
             <button
               onClick={() => sendMecanumCommand('B')}
               title="Orqaga (B)"
@@ -842,7 +929,6 @@ export const HUDView: React.FC = () => {
               <span className="text-xs">ORQAGA (B)</span>
             </button>
 
-            {/* 360 Spin Right */}
             <button
               onClick={() => sendMecanumCommand('R')}
               title="360° Joyida O'ngga Burilish"
@@ -853,7 +939,7 @@ export const HUDView: React.FC = () => {
             </button>
           </div>
 
-          {/* Teleskopik Minora Boshqaruvi (U va D) */}
+          {/* Teleskopik Minora Boshqaruvi */}
           <div className="grid grid-cols-2 gap-2 mt-2 w-full max-w-[280px]">
             <button
               onClick={() => sendMecanumCommand('U')}
@@ -921,6 +1007,99 @@ export const HUDView: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* YUZLAR BAZASINI BOSHQARISH MODAL OYNASI */}
+      {showFaceDbModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-tactical-950 border border-tactical-700 rounded-xl max-w-lg w-full p-4 flex flex-col gap-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-tactical-800 pb-3">
+              <div className="flex items-center space-x-2">
+                <Users className="w-5 h-5 text-emerald-400" />
+                <h3 className="font-mono font-bold text-white text-sm">Yuzlar va Shaxslar Bazasi</h3>
+              </div>
+              <button
+                onClick={() => setShowFaceDbModal(false)}
+                className="p-1 rounded text-slate-400 hover:text-white bg-tactical-900"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Hozirgi bazadagi shaxslar ro'yxati */}
+            <div className="flex flex-col gap-2 max-h-52 overflow-y-auto">
+              <span className="font-mono text-xs text-slate-400 font-semibold">Tizimda ro'yxatdan o'tgan shaxslar:</span>
+              {knownPersons.map((p) => (
+                <div
+                  key={p.id}
+                  className="flex items-center justify-between p-2 rounded bg-tactical-900 border border-tactical-750 font-mono text-xs"
+                >
+                  <div className="flex items-center space-x-2.5">
+                    {p.photoUrl ? (
+                      <img src={p.photoUrl} alt={p.fullName} className="w-9 h-9 rounded-full object-cover border border-emerald-400" />
+                    ) : (
+                      <div className="w-9 h-9 rounded-full bg-tactical-800 flex items-center justify-center text-slate-300">
+                        <User className="w-4 h-4" />
+                      </div>
+                    )}
+                    <div>
+                      <div className="font-bold text-white flex items-center space-x-1.5">
+                        <span>{p.fullName}</span>
+                        <span className="px-1 py-0.2 rounded text-[9px] bg-emerald-950 text-emerald-300 border border-emerald-600 font-extrabold">
+                          {p.badge}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-slate-400">{p.role}</div>
+                    </div>
+                  </div>
+                  <span className="text-[10px] text-emerald-400 font-bold">Faol</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Yangi shaxs va rasm qo'shish formasi */}
+            <form onSubmit={handleAddNewPerson} className="border-t border-tactical-800 pt-3 flex flex-col gap-2.5 font-mono text-xs">
+              <span className="font-semibold text-slate-300 flex items-center space-x-1">
+                <Plus className="w-3.5 h-3.5 text-police-cyan" />
+                <span>Yangi shaxsni bazaga kiritish:</span>
+              </span>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <input
+                  type="text"
+                  placeholder="Ism Familiya"
+                  value={newPersonName}
+                  onChange={(e) => setNewPersonName(e.target.value)}
+                  className="bg-tactical-900 border border-tactical-700 rounded px-2.5 py-1.5 text-white placeholder-slate-500 focus:outline-none focus:border-police-cyan text-xs"
+                  required
+                />
+                <input
+                  type="text"
+                  placeholder="Lavozimi / Maqomi"
+                  value={newPersonRole}
+                  onChange={(e) => setNewPersonRole(e.target.value)}
+                  className="bg-tactical-900 border border-tactical-700 rounded px-2.5 py-1.5 text-white placeholder-slate-500 focus:outline-none focus:border-police-cyan text-xs"
+                />
+              </div>
+
+              <div className="flex items-center justify-between gap-2 mt-1">
+                <label className="cursor-pointer px-2.5 py-1.5 rounded bg-tactical-900 border border-tactical-700 text-slate-300 hover:text-white flex items-center space-x-1.5 text-xs">
+                  <Camera className="w-3.5 h-3.5 text-police-cyan" />
+                  <span>{newPersonPhoto ? "Rasm tanlandi ✓" : "Rasm yuklash..."}</span>
+                  <input type="file" accept="image/*" onChange={handlePhotoUpload} className="hidden" />
+                </label>
+
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-bold shadow flex items-center space-x-1"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Bazaga Saqlash</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

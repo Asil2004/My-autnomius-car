@@ -31,6 +31,8 @@ export interface DetectedObject {
   box: { x: number; y: number; width: number; height: number }; // percentages 0-100
   color: string;
   category?: 'person' | 'car' | 'vehicle' | 'sign' | 'other';
+  personName?: string;
+  isIdentifiedPerson?: boolean;
 }
 
 export interface GPSState {
