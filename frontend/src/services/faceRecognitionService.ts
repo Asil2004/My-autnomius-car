@@ -1,4 +1,5 @@
 import sarvarPhotoUrl from '../assets/faces/koldoshev_sarvar.jpg';
+import asilbekPhotoUrl from '../assets/faces/asilbek_ravshanov.png';
 
 export interface KnownPerson {
   id: string;
@@ -19,6 +20,14 @@ export const INITIAL_FACE_DATABASE: KnownPerson[] = [
     photoUrl: sarvarPhotoUrl,
     color: '#00e676', // Yashil taktik
     badge: 'IIV VERIFIED'
+  },
+  {
+    id: 'ravshanov-asilbek',
+    fullName: 'Asilbek Ravshanov',
+    role: 'Loyiha Muhandisi / Boshqaruvchi',
+    photoUrl: asilbekPhotoUrl,
+    color: '#38bdf8', // Tsian / Moviy taktik
+    badge: 'IIV VERIFIED'
   }
 ];
 
@@ -27,8 +36,8 @@ class FaceRecognitionEngine {
   private isInitialized = false;
 
   // Qat'iy Face ID chegarasi (Threshold)
-  // Faqat 0.78 dan yuqori bo'lsagina shaxs taniladi, aks holda begona ("Piyoda") deb baholanadi!
-  private readonly RECOGNITION_THRESHOLD = 0.78;
+  // Faqat 0.76 dan yuqori bo'lsagina shaxs taniladi, aks holda begona ("Piyoda") deb baholanadi!
+  private readonly RECOGNITION_THRESHOLD = 0.76;
 
   constructor() {
     this.initDatabase();
@@ -200,8 +209,6 @@ class FaceRecognitionEngine {
   // =========================================================================
   // ASOSIY FACE ID IDENTIFIKATSIYA FUNKSIYASI
   // =========================================================================
-  // Agar foydalanuvchi qat'iy tekshiruvdan o'tsa -> Shaxs aniqlanadi
-  // Agar o'tmasa yoki begona kishi bo'lsa -> null qaytaradi (ya'ni "Piyoda")!
   public identifyFace(faceCanvas: HTMLCanvasElement): {
     person: KnownPerson | null;
     isIdentified: boolean;
@@ -226,9 +233,8 @@ class FaceRecognitionEngine {
     }
 
     // QAT'IY BIOMETRIK CHEGARA:
-    // Faqat belgilangan ostonadan (RECOGNITION_THRESHOLD = 0.78) yuqori bo'lsagina shaxs taniladi!
+    // Faqat belgilangan ostonadan (RECOGNITION_THRESHOLD = 0.76) yuqori bo'lsagina shaxs taniladi!
     if (bestPerson && highestSimilarity >= this.RECOGNITION_THRESHOLD) {
-      // Yuz muvaffaqiyatli tanildi (Masalan, Qo'ldoshev Sarvar)
       return {
         person: bestPerson,
         isIdentified: true,
