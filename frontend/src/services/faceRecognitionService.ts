@@ -1,6 +1,8 @@
+import * as faceapi from '@vladmandic/face-api';
 import sarvarPhotoUrl from '../assets/faces/koldoshev_sarvar.jpg';
 import asilbekPhotoUrl from '../assets/faces/asilbek_ravshanov.png';
 import boburjonPhotoUrl from '../assets/faces/boburjon_bozorov.jpg';
+import descriptorsData from '../assets/faces/descriptors.json';
 
 export interface KnownPerson {
   id: string;
@@ -11,6 +13,30 @@ export interface KnownPerson {
   badge: string;
   descriptor?: number[];
 }
+
+export interface FaceMatchResult {
+  person: KnownPerson | null;
+  isIdentified: boolean;
+  confidence: number;
+  distance: number;
+}
+
+export interface DetectedFace {
+  box: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  score: number;
+  descriptor: Float32Array;
+}
+
+// Zulfiddin Frontend arxitekturasi bo'yicha qat'iy parametrlar
+export const MATCH_DISTANCE = 0.50; // Qat'iy Euclid masofasi chegarasi (standart 0.60 dan qat'iyroq)
+export const VOTE_WINDOW = 5;       // Oxirgi 5 ta kadr kuzatuv oynasi
+export const VOTE_NEEDED = 3;       // Kamida 3 kadrda bir xil shaxs tasdiqlansa ism chiqadi (anti-flicker)
+export const LOCALSTORAGE_KEY = 'qalqon.faceDb.v1';
 
 export const INITIAL_FACE_DATABASE: KnownPerson[] = [
   {
@@ -41,251 +67,369 @@ export const INITIAL_FACE_DATABASE: KnownPerson[] = [
 
 class FaceRecognitionEngine {
   private database: KnownPerson[] = [...INITIAL_FACE_DATABASE];
+  private isModelLoaded = false;
+  private modelLoadPromise: Promise<void> | null = null;
   private isInitialized = false;
-
-  // Qat'iy Face ID chegarasi (Pearson Zero-Mean Correlation)
-  private readonly RECOGNITION_THRESHOLD = 0.58;
+  private initPromise: Promise<void> | null = null;
+  private voteHistory: Map<string, string[]> = new Map();
+  private detectorOptions = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.40 });
 
   constructor() {
-    this.initDatabase();
+    // Fon rejimida bazani tayyorlash
+    this.initDatabase().catch(err => {
+      console.warn('[FaceID] Initsializatsiya fon ogohlantirishi:', err);
+    });
   }
 
-  public async initDatabase() {
-    if (this.isInitialized) return;
+  // =========================================================================
+  // 1. MODELLARNI YUKLASH (Lokal public/models/face yoki public/models)
+  // =========================================================================
+  public async loadModels(): Promise<void> {
+    if (this.isModelLoaded) return;
+    if (this.modelLoadPromise) return this.modelLoadPromise;
 
-    for (const person of this.database) {
+    this.modelLoadPromise = (async () => {
+      const baseUrl = import.meta.env.BASE_URL || './';
+      const cleanBase = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+      const primaryPath = `${cleanBase}models/face`;
+      const fallbackPath = `${cleanBase}models`;
+
       try {
-        const descriptor = await this.extractDescriptorFromUrl(person.photoUrl);
-        person.descriptor = descriptor;
+        await Promise.all([
+          faceapi.nets.tinyFaceDetector.loadFromUri(primaryPath),
+          faceapi.nets.faceLandmark68Net.loadFromUri(primaryPath),
+          faceapi.nets.faceRecognitionNet.loadFromUri(primaryPath)
+        ]);
+        this.isModelLoaded = true;
+        console.log('[FaceID] face-api modellari muvaffaqiyatli yuklandi:', primaryPath);
       } catch (err) {
-        console.warn(`[FaceID] ${person.fullName} deskriptorini hisoblashda ogohlantirish:`, err);
+        console.warn(`[FaceID] ${primaryPath} dan yuklab bo'lmadi, ${fallbackPath} sinab ko'riladi:`, err);
+        try {
+          await Promise.all([
+            faceapi.nets.tinyFaceDetector.loadFromUri(fallbackPath),
+            faceapi.nets.faceLandmark68Net.loadFromUri(fallbackPath),
+            faceapi.nets.faceRecognitionNet.loadFromUri(fallbackPath)
+          ]);
+          this.isModelLoaded = true;
+          console.log('[FaceID] face-api modellari muvaffaqiyatli yuklandi:', fallbackPath);
+        } catch (fbErr) {
+          console.error('[FaceID] face-api modellarini yuklashda xatolik:', fbErr);
+          throw fbErr;
+        }
+      }
+    })();
+
+    return this.modelLoadPromise;
+  }
+
+  // =========================================================================
+  // 2. YUZLAR BAZASINI VA DESKRIPTORLARNI INITSIALIZATSIYA QILISH
+  // =========================================================================
+  public async initDatabase(): Promise<void> {
+    if (this.isInitialized) return;
+    if (this.initPromise) return this.initPromise;
+
+    this.initPromise = (async () => {
+      // Modellar yuklashga urinib ko'rish
+      try {
+        await this.loadModels();
+      } catch (err) {
+        console.warn('[FaceID] Yuz modellari yuklanmadi, COCO-SSD barcha odamlarni Piyoda deb belgilaydi:', err);
+      }
+
+      // Oldindan hisoblangan descriptors.json dan embeddinglarni biriktirish
+      const precalc = descriptorsData as unknown as Record<string, { descriptor: number[] }>;
+      for (const person of this.database) {
+        if (precalc && precalc[person.id]?.descriptor) {
+          person.descriptor = precalc[person.id].descriptor;
+        } else if (this.isModelLoaded) {
+          try {
+            const desc = await this.extractDescriptorFromUrl(person.photoUrl);
+            if (desc) person.descriptor = desc;
+          } catch (e) {
+            console.warn(`[FaceID] ${person.fullName} deskriptorini hisoblashda ogohlantirish:`, e);
+          }
+        }
+      }
+
+      // localStorage (qalqon.faceDb.v1) dagi qo'shilgan yangi shaxslarni yuklash
+      try {
+        const raw = localStorage.getItem(LOCALSTORAGE_KEY);
+        if (raw) {
+          const saved = JSON.parse(raw) as KnownPerson[];
+          if (Array.isArray(saved)) {
+            for (const sp of saved) {
+              if (!this.database.some(p => p.id === sp.id)) {
+                this.database.push(sp);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[FaceID] localStorage dagi yuzlar bazasini o\'qishda xatolik:', err);
+      }
+
+      this.isInitialized = true;
+    })();
+
+    return this.initPromise;
+  }
+
+  // =========================================================================
+  // 3. RASMDAN YUZNI DETEKSIYA QILISH VA 128D EMBEDDING OLISH
+  // =========================================================================
+  public async extractDescriptorFromImage(
+    img: HTMLImageElement | HTMLCanvasElement
+  ): Promise<number[] | null> {
+    if (!this.isModelLoaded) {
+      await this.loadModels();
+    }
+
+    const opt416 = new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.30 });
+    let detection = await faceapi
+      .detectSingleFace(img, opt416)
+      .withFaceLandmarks()
+      .withFaceDescriptor();
+
+    // SARVAR RASMI CHETI MUAMMOSI (yuz butun kadrni egallagan) UCHUN BO'SH JOY (PADDING) QO'SHISH
+    if (!detection) {
+      const w = (img as HTMLImageElement).naturalWidth || img.width || 300;
+      const h = (img as HTMLImageElement).naturalHeight || img.height || 300;
+      const padRatio = 0.35;
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(w * (1 + padRatio * 2));
+      canvas.height = Math.round(h * (1 + padRatio * 2));
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = '#808080';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, Math.round(w * padRatio), Math.round(h * padRatio));
+        detection = await faceapi
+          .detectSingleFace(canvas, opt416)
+          .withFaceLandmarks()
+          .withFaceDescriptor();
       }
     }
-    this.isInitialized = true;
+
+    // Agar topilmasa, pastroq o'lcham va sezgirlik bilan yana 1 bor urinish
+    if (!detection) {
+      const opt320 = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.20 });
+      detection = await faceapi
+        .detectSingleFace(img, opt320)
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+    }
+
+    if (!detection) return null;
+    return Array.from(detection.descriptor);
   }
 
-  public async addPerson(person: KnownPerson): Promise<void> {
-    try {
-      const descriptor = await this.extractDescriptorFromUrl(person.photoUrl);
-      person.descriptor = descriptor;
-    } catch (e) {
-      console.warn("Yangi shaxs yuzini hisoblashda xatolik:", e);
-    }
-    this.database.push(person);
+  public async extractDescriptorFromUrl(url: string): Promise<number[] | null> {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = async () => {
+        try {
+          const desc = await this.extractDescriptorFromImage(img);
+          resolve(desc);
+        } catch {
+          resolve(null);
+        }
+      };
+      img.onerror = () => resolve(null);
+      img.src = url;
+    });
+  }
+
+  // =========================================================================
+  // 4. YANGI SHAXSNI BAZAGA QO'SHISH (Faqat yuzi aniq ko'ringan bo'lsa)
+  // =========================================================================
+  public async addPerson(personData: {
+    fullName: string;
+    role: string;
+    photoDataUrl: string;
+    color?: string;
+  }): Promise<KnownPerson> {
+    await this.initDatabase();
+
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = async () => {
+        try {
+          const descriptor = await this.extractDescriptorFromImage(img);
+          if (!descriptor) {
+            return reject(new Error("Rasmda yuz topilmadi! Iltimos, yuzingiz aniq va to'g'ri ko'ringan rasm yuklang."));
+          }
+
+          // 96x96 px ixcham thumbnail yaratish
+          const thumbCanvas = document.createElement('canvas');
+          thumbCanvas.width = 96;
+          thumbCanvas.height = 96;
+          const tCtx = thumbCanvas.getContext('2d');
+          if (tCtx) {
+            const w = img.naturalWidth || img.width;
+            const h = img.naturalHeight || img.height;
+            const minDim = Math.min(w, h);
+            const sx = (w - minDim) / 2;
+            const sy = (h - minDim) / 2;
+            tCtx.drawImage(img, sx, sy, minDim, minDim, 0, 0, 96, 96);
+          }
+          const thumbnailDataUrl = thumbCanvas.toDataURL('image/jpeg', 0.85);
+
+          const newPerson: KnownPerson = {
+            id: `person-${Date.now()}`,
+            fullName: personData.fullName.trim(),
+            role: personData.role.trim() || 'Ruxsat berilgan shaxs',
+            photoUrl: thumbnailDataUrl,
+            color: personData.color || '#38bdf8',
+            badge: 'IIV VERIFIED',
+            descriptor
+          };
+
+          this.database.push(newPerson);
+
+          // localStorage ga saqlash
+          try {
+            const customPersons = this.database.filter(
+              p => !INITIAL_FACE_DATABASE.some(init => init.id === p.id)
+            );
+            localStorage.setItem(LOCALSTORAGE_KEY, JSON.stringify(customPersons));
+          } catch (lsErr) {
+            console.warn('[FaceID] localStorage ga saqlashda xato:', lsErr);
+          }
+
+          resolve(newPerson);
+        } catch (err) {
+          reject(err);
+        }
+      };
+      img.onerror = () => reject(new Error("Rasmni o'qib bo'lmadi."));
+      img.src = personData.photoDataUrl;
+    });
   }
 
   public getPersons(): KnownPerson[] {
     return this.database;
   }
 
-  // Rasmdan aynan YUZ sohasini (kostyum, ko'ylak va fonsiz) formatga moslab qirqib olish
-  private cropFaceToCanvas(img: HTMLImageElement): HTMLCanvasElement {
-    const canvas = document.createElement('canvas');
-    canvas.width = 64;
-    canvas.height = 64;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+  // =========================================================================
+  // 5. JONLI VIDEO KADRIDAGI YUZLARNI ANIQLASH (TinyFaceDetector + landmarks)
+  // =========================================================================
+  public async detectFacesInVideo(video: HTMLVideoElement): Promise<DetectedFace[]> {
+    if (!this.isModelLoaded) return [];
 
-    const w = img.naturalWidth || img.width || 300;
-    const h = img.naturalHeight || img.height || 300;
-
-    let sx = 0;
-    let sy = 0;
-    let sw = w;
-    let sh = h;
-
-    if (h > w * 1.15) {
-      // Vertikal portret (Asilbek Ravshanov rasmi kabi)
-      sx = w * 0.16;
-      sw = w * 0.68;
-      sy = h * 0.14;
-      sh = h * 0.52;
-    } else if (w > h * 1.25) {
-      // Keng landshaft rasm (Boburjon Bozorov rasmi: 1024x576)
-      sx = w * 0.33;
-      sw = w * 0.35;
-      sy = h * 0.03;
-      sh = h * 0.72;
-    } else {
-      // Deyarli kvadrat rasm (Sarvar rasmi kabi)
-      sx = w * 0.05;
-      sw = w * 0.90;
-      sy = h * 0.05;
-      sh = h * 0.90;
-    }
-
-    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, 64, 64);
-    return canvas;
-  }
-
-  // URL (rasm) orqali biometrik deskriptorni hisoblash
-  private async extractDescriptorFromUrl(url: string): Promise<number[]> {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => {
-        try {
-          const faceCanvas = this.cropFaceToCanvas(img);
-          const ctx = faceCanvas.getContext('2d', { willReadFrequently: true });
-          if (!ctx) return reject('Canvas context unavailable');
-
-          const descriptor = this.computeBiometricDescriptor(ctx, 64, 64);
-          resolve(descriptor);
-        } catch (e) {
-          reject(e);
-        }
-      };
-      img.onerror = (e) => reject(e);
-      img.src = url;
-    });
-  }
-
-  // Kadr Canvasidan biometrik deskriptor olish
-  public extractDescriptorFromCanvas(canvas: HTMLCanvasElement): number[] | null {
     try {
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      if (!ctx) return null;
-      return this.computeBiometricDescriptor(ctx, canvas.width, canvas.height);
-    } catch {
-      return null;
+      const detections = await faceapi
+        .detectAllFaces(video, this.detectorOptions)
+        .withFaceLandmarks()
+        .withFaceDescriptors();
+
+      return detections.map(d => ({
+        box: {
+          x: d.detection.box.x,
+          y: d.detection.box.y,
+          width: d.detection.box.width,
+          height: d.detection.box.height
+        },
+        score: d.detection.score,
+        descriptor: d.descriptor
+      }));
+    } catch (err) {
+      console.warn('[FaceID] Video kadrida yuzlarni aniqlash xatosi:', err);
+      return [];
     }
   }
 
-  // Ko'p qatlamli 64 o'lchamli biometrik deskriptor (Zero-Mean Normalization bilan)
-  private computeBiometricDescriptor(ctx: CanvasRenderingContext2D, width: number, height: number): number[] {
-    const imgData = ctx.getImageData(0, 0, width, height);
-    const data = imgData.data;
-
-    // 1. Grayscale massiviga o'tkazish
-    const gray = new Float32Array(width * height);
-    let totalGray = 0;
-    for (let i = 0, j = 0; i < data.length; i += 4, j++) {
-      const g = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-      gray[j] = g;
-      totalGray += g;
-    }
-    const globalMean = totalGray / (width * height);
-
-    const descriptor: number[] = [];
-    const gridX = 4;
-    const gridY = 4;
-    const blockW = Math.floor(width / gridX);
-    const blockH = Math.floor(height / gridY);
-
-    for (let gy = 0; gy < gridY; gy++) {
-      for (let gx = 0; gx < gridX; gx++) {
-        let sum = 0;
-        let hGrad = 0;
-        let vGrad = 0;
-        let dGrad = 0;
-        let count = 0;
-
-        const startY = gy * blockH;
-        const endY = Math.min(height, (gy + 1) * blockH);
-        const startX = gx * blockW;
-        const endX = Math.min(width, (gx + 1) * blockW);
-
-        for (let y = startY; y < endY; y++) {
-          for (let x = startX; x < endX; x++) {
-            const idx = y * width + x;
-            sum += gray[idx];
-            count++;
-
-            if (x > 0 && x < width - 1) {
-              hGrad += Math.abs(gray[idx + 1] - gray[idx - 1]);
-            }
-            if (y > 0 && y < height - 1) {
-              vGrad += Math.abs(gray[(y + 1) * width + x] - gray[(y - 1) * width + x]);
-            }
-            if (x > 0 && x < width - 1 && y > 0 && y < height - 1) {
-              dGrad += Math.abs(gray[(y + 1) * width + x + 1] - gray[(y - 1) * width + x - 1]);
-            }
-          }
-        }
-
-        const blockMean = count > 0 ? sum / count : globalMean;
-        // Global o'rtachadan ayirish (Zero-Mean block contrast)
-        descriptor.push((blockMean - globalMean) / 64);
-        descriptor.push(count > 0 ? (hGrad / count) / 32 : 0);
-        descriptor.push(count > 0 ? (vGrad / count) / 32 : 0);
-        descriptor.push(count > 0 ? (dGrad / count) / 32 : 0);
-      }
-    }
-
-    // Zero-mean qilish va L2 normalizatsiya
-    let dSum = 0;
-    for (let i = 0; i < descriptor.length; i++) dSum += descriptor[i];
-    const dMean = dSum / descriptor.length;
-
-    let normSq = 0;
-    const centered: number[] = new Array(descriptor.length);
-    for (let i = 0; i < descriptor.length; i++) {
-      centered[i] = descriptor[i] - dMean;
-      normSq += centered[i] * centered[i];
-    }
-    const norm = Math.sqrt(normSq) || 1;
-    return centered.map((v) => v / norm);
-  }
-
-  // Pearson Zero-Mean Correlation (-1.0 dan +1.0 gacha)
-  private pearsonCorrelation(v1: number[], v2: number[]): number {
-    let dot = 0;
+  // =========================================================================
+  // 6. EUCLID MASOFASI VA SOLISHTIRISH (Chegara: 0.50)
+  // =========================================================================
+  public euclideanDistance(v1: number[] | Float32Array, v2: number[] | Float32Array): number {
+    let sum = 0;
     const len = Math.min(v1.length, v2.length);
     for (let i = 0; i < len; i++) {
-      dot += v1[i] * v2[i];
+      const diff = v1[i] - v2[i];
+      sum += diff * diff;
     }
-    return dot;
+    return Math.sqrt(sum);
   }
 
-  // =========================================================================
-  // ASOSIY FACE ID IDENTIFIKATSIYA FUNKSIYASI
-  // =========================================================================
-  public identifyFace(faceCanvas: HTMLCanvasElement): {
-    person: KnownPerson | null;
-    isIdentified: boolean;
-    confidence: number;
-    matchScore: number;
-    scores?: Record<string, number>;
-  } {
-    const liveDescriptor = this.extractDescriptorFromCanvas(faceCanvas);
-    if (!liveDescriptor) {
-      return { person: null, isIdentified: false, confidence: 0, matchScore: 0 };
-    }
-
+  public matchFace(descriptor: Float32Array | number[]): FaceMatchResult {
     let bestPerson: KnownPerson | null = null;
-    let highestScore = -1;
-    const scores: Record<string, number> = {};
+    let minDistance = Infinity;
 
     for (const person of this.database) {
-      if (!person.descriptor) continue;
-      const score = this.pearsonCorrelation(liveDescriptor, person.descriptor);
-      scores[person.fullName] = +score.toFixed(3);
-
-      if (score > highestScore) {
-        highestScore = score;
+      if (!person.descriptor || person.descriptor.length === 0) continue;
+      const dist = this.euclideanDistance(descriptor, person.descriptor);
+      if (dist < minDistance) {
+        minDistance = dist;
         bestPerson = person;
       }
     }
 
-    // QAT'IY CHEGARA: Faqat threshold (0.58) dan yuqori bo'lsagina shaxs taniladi!
-    if (bestPerson && highestScore >= this.RECOGNITION_THRESHOLD) {
-      // Normallashtirilgan ishonchlilik (0.75 - 0.98 oralig'ida)
-      const displayConf = Math.min(0.98, Math.max(0.75, +(0.70 + highestScore * 0.35).toFixed(2)));
+    // Qat'iy chegara: 0.50 (Zulfiddin standarti)
+    if (bestPerson && minDistance <= MATCH_DISTANCE) {
+      // Ishonchlilik foizi (0.82 - 0.98 oralig'ida)
+      const confidence = Math.min(0.98, Math.max(0.82, +(1.0 - minDistance * 0.35).toFixed(2)));
       return {
         person: bestPerson,
         isIdentified: true,
-        confidence: displayConf,
-        matchScore: highestScore,
-        scores
+        confidence,
+        distance: +minDistance.toFixed(3)
       };
     }
 
-    // Begona shaxs / Piyoda (taniy olmadi)
     return {
       person: null,
       isIdentified: false,
       confidence: 0,
-      matchScore: highestScore,
-      scores
+      distance: minDistance === Infinity ? 1.0 : +minDistance.toFixed(3)
+    };
+  }
+
+  // =========================================================================
+  // 7. OVOZ BERISH VA ISMNI MILTILLASHIDAN HIMOYA (5 kadr / 3 ovoz)
+  // =========================================================================
+  public votePerson(trackKey: string, matchedPersonId: string | null): string | null {
+    if (!this.voteHistory.has(trackKey)) {
+      this.voteHistory.set(trackKey, []);
+    }
+    const history = this.voteHistory.get(trackKey)!;
+    history.push(matchedPersonId || '__PEDESTRIAN__');
+    if (history.length > VOTE_WINDOW) {
+      history.shift();
+    }
+
+    if (matchedPersonId) {
+      const count = history.filter(id => id === matchedPersonId).length;
+      if (count >= VOTE_NEEDED) {
+        return matchedPersonId;
+      }
+    }
+    return null;
+  }
+
+  public pruneVoteHistory(activeKeys: Set<string>) {
+    for (const key of this.voteHistory.keys()) {
+      if (!activeKeys.has(key)) {
+        this.voteHistory.delete(key);
+      }
+    }
+  }
+
+  // Eskirgan Canvas identifyFace interfeysi (qaytish uchun moslik)
+  public identifyFace(_faceCanvas: HTMLCanvasElement): {
+    person: KnownPerson | null;
+    isIdentified: boolean;
+    confidence: number;
+    matchScore: number;
+  } {
+    // Agar kutilmaganda eski identifyFace chaqirilsa
+    return {
+      person: null,
+      isIdentified: false,
+      confidence: 0,
+      matchScore: 0
     };
   }
 }
