@@ -176,7 +176,7 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
   }, [cameraActive]);
 
   // ==========================================================================
-  // 2. AI OVOZIGA MOS NUTQ KINEMATIKASI (AUDIO-REACTIVE SPEAKING)
+  // 2. AI OVOZIGA MOS NUTQ KINEMATIKASI (AUDIO-REACTIVE SPEAKING - EDGE TTS SARDOR 1X)
   // ==========================================================================
   const speakDemoPhrase = useCallback((phraseText: string) => {
     if (isSpeaking) return;
@@ -184,12 +184,29 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
     setSpeechSubtitle(phraseText);
     tacticalAudio.playCommandBeep();
 
-    // Web Speech API orqali ovoz chiqarish
+    // Web Speech API orqali Edge TTS Sardor 1x ovozini chiqarish
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(phraseText);
-      utterance.rate = 1.0;
-      utterance.pitch = 1.05;
+      utterance.lang = 'uz-UZ';
+      utterance.rate = 1.0;  // 1x tezlik (Edge TTS standart)
+      utterance.pitch = 1.0; // 1x tabiiy ohang
+
+      // Edge TTS "uz-UZ-SardorNeural" / "Microsoft Sardor Online (Natural)" ovozini tanlash
+      const allVoices = window.speechSynthesis.getVoices();
+      const sardorVoice = allVoices.find(v => 
+        v.name.toLowerCase().includes('sardor') ||
+        v.voiceURI.toLowerCase().includes('sardor') ||
+        v.name.includes('uz-UZ-SardorNeural')
+      ) || allVoices.find(v => 
+        v.lang === 'uz-UZ' || v.lang === 'uz' || v.lang.startsWith('uz')
+      ) || allVoices.find(v => 
+        v.name.toLowerCase().includes('natural') && (v.lang.includes('uz') || v.lang.includes('ru'))
+      );
+
+      if (sardorVoice) {
+        utterance.voice = sardorVoice;
+      }
 
       // Ovoz davomida boshning ritmik gapirish tebranishi (Lip & Head sync)
       let speechTimer: number | null = null;
@@ -571,7 +588,7 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
           className="flex items-center gap-2 px-3.5 py-2 rounded-lg font-mono text-xs font-bold bg-blue-600/80 hover:bg-blue-500 text-white border border-blue-400/50 transition-all shadow-md active:scale-95 disabled:opacity-50"
         >
           <Volume2 className="w-4 h-4" />
-          🗣️ AI Nutqini Sinash
+          🎙️ Ovozni sinash (Edge TTS: Sardor 1x)
         </button>
       </div>
 

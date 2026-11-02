@@ -222,8 +222,18 @@
           window.speechSynthesis.cancel();
           const utterance = new SpeechSynthesisUtterance(text);
           utterance.lang = 'uz-UZ';
-          utterance.rate = 1.0;
-          utterance.pitch = 1.1; // Yoqimli robotik ohang
+          utterance.rate = 1.0;  // Edge TTS 1x tezlik
+          utterance.pitch = 1.0; // 1x tabiiy ohang
+
+          // Edge TTS Sardor (uz-UZ-SardorNeural)
+          const allVoices = window.speechSynthesis.getVoices();
+          const sardor = allVoices.find(v => 
+            v.name.toLowerCase().includes('sardor') ||
+            v.voiceURI.toLowerCase().includes('sardor') ||
+            v.name.includes('uz-UZ-SardorNeural')
+          ) || allVoices.find(v => v.lang === 'uz-UZ' || v.lang.startsWith('uz'));
+          if (sardor) utterance.voice = sardor;
+
           window.speechSynthesis.speak(utterance);
         }
       } catch (e) {
