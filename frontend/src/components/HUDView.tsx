@@ -289,13 +289,14 @@ export const HUDView: React.FC = () => {
               const matchedFace = detectedFaces[bestFaceIdx];
               const matchResult = faceRecognitionService.matchFace(matchedFace.descriptor);
 
-              // Voting (anti-flicker): 5 kadr ichida kamida 3 kadr bir xil shaxs tasdiqlansa ism chiqadi
+              // Voting (anti-flicker): Masofa <= 0.52 bo'lsa darhol ko'rsatiladi, 0.52-0.58 oralig'ida kadrli tasdiqlash
+              const isInstantMatch = matchResult.isIdentified && matchResult.distance <= 0.52;
               const votedId = faceRecognitionService.votePerson(
                 trackKey,
                 matchResult.isIdentified && matchResult.person ? matchResult.person.id : null
               );
 
-              if (votedId && matchResult.isIdentified && matchResult.person && matchResult.person.id === votedId) {
+              if (matchResult.isIdentified && matchResult.person && (isInstantMatch || votedId === matchResult.person.id)) {
                 label = matchResult.person.fullName;
                 personName = matchResult.person.fullName;
                 color = matchResult.person.color || '#00e676';
@@ -376,6 +377,7 @@ export const HUDView: React.FC = () => {
             activeTrackKeys.add(trackKey);
 
             const matchResult = faceRecognitionService.matchFace(face.descriptor);
+            const isInstantMatch = matchResult.isIdentified && matchResult.distance <= 0.52;
             const votedId = faceRecognitionService.votePerson(
               trackKey,
               matchResult.isIdentified && matchResult.person ? matchResult.person.id : null
@@ -387,7 +389,7 @@ export const HUDView: React.FC = () => {
             let isIdentifiedPerson = false;
             let confidence = Math.min(0.98, Math.max(0.70, +face.score.toFixed(2)));
 
-            if (votedId && matchResult.isIdentified && matchResult.person && matchResult.person.id === votedId) {
+            if (matchResult.isIdentified && matchResult.person && (isInstantMatch || votedId === matchResult.person.id)) {
               label = matchResult.person.fullName;
               personName = matchResult.person.fullName;
               color = matchResult.person.color || '#00e676';

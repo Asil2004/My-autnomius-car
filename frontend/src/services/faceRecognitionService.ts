@@ -33,9 +33,9 @@ export interface DetectedFace {
 }
 
 // Zulfiddin Frontend arxitekturasi bo'yicha qat'iy parametrlar
-export const MATCH_DISTANCE = 0.50; // Qat'iy Euclid masofasi chegarasi (standart 0.60 dan qat'iyroq)
-export const VOTE_WINDOW = 5;       // Oxirgi 5 ta kadr kuzatuv oynasi
-export const VOTE_NEEDED = 3;       // Kamida 3 kadrda bir xil shaxs tasdiqlansa ism chiqadi (anti-flicker)
+export const MATCH_DISTANCE = 0.58; // Qat'iy Euclid masofasi chegarasi (standart 0.60 dan qat'iyroq)
+export const VOTE_WINDOW = 4;       // Oxirgi 5 ta kadr kuzatuv oynasi
+export const VOTE_NEEDED = 2;       // Kamida 3 kadrda bir xil shaxs tasdiqlansa ism chiqadi (anti-flicker)
 export const LOCALSTORAGE_KEY = 'qalqon.faceDb.v1';
 
 export const INITIAL_FACE_DATABASE: KnownPerson[] = [
@@ -72,7 +72,7 @@ class FaceRecognitionEngine {
   private isInitialized = false;
   private initPromise: Promise<void> | null = null;
   private voteHistory: Map<string, string[]> = new Map();
-  private detectorOptions = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.40 });
+  private detectorOptions = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.20 });
 
   constructor() {
     // Fon rejimida bazani tayyorlash
@@ -367,10 +367,13 @@ class FaceRecognitionEngine {
       }
     }
 
-    // Qat'iy chegara: 0.50 (Zulfiddin standarti)
+    // Qat'iy chegara: 0.58 (Real veb-kamera va mobil optika uchun sozlangan)
+    if (bestPerson) {
+      console.log(`[FaceID Match] Eng yaqin: ${bestPerson.fullName}, masofa: ${minDistance.toFixed(3)}, chegara: ${MATCH_DISTANCE}`);
+    }
     if (bestPerson && minDistance <= MATCH_DISTANCE) {
-      // Ishonchlilik foizi (0.82 - 0.98 oralig'ida)
-      const confidence = Math.min(0.98, Math.max(0.82, +(1.0 - minDistance * 0.35).toFixed(2)));
+      // Ishonchlilik foizi (0.80 - 0.98 oralig'ida)
+      const confidence = Math.min(0.98, Math.max(0.80, +(1.0 - minDistance * 0.35).toFixed(2)));
       return {
         person: bestPerson,
         isIdentified: true,

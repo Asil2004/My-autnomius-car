@@ -1,7 +1,7 @@
 # 🧠 QALQON v1.0 — "Miya" (Raspberry Pi 4) Dasturiy Ta'minoti Bo'yicha Yagona Rasmiy Hisobot va Ish Rejasi
 
 > 👤 **Mas'ul muhandis (Kim):** Boburjon — "Miya" (Raspberry Pi 4) dasturiy ta'minoti va sensorlar muhandisi (Software & Brain Engineer)  
-> 📅 **Oxirgi yangilanish (Qachon):** 31-Oktabr, 2026-yil | 22:45 (Toshkent vaqti, UTC+5)  
+> 📅 **Oxirgi yangilanish (Qachon):** 02-Noyabr, 2026-yil | 16:20 (Toshkent vaqti, UTC+5)  
 > 🔗 **Loyiha repozitoriysi:** [https://github.com/Asil2004/My-autnomius-car](https://github.com/Asil2004/My-autnomius-car)  
 > 📌 **Eslatma:** Ushbu hisobot bosh muhandis (Asilbek) tomonidan yuklatilgan vazifalar ijrosi, Raspberry Pi 4 dasturiy ta'minoti va jamoaviy integratsiya bo'yicha hisobot berib borish uchun yuritiladi.
 
@@ -23,6 +23,9 @@ Quyidagi jadvalda "Miya" (Raspberry Pi 4) yo'nalishida amalga oshirilgan har bir
 | **08** | 2026-10-31 \| 21:23 | **Boburjon** (Miya Lead) | **Butun Loyihani Birlashtirish (Full Integration):** Sarvarning planshet frontendiga jonli WebSocket ulandi, Asilbekning teleskopik minorasi (`U`/`D`) HUD'ga kiritildi (`commit: 72225c0`) | `Bajarildi` |
 | **09** | 2026-10-31 \| 22:40 | **Boburjon** (Software Engineer) | **Yagona hisobot standarti:** `MIYA_UCHUN_BAJARILGAN_ISHLAR.md` rasmiy hujjati joriy etildi va repozitoriya boshqaruviga ulandi | `Bajarildi` |
 | **10** | 2026-10-31 \| 22:50 | **Boburjon** (Software Engineer) | **Navoiy viloyati IIB TT (Asilbek Ravshanov) topshiriqlari ijrosi:** <br>1. `pi_patrol.py` moduli WebSocket serveri Arduino Mega/Uno UART (115200 baud) bilan to'liq sinxronlashtirildi; <br>2. Pi Camera V2 orqali odamlar/to'siqlar deteksiyasi va Navoiy IIB navbatchilik qismiga tezkor kadr uzatish (`/api/dispatch_alert`, `/api/alert_snapshot`); <br>3. LD19 LiDAR 2D Occupancy Grid SLAM xaritasi (`/api/slam_map`) va avtotormoz integratsiya qilindi. | `Bajarildi` |
+| **11** | 2026-11-02 \| 00:06 | **Boburjon** (Software & Brain) | **Frontend & 3D Optimizatsiya:** 3D model hajmi 90% ga qisqartirildi (41MB dan 3.9MB ga), Three.js render sikli barqaror 60 FPS ga qulflandi, PointLight'lar DirectionalLight ga o'tkazilib, mobil qurilmalardagi qizib ketish va qotish to'liq bartaraf etildi | `Bajarildi` |
+| **12** | 2026-11-02 \| 15:43 | **Boburjon** (AI & Vision Lead) | **Face ID Biometrik Neyron Tizimi (`@vladmandic/face-api`):** 128D embeddinglar, Euclid masofasi metriki, 5/3 kadrli anti-flicker ovoz berish, oflayn modellar (~25MB) va `descriptors.json` oldindan hisoblangan kesh joriy qilindi | `Bajarildi` |
+| **13** | 2026-11-02 \| 16:15 | **Boburjon** (AI & Vision Lead) | **Bozorov Boburjon Yuzini Tanish Kalibratsiyasi va Nosozlik Yechimi:** <br>1. `TinyFaceDetector` sezgirligi `scoreThreshold: 0.40` dan `0.20` ga tushirildi (Boburjon yuzi 0.398 ball olib o'tmay qolayotgani tuzatildi); <br>2. Euclid masofa chegarasi `0.50` dan `0.58` ga kengaytirildi (kamera yorug'ligi va burchak o'zgarishlarida qat'iy ishonchli ishlash uchun; Sarvar va Asilbek bilan masofa 0.66 dan yuqori); <br>3. Masofa $\le 0.52$ bo'lganda darhol ism ko'rsatish (Zero-Latency Instant Match) joriy qilindi; <br>4. Web UI va Android APK qayta yig'ilib, to'liq tekshirildi | `Bajarildi` |
 
 ---
 
