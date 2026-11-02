@@ -37,6 +37,7 @@ Quyidagi jadvalda dasturiy ta'minot va UI bo'yicha amalga oshirilgan har bir yan
 | **20** | 2026-11-02 \| 01:33 | **Sarvar** (Frontend & Mobile) | Yuz kuzatishda gorizontal oyna inversiyasi (Yaw va Roll burchaklari) to'g'rilandi: foydalanuvchi chapda bo'lsa politsiyachi aynan chapga, o'ngda bo'lsa aynan o'ngga qaraydigan qilindi; yangi APK qayta yig'ilib smartfonga o'rnatildi | `Bajarildi` |
 | **21** | 2026-11-02 \| 15:35 | **Boburjon & Zulfiddin** (AI & Frontend) | Qat'iy Yuz Tanish (face-api.js + COCO-SSD): 128D biometrik embedding, Euclid masofasi (chegara 0.50), 5/3 kadrli anti-flicker ovoz berish, faqat Piyoda va transportlar (begona COCO klasslarsiz), lokal offline modellar (~25MB), descriptors.json oldindan hisoblangan kesh va xatosiz rasm yuklash joriy qilindi | `Bajarildi` |
 | **22** | 2026-11-02 \| 16:15 | **Boburjon** (AI & Frontend) | **Boburjon Bozorov Yuzini Tanish Kalibratsiyasi:** TinyFaceDetector sezgirligi 0.20 ga sozlandi, Euclid masofa chegarasi 0.58 ga kengaytirildi, masofa $\le 0.52$ bo'lganda tezkor ism ko'rsatish integratsiya qilindi va yangi APK yig'ildi | `Bajarildi` |
+| **23** | 2026-11-02 \| 16:40 | **Boburjon** (AI & Frontend) | **Bosh Ekran (RobotFaceView) Face ID va Ovozli Salomlashuv:** RobotFaceView ga 128D Face ID integratsiya qilindi: Boburjon Bozorov qaraganda ekranda "TASDIQLANDI" yorlig'i, bir bosishda Operator Paneliga kirish va AI ovozli salomlashuv qo'shildi | `Bajarildi` |
 
 ---
 

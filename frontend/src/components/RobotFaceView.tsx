@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { Lock, Camera, CameraOff, Volume2 } from 'lucide-react';
+import { Lock, Unlock, Camera, CameraOff, Volume2 } from 'lucide-react';
+import { faceRecognitionService } from '../services/faceRecognitionService';
 import { tacticalAudio } from '../services/audioService';
 
 interface RobotFaceViewProps {
@@ -19,6 +20,21 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
   const [isFaceDetected, setIsFaceDetected] = useState<boolean>(false);
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
   const [speechSubtitle, setSpeechSubtitle] = useState<string>('');
+  const [recognizedPerson, setRecognizedPerson] = useState<{
+    fullName: string;
+    role: string;
+    color: string;
+    isIdentified: boolean;
+    confidence: number;
+  } | null>(null);
+  const greetedRef = useRef<string | null>(null);
+
+  // Background initialization of face database and neural models
+  useEffect(() => {
+    faceRecognitionService.initDatabase().catch(err => {
+      console.warn('[RobotFaceView] faceRecognitionService init error:', err);
+    });
+  }, []);
 
   // Dinamik nigoh va nutq holatlari (Ref orqali 60 FPS siklga uzatish)
   const gazeRef = useRef<{
@@ -67,95 +83,80 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
 
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          await videoRef.current.play();
+          try {
+            await videoRef.current.play();
+          } catch (pErr: unknown) {
+            const errName = pErr instanceof Error ? pErr.name : '';
+            if (errName !== 'AbortError') throw pErr;
+          }
         }
 
         // Yuzni aniqlash sikli (20 FPS - planshet batareyasini tejash uchun yengil)
         const sampleCanvas = canvasRef.current || document.createElement('canvas');
         sampleCanvas.width = 80;
         sampleCanvas.height = 60;
-        const sCtx = sampleCanvas.getContext('2d', { willReadFrequently: true });
+        // sampleCanvas.getContext('2d', { willReadFrequently: true });
 
-        // Native Shape Detection API (Agar Chrome/WebView qo'llab-quvvatlasa)
-        const hasNativeFaceDetector = 'FaceDetector' in window;
-        // @ts-expect-error FaceDetector is experimental in standard lib
-        const faceDetector = hasNativeFaceDetector ? new window.FaceDetector({ fastMode: true }) : null;
-
+        let isBusyDetecting = false;
         trackInterval = window.setInterval(async () => {
-          if (!videoRef.current || videoRef.current.readyState < 2) return;
+          if (!videoRef.current || videoRef.current.readyState < 2 || isBusyDetecting) return;
+          isBusyDetecting = true;
 
-          // 1-usul: Native FaceDetector
-          if (faceDetector) {
-            try {
-              const faces = await faceDetector.detect(videoRef.current);
-              if (faces && faces.length > 0) {
-                const box = faces[0].boundingBox;
-                const vW = videoRef.current.videoWidth || 320;
-                const vH = videoRef.current.videoHeight || 240;
-                
-                // Normalizatsiyalangan markaz (0.0 dan 1.0 gacha)
-                const normX = (box.x + box.width / 2) / vW;
-                const normY = (box.y + box.height / 2) / vH;
+          try {
+            // Asosiy: face-api.js orqali yuqori aniqlikdagi yuz va 128D Face ID
+            const detectedFaces = await faceRecognitionService.detectFacesInVideo(videoRef.current);
+            if (detectedFaces && detectedFaces.length > 0) {
+              const face = detectedFaces[0];
+              const vW = videoRef.current.videoWidth || 320;
+              const vH = videoRef.current.videoHeight || 240;
 
-                // Oyna effekti (Mirror): foydalanuvchi chapga yursa, kamera tasvirida o'ngda bo'ladi
-                const faceX = 1.0 - normX;
-                const faceY = normY;
+              const normX = (face.box.x + face.box.width / 2) / vW;
+              const normY = (face.box.y + face.box.height / 2) / vH;
+              const faceX = 1.0 - normX; // Oyna inversiyasi
 
-                gazeRef.current.targetYaw = (faceX - 0.5) * 0.95; // o'ng-chap burilish
-                gazeRef.current.targetPitch = (faceY - 0.5) * 0.55; // yuqori-pastga qiyalik
-                gazeRef.current.targetRoll = (faceX - 0.5) * 0.15; // mayin quloqqa yonboshlash
-                gazeRef.current.hasFace = true;
-                setIsFaceDetected(true);
-                return;
-              }
-            } catch {
-              // Fallbackga o'tish
-            }
-          }
-
-          // 2-usul (Zaxira): Teri rangi / Bosh silueti markazi (Centroid) tahlili
-          if (sCtx && videoRef.current) {
-            sCtx.drawImage(videoRef.current, 0, 0, 80, 60);
-            const imgData = sCtx.getImageData(0, 0, 80, 60);
-            const data = imgData.data;
-
-            let sumX = 0;
-            let sumY = 0;
-            let count = 0;
-
-            for (let y = 5; y < 55; y += 2) {
-              for (let x = 5; x < 75; x += 2) {
-                const idx = (y * 80 + x) * 4;
-                const r = data[idx];
-                const g = data[idx + 1];
-                const b = data[idx + 2];
-
-                // Inson yuzi rang diapazoni (YUV/RGB teri piksellari filtri)
-                if (r > 65 && g > 40 && b > 20 && r > g && r > b && Math.abs(r - g) > 12) {
-                  sumX += x;
-                  sumY += y;
-                  count++;
-                }
-              }
-            }
-
-            if (count > 45) {
-              const avgX = sumX / count / 80;
-              const avgY = sumY / count / 60;
-              const faceX = 1.0 - avgX; // oyna effekti
-              const faceY = avgY;
-
-              gazeRef.current.targetYaw = (faceX - 0.5) * 0.90;
-              gazeRef.current.targetPitch = (faceY - 0.5) * 0.50;
-              gazeRef.current.targetRoll = (faceX - 0.5) * 0.12;
+              gazeRef.current.targetYaw = (faceX - 0.5) * 1.05;
+              gazeRef.current.targetPitch = (normY - 0.5) * 0.60;
+              gazeRef.current.targetRoll = (faceX - 0.5) * 0.15;
               gazeRef.current.hasFace = true;
               setIsFaceDetected(true);
-            } else {
-              gazeRef.current.hasFace = false;
-              setIsFaceDetected(false);
+
+              const matchResult = faceRecognitionService.matchFace(face.descriptor);
+              if (matchResult.isIdentified && matchResult.person) {
+                setRecognizedPerson({
+                  fullName: matchResult.person.fullName,
+                  role: matchResult.person.role,
+                  color: matchResult.person.color || '#00e676',
+                  isIdentified: true,
+                  confidence: matchResult.confidence
+                });
+
+                if (greetedRef.current !== matchResult.person.id) {
+                  greetedRef.current = matchResult.person.id;
+                  const firstName = matchResult.person.fullName.split(' ')[0] || matchResult.person.fullName;
+                  speakDemoPhrase(`Assalomu alaykum ${firstName}! QALQON tizimi shaxsingizni tasdiqladi.`);
+                }
+              } else {
+                setRecognizedPerson({
+                  fullName: 'Piyoda / Fuqaro',
+                  role: 'Notanish shaxs',
+                  color: '#38bdf8',
+                  isIdentified: false,
+                  confidence: Math.min(0.98, Math.max(0.70, +face.score.toFixed(2)))
+                });
+              }
+              return;
             }
+
+            // Fallback: Agar yuz aniqlanmasa, eski holatga qaytish
+            gazeRef.current.hasFace = false;
+            setIsFaceDetected(false);
+            setRecognizedPerson(null);
+          } catch (e) {
+            console.warn('[RobotFaceView] Yuz deteksiya siklida ogohlantirish:', e);
+          } finally {
+            isBusyDetecting = false;
           }
-        }, 50);
+        }, 120);
 
       } catch (err) {
         console.warn("Front kamera ochilmadi (foydalanuvchi rad etgan yoki qurilmada yo'q):", err);
@@ -484,14 +485,47 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
         </div>
       )}
 
-      {/* Yuqori chap burchak: Yuz kuzatuvi va AI Holat Indikatorlari */}
+      {/* Yuqori chap burchak: Yuz kuzatuvi, Face ID va AI Holat Indikatorlari */}
       <div className="absolute top-4 left-4 z-20 flex flex-col gap-2">
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-950/70 border border-emerald-500/30 backdrop-blur-md shadow-lg">
-          <span className={`w-2 h-2 rounded-full ${isFaceDetected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-          <span className="font-mono text-[11px] font-bold text-emerald-100">
-            {isFaceDetected ? '👁️ JONLI NIGOH (YUZ KUZATILMOQDA)' : cameraActive ? '🔍 ATROF KUZATILMOQDA' : '✋ KURSOR / TOUCH NIGOHI'}
-          </span>
-        </div>
+        {recognizedPerson ? (
+          <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-slate-950/85 border border-emerald-500/50 backdrop-blur-md shadow-2xl animate-fade-in">
+            <span className={`w-3 h-3 rounded-full shrink-0 ${recognizedPerson.isIdentified ? 'bg-emerald-400 animate-ping' : 'bg-cyan-400'}`} />
+            <div className="flex flex-col">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-sm font-black text-white tracking-wide">
+                  {recognizedPerson.fullName}
+                </span>
+                {recognizedPerson.isIdentified && (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/25 text-emerald-300 border border-emerald-500/50">
+                    TASDIQLANDI
+                  </span>
+                )}
+              </div>
+              <span className="font-mono text-[11px] text-slate-300">
+                {recognizedPerson.role} {recognizedPerson.confidence ? `• ${(recognizedPerson.confidence * 100).toFixed(0)}%` : ''}
+              </span>
+            </div>
+            {recognizedPerson.isIdentified && (
+              <button
+                onClick={() => {
+                  tacticalAudio.playCommandBeep();
+                  onUnlockRequest();
+                }}
+                className="ml-2 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs font-bold border border-emerald-400/50 shadow flex items-center gap-1.5 transition-all active:scale-95"
+              >
+                <Unlock className="w-3.5 h-3.5" />
+                <span>Panelga Kirish</span>
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-950/70 border border-emerald-500/30 backdrop-blur-md shadow-lg">
+            <span className={`w-2 h-2 rounded-full ${isFaceDetected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+            <span className="font-mono text-[11px] font-bold text-emerald-100">
+              {isFaceDetected ? '👁️ JONLI NIGOH (YUZ KUZATILMOQDA)' : cameraActive ? '🔍 ATROF KUZATILMOQDA' : '✋ KURSOR / TOUCH NIGOHI'}
+            </span>
+          </div>
+        )}
 
         {isSpeaking && (
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-cyan-950/80 border border-cyan-400/40 backdrop-blur-md shadow-lg animate-pulse">

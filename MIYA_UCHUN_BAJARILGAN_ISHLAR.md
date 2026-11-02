@@ -1,7 +1,7 @@
 # 🧠 QALQON v1.0 — "Miya" (Raspberry Pi 4) Dasturiy Ta'minoti Bo'yicha Yagona Rasmiy Hisobot va Ish Rejasi
 
 > 👤 **Mas'ul muhandis (Kim):** Boburjon — "Miya" (Raspberry Pi 4) dasturiy ta'minoti va sensorlar muhandisi (Software & Brain Engineer)  
-> 📅 **Oxirgi yangilanish (Qachon):** 02-Noyabr, 2026-yil | 16:20 (Toshkent vaqti, UTC+5)  
+> 📅 **Oxirgi yangilanish (Qachon):** 02-Noyabr, 2026-yil | 16:45 (Toshkent vaqti, UTC+5)  
 > 🔗 **Loyiha repozitoriysi:** [https://github.com/Asil2004/My-autnomius-car](https://github.com/Asil2004/My-autnomius-car)  
 > 📌 **Eslatma:** Ushbu hisobot bosh muhandis (Asilbek) tomonidan yuklatilgan vazifalar ijrosi, Raspberry Pi 4 dasturiy ta'minoti va jamoaviy integratsiya bo'yicha hisobot berib borish uchun yuritiladi.
 
@@ -26,6 +26,7 @@ Quyidagi jadvalda "Miya" (Raspberry Pi 4) yo'nalishida amalga oshirilgan har bir
 | **11** | 2026-11-02 \| 00:06 | **Boburjon** (Software & Brain) | **Frontend & 3D Optimizatsiya:** 3D model hajmi 90% ga qisqartirildi (41MB dan 3.9MB ga), Three.js render sikli barqaror 60 FPS ga qulflandi, PointLight'lar DirectionalLight ga o'tkazilib, mobil qurilmalardagi qizib ketish va qotish to'liq bartaraf etildi | `Bajarildi` |
 | **12** | 2026-11-02 \| 15:43 | **Boburjon** (AI & Vision Lead) | **Face ID Biometrik Neyron Tizimi (`@vladmandic/face-api`):** 128D embeddinglar, Euclid masofasi metriki, 5/3 kadrli anti-flicker ovoz berish, oflayn modellar (~25MB) va `descriptors.json` oldindan hisoblangan kesh joriy qilindi | `Bajarildi` |
 | **13** | 2026-11-02 \| 16:15 | **Boburjon** (AI & Vision Lead) | **Bozorov Boburjon Yuzini Tanish Kalibratsiyasi va Nosozlik Yechimi:** <br>1. `TinyFaceDetector` sezgirligi `scoreThreshold: 0.40` dan `0.20` ga tushirildi (Boburjon yuzi 0.398 ball olib o'tmay qolayotgani tuzatildi); <br>2. Euclid masofa chegarasi `0.50` dan `0.58` ga kengaytirildi (kamera yorug'ligi va burchak o'zgarishlarida qat'iy ishonchli ishlash uchun; Sarvar va Asilbek bilan masofa 0.66 dan yuqori); <br>3. Masofa $\le 0.52$ bo'lganda darhol ism ko'rsatish (Zero-Latency Instant Match) joriy qilindi; <br>4. Web UI va Android APK qayta yig'ilib, to'liq tekshirildi | `Bajarildi` |
+| **14** | 2026-11-02 \| 16:40 | **Boburjon** (AI & Vision Lead) | **Asosiy Bosh Ekran (RobotFaceView) va HUD Yuz Tanish Tizimini To'liq Birlashtirish:** <br>1. Oldin Face ID faqat ichki yashirin HUD'da bo'lgani sababli, dastur ochilganda bosh ekrandagi 3D robot yuz tanimayotgan edi — endi `RobotFaceView` ga `faceRecognitionService` to'liq ulandi; <br>2. Bosh ekranda Boburjon Bozorov darhol aniqlanib, ekranda *"TASDIQLANDI: Bozorov Boburjon"* yashil vidjeti chiqadi va *"Assalomu alaykum Boburjon!"* deb AI ovozi bilan kutib oladi; <br>3. `HUDView` da COCO-SSD va Face ID o'zaro bog'liqligi uzilib, COCO yuklanishidan qat'i nazar yuzlar uzluksiz tanilishi ta'minlandi; <br>4. Web `play()` AbortError to'xtalishi tuzatildi. | `Bajarildi` |
 
 ---
 
