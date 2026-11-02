@@ -2,6 +2,7 @@ package uz.iiv.faceid.embedding
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.util.Log
 import org.tensorflow.lite.Interpreter
 import java.io.FileInputStream
 import java.nio.ByteBuffer
@@ -14,14 +15,19 @@ class FaceEmbeddingModel(context: Context, numThreads: Int = 4) {
     private val interpreter: Interpreter
     val embeddingDim = 192
     val inputSize = 112
+    private val batchSize: Int
 
     init {
         val modelBuffer = loadModelFile(context, "mobile_face_net.tflite")
         val options = Interpreter.Options().apply {
             setNumThreads(numThreads)
-            setUseNNAPI(false) // MobileFaceNet is ultra-light (~5MB); CPU 4 threads gives lowest latency without NNAPI init overhead
+            setUseNNAPI(false)
         }
         interpreter = Interpreter(modelBuffer, options)
+
+        val actualShape = interpreter.getInputTensor(0).shape()
+        batchSize = if (actualShape.isNotEmpty() && actualShape[0] > 0) actualShape[0] else 2
+        Log.d(TAG, "Model initialized natively. Batch size: $batchSize, Input shape: ${actualShape.contentToString()}")
     }
 
     private fun loadModelFile(context: Context, modelName: String): ByteBuffer {
@@ -44,38 +50,38 @@ class FaceEmbeddingModel(context: Context, numThreads: Int = 4) {
             Bitmap.createScaledBitmap(faceBitmap, inputSize, inputSize, true)
         }
 
-        // Float32 buffer: 1 * 112 * 112 * 3 * 4 bytes
-        val byteBuffer = ByteBuffer.allocateDirect(1 * inputSize * inputSize * 3 * 4)
+        val totalPixelsPerImage = inputSize * inputSize
+        // Batch size (e.g. 2 * 112 * 112 * 3 * 4 = 301,056 bytes)
+        val byteBuffer = ByteBuffer.allocateDirect(batchSize * totalPixelsPerImage * 3 * 4)
         byteBuffer.order(ByteOrder.nativeOrder())
         byteBuffer.rewind()
 
-        val intValues = IntArray(inputSize * inputSize)
+        val intValues = IntArray(totalPixelsPerImage)
         scaledBitmap.getPixels(intValues, 0, inputSize, 0, 0, inputSize, inputSize)
 
-        // Normalization: (value - 127.5) / 128.0
-        for (pixel in intValues) {
-            val r = (pixel shr 16 and 0xFF)
-            val g = (pixel shr 8 and 0xFF)
-            val b = (pixel and 0xFF)
-            byteBuffer.putFloat((r - 127.5f) / 128.0f)
-            byteBuffer.putFloat((g - 127.5f) / 128.0f)
-            byteBuffer.putFloat((b - 127.5f) / 128.0f)
+        // Fill buffer for all batch slots (duplicate image across batch)
+        for (b in 0 until batchSize) {
+            for (pixel in intValues) {
+                val r = (pixel shr 16 and 0xFF)
+                val g = (pixel shr 8 and 0xFF)
+                val bVal = (pixel and 0xFF)
+                byteBuffer.putFloat((r - 127.5f) / 128.0f)
+                byteBuffer.putFloat((g - 127.5f) / 128.0f)
+                byteBuffer.putFloat((bVal - 127.5f) / 128.0f)
+            }
         }
 
         if (scaledBitmap != faceBitmap) {
             scaledBitmap.recycle()
         }
 
-        val output = Array(1) { FloatArray(embeddingDim) }
+        val output = Array(batchSize) { FloatArray(embeddingDim) }
         interpreter.run(byteBuffer, output)
 
         val rawEmbedding = output[0]
         return l2Normalize(rawEmbedding)
     }
 
-    /**
-     * L2 normalization ensures unit length, meaning cosine similarity is dot product.
-     */
     private fun l2Normalize(vector: FloatArray): FloatArray {
         var sum = 0.0f
         for (v in vector) {
@@ -92,5 +98,9 @@ class FaceEmbeddingModel(context: Context, numThreads: Int = 4) {
 
     fun close() {
         interpreter.close()
+    }
+
+    companion object {
+        private const val TAG = "FaceEmbeddingModel"
     }
 }
