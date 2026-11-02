@@ -42,6 +42,8 @@ export const HUDView: React.FC = () => {
     setSpeedLevel,
     sonars,
     isFrontBlocked,
+    cameraObstacle,
+    updateCameraObstacle,
     ptz,
     setPTZ,
     detectedObjects,
@@ -64,7 +66,7 @@ export const HUDView: React.FC = () => {
   const [aiModelLoaded, setAiModelLoaded] = useState(false);
   const [aiModelLoading, setAiModelLoading] = useState(false);
   const [aiEnabled, setAiEnabled] = useState(true);
-  const [detectedCounts, setDetectedCounts] = useState({ people: 0, cars: 0, total: 0 });
+  const [detectedCounts, setDetectedCounts] = useState({ people: 0, cars: 0, obstacles: 0, total: 0 });
 
   // Yuzlar bazasi modali va ro'yxati
   const [showFaceDbModal, setShowFaceDbModal] = useState(false);
@@ -79,6 +81,35 @@ export const HUDView: React.FC = () => {
   const streamRef = useRef<MediaStream | null>(null);
   const cocoModelRef = useRef<cocoSsd.ObjectDetection | null>(null);
   const isDetectingRef = useRef<boolean>(false);
+  const proximityCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // COCO-SSD klasslari uchun o'zbekcha nomlar lug'ati
+  const UZ_OBSTACLE_NAMES: Record<string, string> = {
+    person: "Piyoda",
+    car: "Mashina (Avtomobil)",
+    truck: "Yuk mashinasi",
+    bus: "Avtobus",
+    motorcycle: "Motosikl",
+    bicycle: "Velosiped",
+    chair: "Stul (To'siq)",
+    couch: "Divan (To'siq)",
+    "dining table": "Stol (To'siq)",
+    bed: "Karovot (To'siq)",
+    "potted plant": "Gultuvak (To'siq)",
+    tv: "Monitor / TV",
+    laptop: "Noutbuk",
+    "cell phone": "Telefon (Obyekt)",
+    bottle: "Idish / Butilka",
+    cup: "Chashka / Finka",
+    backpack: "Ryukzak (Yuk)",
+    handbag: "Sumka",
+    suitcase: "Chemodan (Yuk)",
+    book: "Kitob / Blok",
+    umbrella: "Soyabon",
+    box: "Quti (To'siq)",
+    dog: "It (Hayvon)",
+    cat: "Mushuk (Hayvon)",
+  };
 
   // =========================================================================
   // 1. TENSORFLOW COCO-SSD VA YUZ BAZASINI YUKLASH (Lokal va Parallel)
@@ -229,7 +260,7 @@ export const HUDView: React.FC = () => {
     try {
       isDetectingRef.current = true;
       const predictionsPromise = cocoModelRef.current
-        ? cocoModelRef.current.detect(video, 10, 0.35)
+        ? cocoModelRef.current.detect(video, 12, 0.28)
         : Promise.resolve([]);
       const facesPromise = faceRecognitionService.detectFacesInVideo(video);
 
@@ -240,21 +271,12 @@ export const HUDView: React.FC = () => {
 
         let personCount = 0;
         let carCount = 0;
+        let obstacleCount = 0;
         const matchedFaceIndices = new Set<number>();
         const activeTrackKeys = new Set<string>();
 
-        // Faqat ruxsat etilgan transport va odam klasslari (boshqa COCO klasslari ko'rsatilmaydi)
-        const validPredictions = predictions.filter((pred) => {
-          const cls = pred.class.toLowerCase();
-          return (
-            cls === 'person' ||
-            cls === 'car' ||
-            cls === 'truck' ||
-            cls === 'bus' ||
-            cls === 'motorcycle' ||
-            cls === 'bicycle'
-          );
-        });
+        // Barcha aniqlangan COCO klasslarini qabul qilamiz (to'siqlar ham ko'rinadi)
+        const validPredictions = predictions.filter((pred) => pred.score >= 0.28);
 
         const newObjects: DetectedObject[] = [];
 
@@ -355,6 +377,13 @@ export const HUDView: React.FC = () => {
             label = cls === 'motorcycle' ? "Motosikl" : "Velosiped";
             color = "#fbbf24";
             category = 'vehicle';
+          } else {
+            // Har qanday boshqa jism robot uchun to'siq hisoblanadi
+            obstacleCount++;
+            const uzName = UZ_OBSTACLE_NAMES[cls] || `To'siq (${cls})`;
+            label = uzName;
+            color = "#f59e0b";
+            category = 'other';
           }
 
           let boxX = (rawX / vW) * 100;
@@ -366,14 +395,20 @@ export const HUDView: React.FC = () => {
             boxX = 100 - (boxX + boxW);
           }
 
-          const focalRatio = category === 'person' ? 52 : 68;
-          const estimatedDistance = +(focalRatio / Math.max(12, boxH)).toFixed(1);
+          const focalRatio = category === 'person' ? 52 : (category === 'car' ? 68 : 45);
+          const estimatedDistance = +(focalRatio / Math.max(10, boxH)).toFixed(2);
+          const distanceM = Math.min(18.0, Math.max(0.18, estimatedDistance));
+
+          // Agar to'siq juda yaqin bo'lsa (< 0.40m) qizil xavf rangiga o'tadi
+          if (distanceM <= 0.40 && !isIdentifiedPerson) {
+            color = "#ef4444";
+          }
 
           newObjects.push({
             id: `real-obj-${idx}-${Date.now().toString().slice(-4)}`,
             label,
             confidence,
-            distance: Math.min(18.0, Math.max(0.6, estimatedDistance)),
+            distance: distanceM,
             box: {
               x: Math.max(0, Math.min(100 - boxW, boxX)),
               y: Math.max(0, Math.min(100 - boxH, boxY)),
@@ -452,10 +487,96 @@ export const HUDView: React.FC = () => {
 
         faceRecognitionService.pruneVoteHistory(activeTrackKeys);
 
+        // =========================================================================
+        // OPTIK YAQINLIK / TO'SIQNI TEKSHIRISH (Unclassified Close Obstacle Check)
+        // Kameraning to'g'ridan-to'g'ri oldida qo'l, quti yoki devor turganini sezish
+        // =========================================================================
+        try {
+          if (!proximityCanvasRef.current) {
+            proximityCanvasRef.current = document.createElement('canvas');
+            proximityCanvasRef.current.width = 40;
+            proximityCanvasRef.current.height = 30;
+          }
+          const pCanvas = proximityCanvasRef.current;
+          const pCtx = pCanvas.getContext('2d', { willReadFrequently: true });
+          if (pCtx) {
+            pCtx.drawImage(video, 0, 0, 40, 30);
+            const imgData = pCtx.getImageData(10, 12, 20, 16).data;
+            let totalLum = 0;
+            let minLum = 255;
+            let maxLum = 0;
+            const pixelCount = 20 * 16;
+            for (let i = 0; i < imgData.length; i += 4) {
+              const lum = (imgData[i] + imgData[i+1] + imgData[i+2]) / 3;
+              totalLum += lum;
+              if (lum < minLum) minLum = lum;
+              if (lum > maxLum) maxLum = lum;
+            }
+            const avgLum = totalLum / pixelCount;
+            const contrast = maxLum - minLum;
+
+            // Kamera oldi tekis jism (qo'l, devor, kitob) bilan to'silganda
+            if (contrast < 30 && (avgLum < 50 || avgLum > 200) && newObjects.length === 0) {
+              obstacleCount++;
+              newObjects.push({
+                id: `opt-barr-${Date.now().toString().slice(-4)}`,
+                label: "To'siq (Yaqin Jism / To'siq)",
+                confidence: 0.94,
+                distance: 0.18,
+                box: { x: 20, y: 35, width: 60, height: 60 },
+                color: "#ef4444",
+                category: "other"
+              });
+            }
+          }
+        } catch {
+          // Offscreen canvas tahlil xatosi e'tiborga olinmaydi
+        }
+
+        // =========================================================================
+        // XAVFSIZLIK YO'LAGI (Central Collision Corridor) VA AVTOTORMOZ TAHLILI
+        // =========================================================================
+        let minCollisionDistCm = 200; // Standart ochiq yo'l
+        let closestLabel = "Yo'l ochiq";
+        let closestCenterX = 50;
+        let closestWidth = 0;
+
+        newObjects.forEach((obj) => {
+          const objCenterX = obj.box.x + obj.box.width / 2;
+          const objBottomY = obj.box.y + obj.box.height;
+          const distCm = Math.round(obj.distance * 100);
+
+          // Robot harakat koridorida bo'lsa (x: 18% .. 82%, pastki qism)
+          if (objCenterX >= 18 && objCenterX <= 82 && objBottomY >= 25) {
+            if (distCm < minCollisionDistCm) {
+              minCollisionDistCm = distCm;
+              closestLabel = obj.label;
+              closestCenterX = objCenterX;
+              closestWidth = obj.box.width;
+            }
+          }
+        });
+
+        // Aylanib o'tish yoki chekinish yo'nalishini hisoblash
+        let evasionDirection: 'CLEAR' | 'LEFT' | 'RIGHT' | 'REVERSE' = 'CLEAR';
+        if (minCollisionDistCm <= 80) {
+          if (closestWidth >= 55) {
+            evasionDirection = 'REVERSE';
+          } else if (closestCenterX < 48) {
+            evasionDirection = 'RIGHT'; // To'siq chapda -> O'ngga burilish
+          } else {
+            evasionDirection = 'LEFT';  // To'siq o'ngda -> Chapga burilish
+          }
+        }
+
+        // Robot miyasiga (RobotContext) jonli uzatish
+        updateCameraObstacle(minCollisionDistCm, closestLabel, evasionDirection);
+
         setDetectedObjects(newObjects);
         setDetectedCounts({
           people: personCount,
           cars: carCount,
+          obstacles: obstacleCount,
           total: newObjects.length
         });
       } catch (err) {
@@ -463,7 +584,7 @@ export const HUDView: React.FC = () => {
       } finally {
         isDetectingRef.current = false;
       }
-  }, [aiEnabled, cameraSource, mirrorVideo, setDetectedObjects]);
+  }, [aiEnabled, cameraSource, mirrorVideo, setDetectedObjects, updateCameraObstacle]);
 
   // Deteksiya sikli (har ~120ms da bir kadr tekshiriladi)
   useEffect(() => {
@@ -660,6 +781,11 @@ export const HUDView: React.FC = () => {
                   <Car className="w-3 h-3" />
                   <span>{detectedCounts.cars} Mashina</span>
                 </span>
+                <span className="text-slate-600">|</span>
+                <span className={`flex items-center space-x-1 font-bold ${detectedCounts.obstacles > 0 ? 'text-amber-400' : 'text-slate-400'}`}>
+                  <AlertTriangle className="w-3 h-3" />
+                  <span>{detectedCounts.obstacles} To'siq</span>
+                </span>
               </div>
 
               {cameraSource === 'FRONTAL' && (
@@ -837,6 +963,82 @@ export const HUDView: React.FC = () => {
                 </div>
               </div>
             ))}
+
+            {/* DYNAMIC AR SAFETY CORRIDOR (Robot Ko'zi Traektoriya Yo'lagi) */}
+            {cameraSource === 'FRONTAL' && (
+              <svg className="absolute inset-0 w-full h-full pointer-events-none z-10" viewBox="0 0 100 100" preserveAspectRatio="none">
+                <defs>
+                  <linearGradient id="corridorGradGreen" x1="0" y1="1" x2="0" y2="0">
+                    <stop offset="0%" stopColor="#10b981" stopOpacity="0.30" />
+                    <stop offset="100%" stopColor="#10b981" stopOpacity="0.03" />
+                  </linearGradient>
+                  <linearGradient id="corridorGradAmber" x1="0" y1="1" x2="0" y2="0">
+                    <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.45" />
+                    <stop offset="100%" stopColor="#f59e0b" stopOpacity="0.06" />
+                  </linearGradient>
+                  <linearGradient id="corridorGradRed" x1="0" y1="1" x2="0" y2="0">
+                    <stop offset="0%" stopColor="#ef4444" stopOpacity="0.65" />
+                    <stop offset="100%" stopColor="#ef4444" stopOpacity="0.10" />
+                  </linearGradient>
+                </defs>
+
+                {/* Trapezoid Safety Corridor */}
+                <polygon
+                  points="18,100 82,100 62,56 38,56"
+                  fill={
+                    cameraObstacle.isBlocked 
+                      ? "url(#corridorGradRed)" 
+                      : cameraObstacle.distanceCm < 80 
+                      ? "url(#corridorGradAmber)" 
+                      : "url(#corridorGradGreen)"
+                  }
+                  stroke={
+                    cameraObstacle.isBlocked 
+                      ? "#ef4444" 
+                      : cameraObstacle.distanceCm < 80 
+                      ? "#f59e0b" 
+                      : "#10b981"
+                  }
+                  strokeWidth="0.8"
+                  strokeDasharray={cameraObstacle.isBlocked ? "none" : "2,1"}
+                />
+
+                {/* Forward Barrier Line if blocked */}
+                {cameraObstacle.isBlocked && (
+                  <line x1="26" y1="78" x2="74" y2="78" stroke="#ef4444" strokeWidth="2.5" className="animate-pulse" />
+                )}
+              </svg>
+            )}
+
+            {/* TOP AR ROBOT EYE TELEMETRY BANNER & EVASION HINT */}
+            {cameraSource === 'FRONTAL' && (
+              <div className="absolute top-3 inset-x-0 z-20 flex flex-col items-center pointer-events-none space-y-1.5 px-4">
+                <div className={`px-3 py-1 rounded-full font-mono text-xs font-black flex items-center space-x-2 border shadow-2xl backdrop-blur-md transition-all ${
+                  cameraObstacle.isBlocked
+                    ? 'bg-rose-950/95 text-rose-300 border-rose-500 animate-pulse ring-2 ring-rose-500/50'
+                    : cameraObstacle.distanceCm < 80
+                    ? 'bg-amber-950/90 text-amber-300 border-amber-500'
+                    : 'bg-tactical-950/85 text-emerald-300 border-emerald-500/60'
+                }`}>
+                  <Eye className={`w-3.5 h-3.5 ${cameraObstacle.isBlocked ? 'text-rose-400 animate-ping' : 'text-emerald-400'}`} />
+                  <span>👁️ ROBOT "KO'ZI": {cameraObstacle.label} — {cameraObstacle.distanceCm} sm</span>
+                  {cameraObstacle.isBlocked && (
+                    <span className="bg-rose-600 text-white text-[9px] px-1.5 py-0.5 rounded font-black tracking-wider animate-bounce ml-1">
+                      🛑 AVTOTORMOZ!
+                    </span>
+                  )}
+                </div>
+
+                {/* Evasion Suggestion Badge */}
+                {cameraObstacle.distanceCm <= 80 && cameraObstacle.evasionDirection !== 'CLEAR' && (
+                  <div className="flex items-center space-x-1.5 bg-police-blue/95 border border-police-cyan/80 px-3 py-0.5 rounded-full font-mono text-[11px] font-bold text-white shadow-xl animate-bounce">
+                    {cameraObstacle.evasionDirection === 'LEFT' && <span>⬅️ Chapdan chetlab o'tish tavsiya etiladi (A)</span>}
+                    {cameraObstacle.evasionDirection === 'RIGHT' && <span>➡️ O'ngdan chetlab o'tish tavsiya etiladi (D)</span>}
+                    {cameraObstacle.evasionDirection === 'REVERSE' && <span>⬇️ Orqaga chekinish tavsiya etiladi (S)</span>}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Center Tactical Crosshair */}
             <div className="relative pointer-events-none flex items-center justify-center z-10">

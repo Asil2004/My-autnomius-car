@@ -35,9 +35,24 @@ interface RobotContextType {
   
   // Sensors
   sonars: SonarSensors;
+  setSonars: React.Dispatch<React.SetStateAction<SonarSensors>>;
   isFrontBlocked: boolean;
   battery: BatteryState;
   lidarPoints: LidarPoint[];
+  
+  // Camera as Primary Eye / Obstacle Sensor
+  cameraObstacle: {
+    active: boolean;
+    distanceCm: number;
+    label: string;
+    isBlocked: boolean;
+    evasionDirection: 'CLEAR' | 'LEFT' | 'RIGHT' | 'REVERSE';
+  };
+  updateCameraObstacle: (
+    distanceCm: number,
+    label?: string,
+    evasionDirection?: 'CLEAR' | 'LEFT' | 'RIGHT' | 'REVERSE'
+  ) => void;
   
   // Camera & PTZ
   ptz: PTZState;
@@ -96,6 +111,51 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     left: 82,
     right: 95
   });
+
+  const [cameraObstacle, setCameraObstacle] = useState<{
+    active: boolean;
+    distanceCm: number;
+    label: string;
+    isBlocked: boolean;
+    evasionDirection: 'CLEAR' | 'LEFT' | 'RIGHT' | 'REVERSE';
+  }>({
+    active: false,
+    distanceCm: 150,
+    label: "Yo'l ochiq",
+    isBlocked: false,
+    evasionDirection: 'CLEAR'
+  });
+
+  const lastCameraObstacleUpdateRef = useRef<number>(0);
+
+  const updateCameraObstacle = useCallback((
+    distanceCm: number,
+    label: string = "To'siq",
+    evasionDirection: 'CLEAR' | 'LEFT' | 'RIGHT' | 'REVERSE' = 'CLEAR'
+  ) => {
+    lastCameraObstacleUpdateRef.current = Date.now();
+    const clampedDist = Math.max(10, Math.min(300, Math.round(distanceCm)));
+    const blocked = clampedDist <= 28;
+
+    setCameraObstacle({
+      active: true,
+      distanceCm: clampedDist,
+      label,
+      isBlocked: blocked,
+      evasionDirection
+    });
+
+    setSonars((prev) => ({
+      ...prev,
+      front: clampedDist
+    }));
+
+    if (blocked) {
+      setSystem((s) => ({ ...s, serialWarning: `WARN:CAMERA_OBSTACLE (${clampedDist}sm)` }));
+    } else {
+      setSystem((s) => ({ ...s, serialWarning: null }));
+    }
+  }, []);
 
   const [battery, setBattery] = useState<BatteryState>({
     voltage: 13.25,
@@ -335,7 +395,7 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
-  const isFrontBlocked = sonars.front <= 22;
+  const isFrontBlocked = sonars.front <= 28 || cameraObstacle.isBlocked;
 
   // Mecanum Command Handler
   const sendMecanumCommand = useCallback((cmd: MecanumCommand) => {
@@ -361,9 +421,9 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       addLog('SERIAL', 'info', `Buyruq uzatildi: ${cmdNames[cmd]}`);
     }
 
-    if (cmd === 'F' && sonars.front <= 22) {
+    if (cmd === 'F' && (sonars.front <= 28 || cameraObstacle.isBlocked)) {
       tacticalAudio.playObstacleAlert();
-      addLog('SONAR', 'error', 'WARN:OBSTACLE_FRONT - Oldinda xavfli to\'siq (<22sm)! Avtotormoz!');
+      addLog('AI', 'error', `🛑 AVTOTORMOZ: Kamera "Ko'zi" to'siqni aniqladi (${sonars.front} sm)! Oldinga harakat qulflandi!`);
       setLastCommand('S');
       setIsMoving(false);
       return;
@@ -508,12 +568,16 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     const updateSensors = () => {
       setSonars((prev) => {
+        const isCameraActive = Date.now() - lastCameraObstacleUpdateRef.current < 2500;
         const delta = (Math.random() - 0.5) * 4;
-        const frontVal = Math.max(16, Math.min(220, Math.round(prev.front + delta)));
-        if (frontVal <= 22 && prev.front > 22) {
+        const frontVal = isCameraActive
+          ? prev.front
+          : Math.max(16, Math.min(220, Math.round(prev.front + delta)));
+
+        if (frontVal <= 28 && prev.front > 28) {
           tacticalAudio.playObstacleAlert();
           setSystem((s) => ({ ...s, serialWarning: 'WARN:OBSTACLE_FRONT' }));
-        } else if (frontVal > 22) {
+        } else if (frontVal > 28 && !isCameraActive) {
           setSystem((s) => ({ ...s, serialWarning: null }));
         }
         return {
@@ -565,7 +629,10 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setSpeedLevel,
         isMoving,
         sonars,
+        setSonars,
         isFrontBlocked,
+        cameraObstacle,
+        updateCameraObstacle,
         battery,
         lidarPoints: lidarPointsRef.current,
         ptz,
