@@ -8,7 +8,6 @@ export interface KnownPerson {
   photoUrl: string;
   color: string;
   badge: string;
-  // 128 o'lchamli biometrik yuz deskriptori (Spatial Gradients + LBP + Color Features)
   descriptor?: number[];
 }
 
@@ -18,7 +17,7 @@ export const INITIAL_FACE_DATABASE: KnownPerson[] = [
     fullName: "Qo'ldoshev Sarvar",
     role: 'Tizim Boshqaruvchisi / Muhandis',
     photoUrl: sarvarPhotoUrl,
-    color: '#00e676', // Yashil taktik
+    color: '#00e676', // Yashil neon
     badge: 'IIV VERIFIED'
   },
   {
@@ -26,7 +25,7 @@ export const INITIAL_FACE_DATABASE: KnownPerson[] = [
     fullName: 'Asilbek Ravshanov',
     role: 'Loyiha Muhandisi / Boshqaruvchi',
     photoUrl: asilbekPhotoUrl,
-    color: '#38bdf8', // Tsian / Moviy taktik
+    color: '#38bdf8', // Tsian / Moviy neon
     badge: 'IIV VERIFIED'
   }
 ];
@@ -35,9 +34,8 @@ class FaceRecognitionEngine {
   private database: KnownPerson[] = [...INITIAL_FACE_DATABASE];
   private isInitialized = false;
 
-  // Qat'iy Face ID chegarasi (Threshold)
-  // Faqat 0.76 dan yuqori bo'lsagina shaxs taniladi, aks holda begona ("Piyoda") deb baholanadi!
-  private readonly RECOGNITION_THRESHOLD = 0.76;
+  // Qat'iy Face ID chegarasi (Pearson Zero-Mean Correlation)
+  private readonly RECOGNITION_THRESHOLD = 0.58;
 
   constructor() {
     this.initDatabase();
@@ -57,7 +55,6 @@ class FaceRecognitionEngine {
     this.isInitialized = true;
   }
 
-  // Kelajakda butun rasmlar bazasini qo'shish uchun funksiya
   public async addPerson(person: KnownPerson): Promise<void> {
     try {
       const descriptor = await this.extractDescriptorFromUrl(person.photoUrl);
@@ -72,20 +69,51 @@ class FaceRecognitionEngine {
     return this.database;
   }
 
-  // URL (rasm) orqali 128 o'lchamli biometrik deskriptorni hisoblash
+  // Rasmdan aynan YUZ sohasini (kostyum, ko'ylak va fonsiz) qirqib olish
+  private cropFaceToCanvas(img: HTMLImageElement): HTMLCanvasElement {
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+
+    const w = img.naturalWidth || img.width || 300;
+    const h = img.naturalHeight || img.height || 300;
+
+    let sx = 0;
+    let sy = 0;
+    let sw = w;
+    let sh = h;
+
+    // Agar rasm vertikal portret bo'lsa (Asilbek Ravshanov rasmi kabi)
+    if (h > w * 1.15) {
+      // Kostyum va yelkalarni tashlab, faqat yuz sohasini (bosh, peshona, ko'z, burun, iyak) qirqamiz
+      sx = w * 0.16;
+      sw = w * 0.68;
+      sy = h * 0.14;
+      sh = h * 0.52;
+    } else {
+      // Deyarli kvadrat rasm bo'lsa (Sarvar rasmi kabi), biroz markazlashtiramiz
+      sx = w * 0.05;
+      sw = w * 0.90;
+      sy = h * 0.05;
+      sh = h * 0.90;
+    }
+
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, 64, 64);
+    return canvas;
+  }
+
+  // URL (rasm) orqali biometrik deskriptorni hisoblash
   private async extractDescriptorFromUrl(url: string): Promise<number[]> {
     return new Promise((resolve, reject) => {
       const img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = () => {
         try {
-          const canvas = document.createElement('canvas');
-          canvas.width = 64;
-          canvas.height = 64;
-          const ctx = canvas.getContext('2d', { willReadFrequently: true });
+          const faceCanvas = this.cropFaceToCanvas(img);
+          const ctx = faceCanvas.getContext('2d', { willReadFrequently: true });
           if (!ctx) return reject('Canvas context unavailable');
 
-          ctx.drawImage(img, 0, 0, 64, 64);
           const descriptor = this.computeBiometricDescriptor(ctx, 64, 64);
           resolve(descriptor);
         } catch (e) {
@@ -108,17 +136,20 @@ class FaceRecognitionEngine {
     }
   }
 
-  // 128 o'lchamli ko'p qatlamli biometrik deskriptor algoritmi
-  // Yuzni 4x4 (16 ta hudud) ga bo'lib, har birining gradiyenti, kontrast va tekstura profilini hisoblaydi
+  // Ko'p qatlamli 64 o'lchamli biometrik deskriptor (Zero-Mean Normalization bilan)
   private computeBiometricDescriptor(ctx: CanvasRenderingContext2D, width: number, height: number): number[] {
     const imgData = ctx.getImageData(0, 0, width, height);
     const data = imgData.data;
 
     // 1. Grayscale massiviga o'tkazish
     const gray = new Float32Array(width * height);
+    let totalGray = 0;
     for (let i = 0, j = 0; i < data.length; i += 4, j++) {
-      gray[j] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      const g = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      gray[j] = g;
+      totalGray += g;
     }
+    const globalMean = totalGray / (width * height);
 
     const descriptor: number[] = [];
     const gridX = 4;
@@ -126,19 +157,12 @@ class FaceRecognitionEngine {
     const blockW = Math.floor(width / gridX);
     const blockH = Math.floor(height / gridY);
 
-    // Har bir blok (16 ta blok) uchun 8 ta xususiyat:
-    // [Mean, StdDev, H-Gradient, V-Gradient, D1-Gradient, D2-Gradient, R-G ratio, G-B ratio] -> 16 * 8 = 128 parametr
     for (let gy = 0; gy < gridY; gy++) {
       for (let gx = 0; gx < gridX; gx++) {
         let sum = 0;
-        let sumSq = 0;
         let hGrad = 0;
         let vGrad = 0;
-        let d1Grad = 0;
-        let d2Grad = 0;
-        let rSum = 0;
-        let gSum = 0;
-        let bSum = 0;
+        let dGrad = 0;
         let count = 0;
 
         const startY = gy * blockH;
@@ -149,17 +173,9 @@ class FaceRecognitionEngine {
         for (let y = startY; y < endY; y++) {
           for (let x = startX; x < endX; x++) {
             const idx = y * width + x;
-            const val = gray[idx];
-            sum += val;
-            sumSq += val * val;
-
-            const pIdx = idx * 4;
-            rSum += data[pIdx];
-            gSum += data[pIdx + 1];
-            bSum += data[pIdx + 2];
+            sum += gray[idx];
             count++;
 
-            // Gradiyent hisoblash (Sobel-like difference)
             if (x > 0 && x < width - 1) {
               hGrad += Math.abs(gray[idx + 1] - gray[idx - 1]);
             }
@@ -167,43 +183,43 @@ class FaceRecognitionEngine {
               vGrad += Math.abs(gray[(y + 1) * width + x] - gray[(y - 1) * width + x]);
             }
             if (x > 0 && x < width - 1 && y > 0 && y < height - 1) {
-              d1Grad += Math.abs(gray[(y + 1) * width + x + 1] - gray[(y - 1) * width + x - 1]);
-              d2Grad += Math.abs(gray[(y + 1) * width + x - 1] - gray[(y - 1) * width + x + 1]);
+              dGrad += Math.abs(gray[(y + 1) * width + x + 1] - gray[(y - 1) * width + x - 1]);
             }
           }
         }
 
-        const mean = count > 0 ? sum / count : 0;
-        const variance = count > 0 ? Math.max(0, sumSq / count - mean * mean) : 0;
-        const stdDev = Math.sqrt(variance);
-
-        descriptor.push(mean / 255);
-        descriptor.push(stdDev / 128);
-        descriptor.push(count > 0 ? (hGrad / count) / 64 : 0);
-        descriptor.push(count > 0 ? (vGrad / count) / 64 : 0);
-        descriptor.push(count > 0 ? (d1Grad / count) / 64 : 0);
-        descriptor.push(count > 0 ? (d2Grad / count) / 64 : 0);
-        descriptor.push(gSum > 0 ? (rSum / gSum) : 1);
-        descriptor.push(bSum > 0 ? (gSum / bSum) : 1);
+        const blockMean = count > 0 ? sum / count : globalMean;
+        // Global o'rtachadan ayirish (Zero-Mean block contrast)
+        descriptor.push((blockMean - globalMean) / 64);
+        descriptor.push(count > 0 ? (hGrad / count) / 32 : 0);
+        descriptor.push(count > 0 ? (vGrad / count) / 32 : 0);
+        descriptor.push(count > 0 ? (dGrad / count) / 32 : 0);
       }
     }
 
-    // Vektorni L2 normalizatsiya qilish
+    // Zero-mean qilish va L2 normalizatsiya
+    let dSum = 0;
+    for (let i = 0; i < descriptor.length; i++) dSum += descriptor[i];
+    const dMean = dSum / descriptor.length;
+
     let normSq = 0;
+    const centered: number[] = new Array(descriptor.length);
     for (let i = 0; i < descriptor.length; i++) {
-      normSq += descriptor[i] * descriptor[i];
+      centered[i] = descriptor[i] - dMean;
+      normSq += centered[i] * centered[i];
     }
     const norm = Math.sqrt(normSq) || 1;
-    return descriptor.map((v) => v / norm);
+    return centered.map((v) => v / norm);
   }
 
-  // Kosinus o'xshashligini hisoblash
-  private cosineSimilarity(v1: number[], v2: number[]): number {
+  // Pearson Zero-Mean Correlation (-1.0 dan +1.0 gacha)
+  private pearsonCorrelation(v1: number[], v2: number[]): number {
     let dot = 0;
-    for (let i = 0; i < Math.min(v1.length, v2.length); i++) {
+    const len = Math.min(v1.length, v2.length);
+    for (let i = 0; i < len; i++) {
       dot += v1[i] * v2[i];
     }
-    return Math.max(0, Math.min(1, dot));
+    return dot;
   }
 
   // =========================================================================
@@ -214,6 +230,7 @@ class FaceRecognitionEngine {
     isIdentified: boolean;
     confidence: number;
     matchScore: number;
+    scores?: Record<string, number>;
   } {
     const liveDescriptor = this.extractDescriptorFromCanvas(faceCanvas);
     if (!liveDescriptor) {
@@ -221,34 +238,40 @@ class FaceRecognitionEngine {
     }
 
     let bestPerson: KnownPerson | null = null;
-    let highestSimilarity = 0;
+    let highestScore = -1;
+    const scores: Record<string, number> = {};
 
     for (const person of this.database) {
       if (!person.descriptor) continue;
-      const sim = this.cosineSimilarity(liveDescriptor, person.descriptor);
-      if (sim > highestSimilarity) {
-        highestSimilarity = sim;
+      const score = this.pearsonCorrelation(liveDescriptor, person.descriptor);
+      scores[person.fullName] = +score.toFixed(3);
+
+      if (score > highestScore) {
+        highestScore = score;
         bestPerson = person;
       }
     }
 
-    // QAT'IY BIOMETRIK CHEGARA:
-    // Faqat belgilangan ostonadan (RECOGNITION_THRESHOLD = 0.76) yuqori bo'lsagina shaxs taniladi!
-    if (bestPerson && highestSimilarity >= this.RECOGNITION_THRESHOLD) {
+    // QAT'IY CHEGARA: Faqat threshold (0.58) dan yuqori bo'lsagina shaxs taniladi!
+    if (bestPerson && highestScore >= this.RECOGNITION_THRESHOLD) {
+      // Normallashtirilgan ishonchlilik (0.75 - 0.98 oralig'ida)
+      const displayConf = Math.min(0.98, Math.max(0.75, +(0.70 + highestScore * 0.35).toFixed(2)));
       return {
         person: bestPerson,
         isIdentified: true,
-        confidence: +highestSimilarity.toFixed(2),
-        matchScore: highestSimilarity
+        confidence: displayConf,
+        matchScore: highestScore,
+        scores
       };
     }
 
-    // Begona shaxs / Piyoda (Taniy olmadi)
+    // Begona shaxs / Piyoda (taniy olmadi)
     return {
       person: null,
       isIdentified: false,
-      confidence: +highestSimilarity.toFixed(2),
-      matchScore: highestSimilarity
+      confidence: 0,
+      matchScore: highestScore,
+      scores
     };
   }
 }

@@ -224,30 +224,29 @@ export const HUDView: React.FC = () => {
               personCount++;
               category = 'person';
 
-              // Yuz qismini inson tanasining yuqori 38% qismidan aniqroq qirqib olish
+              // Yuz maydonini aniq hisoblash (yaqin va uzoq masofa uchun moslashuvchan)
               const faceCanvas = document.createElement('canvas');
               faceCanvas.width = 64;
               faceCanvas.height = 64;
               const fCtx = faceCanvas.getContext('2d');
               if (fCtx) {
-                const headW = rawW * 0.72;
-                const headH = Math.max(24, rawH * 0.38);
+                const isCloseUp = rawH > vH * 0.50;
+                const headW = isCloseUp ? rawW * 0.82 : rawW * 0.70;
+                const headH = isCloseUp ? rawH * 0.72 : Math.max(30, rawH * 0.44);
                 const headX = rawX + (rawW - headW) / 2;
-                const headY = rawY;
+                const headY = isCloseUp ? rawY + rawH * 0.04 : rawY;
                 fCtx.drawImage(video, Math.max(0, headX), Math.max(0, headY), headW, headH, 0, 0, 64, 64);
               }
 
-              // Qat'iy Face ID tekshiruvi: faqat qat'iy o'xshasa ism chiqadi, aks holda PIYODA!
+              // Qat'iy Face ID tekshiruvi (Pearson Correlation bo'yicha)
               const match = faceRecognitionService.identifyFace(faceCanvas);
               if (match.isIdentified && match.person) {
-                // Faqat haqiqiy shaxs aniqlanganda (Qo'ldoshev Sarvar)
                 label = match.person.fullName;
                 personName = match.person.fullName;
                 color = match.person.color || '#00e676';
                 isIdentifiedPerson = true;
                 confidence = match.confidence;
               } else {
-                // Boshqa odam qarasa yoki taniy olmasa -> Faqat 'Piyoda'!
                 label = "Piyoda";
                 personName = undefined;
                 color = "#38bdf8";
