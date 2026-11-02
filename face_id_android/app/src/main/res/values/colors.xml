@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="ic_launcher_background">#080E14</color>
+    
+    <!-- Cyber Tactical Palette -->
+    <color name="bg_dark">#080E14</color>
+    <color name="bg_surface">#101C26</color>
+    <color name="bg_card">#162433</color>
+    <color name="bg_card_stroke">#1F3A52</color>
+    
+    <color name="tactical_cyan">#00F0FF</color>
+    <color name="tactical_green">#00FF88</color>
+    <color name="tactical_amber">#FFB800</color>
+    <color name="tactical_red">#FF3366</color>
+    <color name="tactical_purple">#A855F7</color>
+    
+    <color name="text_primary">#F1F5F9</color>
+    <color name="text_secondary">#94A3B8</color>
+    <color name="text_muted">#64748B</color>
+    
+    <color name="overlay_box_pass">#00FF88</color>
+    <color name="overlay_box_unknown">#FFB800</color>
+    <color name="overlay_box_spoof">#FF3366</color>
+</resources>

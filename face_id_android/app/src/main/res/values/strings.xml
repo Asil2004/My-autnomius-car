@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">QALQON Face ID</string>
+    <string name="title_robot_camera">ROBOT TACTICAL CAMERA</string>
+    <string name="title_add_person">YANGI SHAXSNI RO\'YXATGA OLISH</string>
+    <string name="title_registered_people">RO\'YXATDAGI SHAXSLAR</string>
+    <string name="title_person_details">SHAXS MA\'LUMOTLARI</string>
+    <string name="title_settings">FACE ID SOZLAMALARI</string>
+    <string name="title_admin_login">ADMINISTRATOR KIRISHI</string>
+    
+    <string name="status_scanning">SKANERLANMOQDA...</string>
+    <string name="status_verified">IDENTIFIKATSIYA QILINDI</string>
+    <string name="status_unknown">NOMA\'LUM SHAXS (PIYODA)</string>
+    <string name="status_spoof">SPOOF / SOXTA FOTO ANIQLANDI</string>
+</resources>
