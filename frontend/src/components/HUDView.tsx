@@ -2,8 +2,9 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useRobot } from '../context/RobotContext';
 import type { SpeedLevel, DetectedObject } from '../types/robot';
 import { faceRecognitionService, type KnownPerson } from '../services/faceRecognitionService';
-import * as cocoSsd from '@tensorflow-models/coco-ssd';
-import '@tensorflow/tfjs';
+import { distanceEstimator } from '../services/distanceService';
+import type * as cocoSsd from '@tensorflow-models/coco-ssd';
+import { loadCocoModel } from '../services/aiPreload';
 import {
   ArrowUp,
   ArrowDown,
@@ -13,11 +14,9 @@ import {
   RotateCw,
   Square,
   Compass,
-  Crosshair,
   Gauge,
   SlidersHorizontal,
   ShieldAlert,
-  Zap,
   Maximize2,
   Camera,
   Radio,
@@ -31,8 +30,88 @@ import {
   Users,
   Plus,
   X,
-  CheckCircle2
+  CheckCircle2,
+  Ruler
 } from 'lucide-react';
+
+// COCO-SSD klasslari uchun o'zbekcha nomlar. Odam va transport alohida ishlanadi, qolgan hamma jism robot uchun "to'siq"
+const UZ_OBSTACLE_NAMES: Record<string, string> = {
+  chair: "Stul (To'siq)",
+  couch: "Divan (To'siq)",
+  'dining table': "Stol (To'siq)",
+  bed: "Karovot (To'siq)",
+  'potted plant': "Gultuvak (To'siq)",
+  tv: 'Monitor / TV',
+  laptop: 'Noutbuk',
+  'cell phone': 'Telefon (Obyekt)',
+  bottle: 'Idish / Butilka',
+  cup: 'Chashka / Finka',
+  backpack: 'Ryukzak (Yuk)',
+  handbag: 'Sumka',
+  suitcase: 'Chemodan (Yuk)',
+  book: 'Kitob / Blok',
+  umbrella: 'Soyabon',
+  box: "Quti (To'siq)",
+  dog: 'It (Hayvon)',
+  cat: 'Mushuk (Hayvon)'
+};
+// COCO-SSD ni odam bo'lmagan jismlar uchun past baho bilan qidiramiz (to'siqlarni ko'proq ushlash), odam uchun esa qat'iy chegara
+const OBSTACLE_MIN_SCORE = 0.28;
+const PERSON_MIN_SCORE = 0.4;
+const VEHICLE_CLASSES = ['car', 'truck', 'bus', 'motorcycle', 'bicycle'];
+
+// Kalibrovka kamera turi bo'yicha alohida saqlanadi (hozir faqat frontal kamera aniqlanadi)
+const CAMERA_KEY = 'FRONTAL';
+
+// Sonar masofasiga (sm) qarab rang: <=22 xavf (avtotormoz), <=45 ogohlantirish, qolgani xavfsiz
+const getSonarColor = (distance: number, isCritical = false) => {
+  if (isCritical || distance <= 22) return 'text-rose-400 bg-rose-950/80 border-rose-500 shadow-[0_0_10px_rgba(255,34,56,0.6)] animate-pulse';
+  if (distance <= 45) return 'text-amber-300 bg-amber-950/70 border-amber-500/70';
+  return 'text-emerald-300 bg-emerald-950/60 border-emerald-500/60';
+};
+
+const SONAR_ARROW = { front: ArrowUp, rear: ArrowDown, left: ArrowLeft, right: ArrowRight } as const;
+
+// Video ostidagi qatorda turuvchi sonar chipi: yo'nalish o'qi, nomi va masofasi
+const SonarChip: React.FC<{
+  side: 'front' | 'rear' | 'left' | 'right';
+  label: string;
+  value: number;
+  pins?: string;
+  critical?: boolean;
+}> = ({ side, label, value, pins, critical = false }) => {
+  const danger = critical || value <= 22;
+  const Arrow = SONAR_ARROW[side];
+  const title = `${label} sonar${pins ? ` (${pins})` : ''}: ${value} sm. Chegara: <22 sm = avtotormoz`;
+  return (
+    <div
+      className={`px-2 py-0.5 rounded border font-bold flex items-center space-x-1.5 whitespace-nowrap transition-colors ${getSonarColor(value, critical)}`}
+      title={title}
+      data-sonar={side}
+    >
+      {danger ? <ShieldAlert className="w-3 h-3 shrink-0" /> : <Arrow className="w-3 h-3 shrink-0" />}
+      <span className="text-[9px] font-semibold text-slate-300">{label}</span>
+      <span>{value} sm</span>
+      {side === 'front' && danger && <span className="text-[9px]">TO'SIQ</span>}
+    </div>
+  );
+};
+
+// Kalibrovka uchun yuz kadrlari shu oraliqda yig'iladi. Sekin qurilmada aniqlash sikli ~1 kadr/0.7 s bo'lishi mumkin
+const CALIB_WINDOW_MS = 4000;
+const CALIB_MIN_SAMPLES = 3;
+// Yuz kengligi shu oraliqda (medianaga nisbatan) o'zgarmasa, odam qimirlamayapti deb hisoblanadi
+const CALIB_MAX_SPREAD = 0.12;
+
+type FaceSample = { width: number; eyePx: number; frameH: number; t: number };
+
+// Kalibrovka ma'lumoti yetarlimi: kadrlar soni va yuz kengligining barqarorligi
+const evaluateCalibSamples = (samples: FaceSample[]) => {
+  const widths = samples.map((s) => s.width).sort((a, b) => a - b);
+  const median = widths.length ? widths[Math.floor(widths.length / 2)] : 0;
+  const spread = widths.length > 1 && median > 0 ? (widths[widths.length - 1] - widths[0]) / median : 0;
+  return { count: samples.length, median, stable: spread <= CALIB_MAX_SPREAD };
+};
 
 export const HUDView: React.FC = () => {
   const {
@@ -57,6 +136,26 @@ export const HUDView: React.FC = () => {
   } = useRobot();
 
   const [cameraFullscreen, setCameraFullscreen] = useState(false);
+  // Videoning haqiqiy eni/bo'yi nisbati (kamera 16:9 yoki 4:3 bo'lishi mumkin)
+  const [videoAspect, setVideoAspect] = useState(16 / 9);
+  // Video qutisi eni: panelning bo'sh joyiga nisbatni saqlagan holda sig'adigan eng katta o'lcham
+  const viewportWrapRef = useRef<HTMLDivElement | null>(null);
+  const [fitWidth, setFitWidth] = useState<number | null>(null);
+  useEffect(() => {
+    const el = viewportWrapRef.current;
+    if (!el) return;
+    const update = () => {
+      const cw = el.clientWidth;
+      const ch = el.clientHeight;
+      if (!cw) return;
+      // Balandlik aniq bo'lmasa (ustunli ko'rinish), faqat eniga qarab
+      setFitWidth(Math.floor(ch > 0 ? Math.min(cw, ch * videoAspect) : cw));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [videoAspect, cameraFullscreen]);
   const [cameraSource, setCameraSource] = useState<'FRONTAL' | 'RPI' | 'SIMULATION'>('FRONTAL');
   const [cameraLoading, setCameraLoading] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -79,90 +178,82 @@ export const HUDView: React.FC = () => {
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const cameraRequestRef = useRef(0);
+
+  // ESLATMA: sonar bilan masofani tuzatish o'chirilgan. Kamera "robot ko'zi" sifatida o'z masofasini sonars.front ga yozadi
+  // (RobotContext.updateCameraObstacle), shuning uchun sonars.front ni qaytib kameraga berish o'z-o'zini kuchaytiruvchi sikl bo'lardi.
+
+  // Kalibrovka uchun oxirgi yuz o'lchamlari (eng yaqin yuz, piksel)
+  const faceSamplesRef = useRef<FaceSample[]>([]);
+  const [showCalibration, setShowCalibration] = useState(false);
+  const [calibDistance, setCalibDistance] = useState('0.5');
+  const [calibrated, setCalibrated] = useState(distanceEstimator.isCalibrated(CAMERA_KEY));
+
+  // Yuz modeli holati va oxirgi kadr natijasi (ekranda ko'rsatiladi: nima uchun yuz topilmayotganini ko'rish uchun)
+  const [faceStatus, setFaceStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [faceInfo, setFaceInfo] = useState<{
+    count: number;
+    widthPx: number;
+    cycleMs: number;
+    calibCount: number;
+    calibStable: boolean;
+    eyePx: number;
+    faceDistM: number; // yuz ramkasi bo'yicha masofa (m), 0 = yuz yo'q
+    eyeDistM: number; // ko'zlar orasidagi masofa bo'yicha (m). Faqat tizim uchun, ekranda ko'rsatilmaydi
+  }>({ count: 0, widthPx: 0, cycleMs: 0, calibCount: 0, calibStable: true, eyePx: 0, faceDistM: 0, eyeDistM: 0 });
   const cocoModelRef = useRef<cocoSsd.ObjectDetection | null>(null);
   const isDetectingRef = useRef<boolean>(false);
+  const lastObjectsSigRef = useRef('');
   const proximityCanvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  // COCO-SSD klasslari uchun o'zbekcha nomlar lug'ati
-  const UZ_OBSTACLE_NAMES: Record<string, string> = {
-    person: "Piyoda",
-    car: "Mashina (Avtomobil)",
-    truck: "Yuk mashinasi",
-    bus: "Avtobus",
-    motorcycle: "Motosikl",
-    bicycle: "Velosiped",
-    chair: "Stul (To'siq)",
-    couch: "Divan (To'siq)",
-    "dining table": "Stol (To'siq)",
-    bed: "Karovot (To'siq)",
-    "potted plant": "Gultuvak (To'siq)",
-    tv: "Monitor / TV",
-    laptop: "Noutbuk",
-    "cell phone": "Telefon (Obyekt)",
-    bottle: "Idish / Butilka",
-    cup: "Chashka / Finka",
-    backpack: "Ryukzak (Yuk)",
-    handbag: "Sumka",
-    suitcase: "Chemodan (Yuk)",
-    book: "Kitob / Blok",
-    umbrella: "Soyabon",
-    box: "Quti (To'siq)",
-    dog: "It (Hayvon)",
-    cat: "Mushuk (Hayvon)",
-  };
+  // Kontekstga oxirgi yuborilgan to'siq holati: bir xil qiymatni har kadrda yuborib, butun ilovani qayta chizdirmaslik uchun
+  const lastObstacleRef = useRef({ key: '', t: 0 });
 
   // =========================================================================
-  // 1. TENSORFLOW COCO-SSD VA YUZ BAZASINI YUKLASH (Lokal va Parallel)
+  // 1. TENSORFLOW COCO-SSD VA YUZ BAZASINI YUKLASH
   // =========================================================================
   useEffect(() => {
     let isMounted = true;
     const loadAiServices = async () => {
       try {
-        setAiModelLoading(true);
-        addLog('AI', 'info', "Neyron tarmoqlar (COCO-SSD va face-api.js) lokal yuklanmoqda...");
-
-        // Jonli kamera oldidan soxta namuna ramkalarni tozalash
+        // Kontekstdagi namuna (soxta) ramkalar jonli kamera ustida ko'rinib qolmasin
         setDetectedObjects([]);
-
-        const baseUrl = import.meta.env.BASE_URL || './';
-        const cleanBase = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
-        const localCocoUrl = `${cleanBase}models/coco-ssd/model.json`;
-
-        // COCO-SSD modelini lokal yoki keshdan bir marta yuklash
-        const loadCoco = async () => {
-          if (cocoModelRef.current) return cocoModelRef.current;
-          try {
-            const m = await cocoSsd.load({ modelUrl: localCocoUrl, base: 'lite_mobilenet_v2' });
-            console.log('[AI] COCO-SSD modeli lokal public/models/coco-ssd dan yuklandi');
-            return m;
-          } catch (localErr) {
-            console.warn('[AI] Lokal COCO-SSD topilmadi, tarmoq orqali yuklanadi:', localErr);
-            return await cocoSsd.load({ base: 'lite_mobilenet_v2' });
-          }
-        };
-
-        // Mustaqil parallel yuklash: face-api.js va COCO-SSD bir-birini kutmasligi shart
-        faceRecognitionService.initDatabase().then(() => {
-          if (isMounted) {
-            setAiModelLoaded(true);
-            setKnownPersons([...faceRecognitionService.getPersons()]);
-            addLog('AI', 'success', "Yuz tanish (face-api.js) biometriyasi tayyor! Ro'yxatda 3 nafar IIV xodimi.");
-          }
-        }).catch(err => {
-          console.warn('[AI] faceRecognitionService init xatosi:', err);
+        setAiModelLoading(true);
+        addLog('AI', 'info', "Neyron tarmoq va yuzlar bazasi yuklanmoqda...");
+        
+        // Yuz modeli va bazani yuklash. Xato bo'lsa ham COCO ishlayveradi, odamlar "Piyoda" bo'ladi
+        let faceReady = true;
+        const faceInit = faceRecognitionService.prepare().catch((faceErr: unknown) => {
+          faceReady = false;
+          if (isMounted) setFaceStatus('error');
+          const msg = faceErr instanceof Error ? faceErr.message : String(faceErr);
+          addLog('AI', 'error', `Yuz tanish modeli yuklanmadi, barcha odamlar "Piyoda": ${msg}`);
         });
 
-        loadCoco().then(model => {
-          if (isMounted) {
-            cocoModelRef.current = model;
-            setAiModelLoaded(true);
-            setAiModelLoading(false);
-            addLog('AI', 'success', "COCO-SSD transport/odam detektori tayyor!");
-          }
-        }).catch(err => {
-          console.warn('[AI] COCO-SSD yuklash xatosi:', err);
-          if (isMounted) setAiModelLoading(false);
+        // COCO-SSD va yuz modeli parallel yuklanadi. Har birining vaqti jurnalga yoziladi (sekinlikni topish uchun)
+        const tStart = performance.now();
+        const ms = () => Math.round(performance.now() - tStart);
+        const cocoLoad = loadCocoModel().then((m) => {
+          addLog('AI', 'info', `COCO-SSD tayyor: ${ms()} ms`);
+          return m;
         });
+        faceInit.then(() => {
+          if (faceReady) {
+            const t = faceRecognitionService.timings;
+            addLog('AI', 'info', `Yuz modeli tayyor: ${ms()} ms (modellar ${t.modellar} ms, isitish ${t.isitish} ms)`);
+          }
+        });
+        const [model] = await Promise.all([cocoLoad, faceInit]);
+        if (isMounted) {
+          cocoModelRef.current = model;
+          setAiModelLoaded(true);
+          setAiModelLoading(false);
+          setKnownPersons([...faceRecognitionService.getPersons()]);
+          if (faceReady) {
+            setFaceStatus('ready');
+            const n = faceRecognitionService.getPersons().filter((p) => p.descriptor).length;
+            addLog('AI', 'success', `Yuzni tanish va COCO-SSD tayyor: bazada ${n} ta shaxs`);
+          }
+        }
       } catch (err: unknown) {
         if (isMounted) {
           setAiModelLoading(false);
@@ -192,6 +283,11 @@ export const HUDView: React.FC = () => {
   }, []);
 
   const startFrontalCamera = useCallback(async () => {
+    // Har chaqiruvga raqam beriladi: effekt qayta ishlaganda (StrictMode, rejim almashishi) eski
+    // chaqiruv yangisining oqimini uzib qo'ymasligi va xato ko'rsatmasligi uchun
+    const requestId = ++cameraRequestRef.current;
+    const isStale = () => requestId !== cameraRequestRef.current;
+
     stopCameraStream();
     setCameraLoading(true);
     setCameraError(null);
@@ -206,19 +302,21 @@ export const HUDView: React.FC = () => {
         audio: false
       });
 
+      if (isStale()) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        try {
-          await videoRef.current.play();
-        } catch (pErr: unknown) {
-          const errName = pErr instanceof Error ? pErr.name : '';
-          if (errName !== 'AbortError') throw pErr;
-        }
+        await videoRef.current.play();
       }
+      if (isStale()) return;
       setCameraLoading(false);
       addLog('SYSTEM', 'success', "Frontal kamera oqimi tiniq rejimda ulandi.");
     } catch (err: unknown) {
+      if (isStale()) return;
       setCameraLoading(false);
       const errorMsg = err instanceof Error ? err.message : 'Kameraga ruxsat berilmadi yoki kamera topilmadi';
       setCameraError(errorMsg);
@@ -234,12 +332,13 @@ export const HUDView: React.FC = () => {
       stopCameraStream();
     }
     return () => {
+      cameraRequestRef.current++;
       stopCameraStream();
     };
   }, [cameraSource, startFrontalCamera, stopCameraStream]);
 
   // =========================================================================
-  // 3. TASVIRDAN ODAM VA MASHINALARNI HAMDA SHAXSNI ANIQLASH (COCO-SSD + face-api.js)
+  // 3. TASVIRDAN ODAM VA MASHINALARNI HAMDA SHAXSNI ANIQLASH
   // =========================================================================
   const detectFrame = useCallback(async () => {
     if (
@@ -256,92 +355,114 @@ export const HUDView: React.FC = () => {
     const vW = video.videoWidth;
     const vH = video.videoHeight;
     if (!vW || !vH) return;
+    setVideoAspect((prev) => (Math.abs(prev - vW / vH) > 0.01 ? vW / vH : prev));
 
-    try {
-      isDetectingRef.current = true;
-      const predictionsPromise = cocoModelRef.current
-        ? cocoModelRef.current.detect(video, 12, 0.28)
-        : Promise.resolve([]);
-      const facesPromise = faceRecognitionService.detectFacesInVideo(video);
-
-      const [predictions, detectedFaces] = await Promise.all([
-        predictionsPromise,
-        facesPromise
-      ]);
+    if (cocoModelRef.current) {
+      try {
+        isDetectingRef.current = true;
+        const cycleStart = performance.now();
+        const predictions = await cocoModelRef.current.detect(video, 12, OBSTACLE_MIN_SCORE);
 
         let personCount = 0;
         let carCount = 0;
         let obstacleCount = 0;
-        const matchedFaceIndices = new Set<number>();
-        const activeTrackKeys = new Set<string>();
 
-        // Barcha aniqlangan COCO klasslarini qabul qilamiz (to'siqlar ham ko'rinadi)
-        const validPredictions = predictions.filter((pred) => pred.score >= 0.28);
-
-        const newObjects: DetectedObject[] = [];
-
-        validPredictions.forEach((pred, idx) => {
+        const vehiclePreds = predictions.filter((pred) => VEHICLE_CLASSES.includes(pred.class.toLowerCase()));
+        // Odam uchun chegara qat'iyroq: past baholi "odam" soxta bo'lishi mumkin
+        const personPreds = predictions.filter(
+          (pred) => pred.class.toLowerCase() === 'person' && pred.score >= PERSON_MIN_SCORE
+        );
+        // Odam ustidagi/ichidagi kichik jismlar (galstuk, sumka, telefon...) robot uchun to'siq emas: odamning o'zi hisobga olinadi
+        const insidePerson = (b: number[]) =>
+          personPreds.some((pp) => {
+            const [px, py, pw, ph] = pp.bbox;
+            const cx = b[0] + b[2] / 2;
+            const cy = b[1] + b[3] / 2;
+            return cx >= px && cx <= px + pw && cy >= py && cy <= py + ph && b[2] * b[3] < pw * ph * 0.25;
+          });
+        const otherPreds = predictions.filter((pred) => {
           const cls = pred.class.toLowerCase();
-          const [rawX, rawY, rawW, rawH] = pred.bbox;
+          return cls !== 'person' && cls !== 'tie' && !VEHICLE_CLASSES.includes(cls) && !insidePerson(pred.bbox);
+        });
 
-          let label = "Piyoda";
-          let color = "#38bdf8";
-          let category: DetectedObject['category'] = 'other';
-          let personName: string | undefined = undefined;
-          let isIdentifiedPerson = false;
-          let confidence = +pred.score.toFixed(2);
+        // Odamlar: yuz orqali tanish. Bazada yo'q yoki yuzi ko'rinmagan odam — "Piyoda"
+        const identities = await faceRecognitionService.identifyPeople(
+          video,
+          personPreds.map((p) => ({ x: p.bbox[0], y: p.bbox[1], width: p.bbox[2], height: p.bbox[3] }))
+        );
 
-          if (cls === 'person') {
-            personCount++;
-            category = 'person';
+        // Yuz dvigateli hali tayyor bo'lmasa (qayta yuklanmoqda), "topilmadi" emas, "yuklanmoqda" ko'rsatiladi
+        setFaceStatus((prev) => (prev === 'error' ? prev : faceRecognitionService.isWarm() ? 'ready' : 'loading'));
 
-            // Odam ramkasi ichidagi eng yaqin yuzni topish
-            let bestFaceIdx = -1;
-            let bestFaceDistToCenter = Infinity;
-            const personCenterX = rawX + rawW / 2;
-            const personCenterY = rawY + rawH * 0.35;
+        // Eng katta (eng yaqin) yuz: kalibrovka ma'lumoti va ko'z masofasini ko'rsatish uchun
+        const withFace = identities.filter((i) => i.faceBox);
+        const closest = withFace.length
+          ? withFace.reduce((a, b) => (a.faceBox!.width >= b.faceBox!.width ? a : b))
+          : null;
+        const now = Date.now();
+        const eyePx = closest?.eyes
+          ? Math.hypot(closest.eyes.x2 - closest.eyes.x1, closest.eyes.y2 - closest.eyes.y1)
+          : 0;
+        if (closest?.faceBox) {
+          faceSamplesRef.current = [
+            ...faceSamplesRef.current,
+            { width: closest.faceBox.width, eyePx, frameH: vH, t: now }
+          ];
+        }
+        // Eskirgan kadrlar ham tozalanadi, shunda yuz yo'qolsa indikator yana sariqqa qaytadi
+        faceSamplesRef.current = faceSamplesRef.current.filter((s) => now - s.t < CALIB_WINDOW_MS);
+        const calib = evaluateCalibSamples(faceSamplesRef.current);
 
-            detectedFaces.forEach((face, fIdx) => {
-              const fCenterX = face.box.x + face.box.width / 2;
-              const fCenterY = face.box.y + face.box.height / 2;
+        // Har kadrda emas, faqat ko'rinadigan qiymat o'zgarganda qayta chizamiz (butun HUD qayta chizilishi qimmat)
+        const nextFaceInfo = {
+          count: withFace.length,
+          widthPx: closest?.faceBox ? Math.round(closest.faceBox.width / 4) * 4 : 0,
+          cycleMs: Math.round((performance.now() - cycleStart) / 50) * 50,
+          calibCount: calib.count,
+          calibStable: calib.stable,
+          eyePx: Math.round(eyePx),
+          faceDistM: closest?.faceBox
+            ? Math.round(distanceEstimator.rawFaceDistance(CAMERA_KEY, closest.faceBox.width, vH) * 100) / 100
+            : 0,
+          eyeDistM: eyePx > 0 ? Math.round(distanceEstimator.rawEyeDistance(CAMERA_KEY, eyePx, vH) * 100) / 100 : 0
+        };
+        setFaceInfo((prev) => (JSON.stringify(prev) === JSON.stringify(nextFaceInfo) ? prev : nextFaceInfo));
 
-              const marginX = rawW * 0.15;
-              const marginY = rawH * 0.15;
-              if (
-                fCenterX >= rawX - marginX &&
-                fCenterX <= rawX + rawW + marginX &&
-                fCenterY >= rawY - marginY &&
-                fCenterY <= rawY + rawH + marginY
-              ) {
-                const dist = Math.hypot(fCenterX - personCenterX, fCenterY - personCenterY);
-                if (dist < bestFaceDistToCenter) {
-                  bestFaceDistToCenter = dist;
-                  bestFaceIdx = fIdx;
-                }
-              }
-            });
+        const items = [
+          ...identities.map((identity, i) => ({
+            class: 'person',
+            bbox: [identity.box.x, identity.box.y, identity.box.width, identity.box.height] as [number, number, number, number],
+            score: personPreds[i]?.score ?? identity.faceScore ?? 0.5,
+            identity
+          })),
+          ...vehiclePreds.map((pred) => ({ class: pred.class, bbox: pred.bbox, score: pred.score, identity: undefined })),
+          // Odam ham, transport ham bo'lmagan har qanday jism robot uchun to'siq
+          ...otherPreds.map((pred) => ({ class: pred.class, bbox: pred.bbox, score: pred.score, identity: undefined }))
+        ];
 
-            const trackKey = `trk_p_${Math.round(rawX / 80)}_${Math.round(rawY / 80)}`;
-            activeTrackKeys.add(trackKey);
+        const newObjects: DetectedObject[] = items
+          .map((pred, idx) => {
+            const cls = pred.class.toLowerCase();
+            const [rawX, rawY, rawW, rawH] = pred.bbox;
 
-            if (bestFaceIdx >= 0) {
-              matchedFaceIndices.add(bestFaceIdx);
-              const matchedFace = detectedFaces[bestFaceIdx];
-              const matchResult = faceRecognitionService.matchFace(matchedFace.descriptor);
+            let label = "Noma'lum";
+            let color = "#00e5ff";
+            let category: DetectedObject['category'] = 'other';
+            let personName: string | undefined = undefined;
+            let isIdentifiedPerson = false;
+            let confidence = +pred.score.toFixed(2);
 
-              // Voting (anti-flicker): Masofa <= 0.52 bo'lsa darhol ko'rsatiladi, 0.52-0.58 oralig'ida kadrli tasdiqlash
-              const isInstantMatch = matchResult.isIdentified && matchResult.distance <= 0.52;
-              const votedId = faceRecognitionService.votePerson(
-                trackKey,
-                matchResult.isIdentified && matchResult.person ? matchResult.person.id : null
-              );
+            if (cls === 'person') {
+              personCount++;
+              category = 'person';
 
-              if (matchResult.isIdentified && matchResult.person && (isInstantMatch || votedId === matchResult.person.id)) {
-                label = matchResult.person.fullName;
-                personName = matchResult.person.fullName;
-                color = matchResult.person.color || '#00e676';
+              const match = pred.identity;
+              if (match?.person) {
+                label = match.person.fullName;
+                personName = match.person.fullName;
+                color = match.person.color || '#00e676';
                 isIdentifiedPerson = true;
-                confidence = matchResult.confidence;
+                confidence = +(match.confidence ?? pred.score).toFixed(2);
               } else {
                 label = "Piyoda";
                 personName = undefined;
@@ -349,128 +470,72 @@ export const HUDView: React.FC = () => {
                 isIdentifiedPerson = false;
                 confidence = +pred.score.toFixed(2);
               }
-            } else {
-              // Yuz ko'rinmaydi (orqasi bilan yoki uzoqda) -> Har doim "Piyoda"
-              faceRecognitionService.votePerson(trackKey, null);
-              label = "Piyoda";
-              personName = undefined;
+            } else if (cls === 'car') {
+              carCount++;
+              label = "Mashina (Avtomobil)";
+              color = "#00e5ff"; // Tsian / Moviy
+              category = 'car';
+            } else if (cls === 'truck') {
+              carCount++;
+              label = "Yuk mashinasi";
               color = "#38bdf8";
-              isIdentifiedPerson = false;
-              confidence = +pred.score.toFixed(2);
-            }
-          } else if (cls === 'car') {
-            carCount++;
-            label = "Mashina (Avtomobil)";
-            color = "#00e5ff";
-            category = 'car';
-          } else if (cls === 'truck') {
-            carCount++;
-            label = "Yuk mashinasi";
-            color = "#06b6d4";
-            category = 'car';
-          } else if (cls === 'bus') {
-            carCount++;
-            label = "Avtobus";
-            color = "#818cf8";
-            category = 'car';
-          } else if (cls === 'motorcycle' || cls === 'bicycle') {
-            label = cls === 'motorcycle' ? "Motosikl" : "Velosiped";
-            color = "#fbbf24";
-            category = 'vehicle';
-          } else {
-            // Har qanday boshqa jism robot uchun to'siq hisoblanadi
-            obstacleCount++;
-            const uzName = UZ_OBSTACLE_NAMES[cls] || `To'siq (${cls})`;
-            label = uzName;
-            color = "#f59e0b";
-            category = 'other';
-          }
-
-          let boxX = (rawX / vW) * 100;
-          const boxY = (rawY / vH) * 100;
-          const boxW = (rawW / vW) * 100;
-          const boxH = (rawH / vH) * 100;
-
-          if (mirrorVideo) {
-            boxX = 100 - (boxX + boxW);
-          }
-
-          const focalRatio = category === 'person' ? 52 : (category === 'car' ? 68 : 45);
-          const estimatedDistance = +(focalRatio / Math.max(10, boxH)).toFixed(2);
-          const distanceM = Math.min(18.0, Math.max(0.18, estimatedDistance));
-
-          // Agar to'siq juda yaqin bo'lsa (< 0.40m) qizil xavf rangiga o'tadi
-          if (distanceM <= 0.40 && !isIdentifiedPerson) {
-            color = "#ef4444";
-          }
-
-          newObjects.push({
-            id: `real-obj-${idx}-${Date.now().toString().slice(-4)}`,
-            label,
-            confidence,
-            distance: distanceM,
-            box: {
-              x: Math.max(0, Math.min(100 - boxW, boxX)),
-              y: Math.max(0, Math.min(100 - boxH, boxY)),
-              width: Math.min(100, boxW),
-              height: Math.min(100, boxH)
-            },
-            color,
-            category,
-            personName,
-            isIdentifiedPerson
-          });
-        });
-
-        // 2. COCO odamni topmadi, lekin face-api yuzni topdi holati
-        detectedFaces.forEach((face, fIdx) => {
-          if (!matchedFaceIndices.has(fIdx)) {
-            personCount++;
-            const trackKey = `trk_f_${Math.round(face.box.x / 80)}_${Math.round(face.box.y / 80)}`;
-            activeTrackKeys.add(trackKey);
-
-            const matchResult = faceRecognitionService.matchFace(face.descriptor);
-            const isInstantMatch = matchResult.isIdentified && matchResult.distance <= 0.52;
-            const votedId = faceRecognitionService.votePerson(
-              trackKey,
-              matchResult.isIdentified && matchResult.person ? matchResult.person.id : null
-            );
-
-            let label = "Piyoda";
-            let color = "#38bdf8";
-            let personName: string | undefined = undefined;
-            let isIdentifiedPerson = false;
-            let confidence = Math.min(0.98, Math.max(0.70, +face.score.toFixed(2)));
-
-            if (matchResult.isIdentified && matchResult.person && (isInstantMatch || votedId === matchResult.person.id)) {
-              label = matchResult.person.fullName;
-              personName = matchResult.person.fullName;
-              color = matchResult.person.color || '#00e676';
-              isIdentifiedPerson = true;
-              confidence = matchResult.confidence;
+              category = 'car';
+            } else if (cls === 'bus') {
+              carCount++;
+              label = "Avtobus";
+              color = "#818cf8";
+              category = 'car';
+            } else if (cls === 'motorcycle' || cls === 'bicycle') {
+              label = cls === 'motorcycle' ? "Motosikl" : "Velosiped";
+              color = "#fbbf24"; // Sariq
+              category = 'vehicle';
+            } else {
+              obstacleCount++;
+              label = UZ_OBSTACLE_NAMES[cls] || `To'siq (${cls})`;
+              color = "#f59e0b";
+              category = 'other';
             }
 
-            const headW = face.box.width * 1.8;
-            const headH = face.box.height * 2.6;
-            const headX = Math.max(0, face.box.x - (headW - face.box.width) / 2);
-            const headY = Math.max(0, face.box.y - face.box.height * 0.2);
+            // Foiz koordinatalar (0 - 100%)
+            let boxX = (rawX / vW) * 100;
+            const boxY = (rawY / vH) * 100;
+            const boxW = (rawW / vW) * 100;
+            const boxH = (rawH / vH) * 100;
 
-            let boxX = (headX / vW) * 100;
-            const boxY = (headY / vH) * 100;
-            const boxW = (headW / vW) * 100;
-            const boxH = (headH / vH) * 100;
-
+            // Oyna (mirror) effekti bo'lsa gorizontal koordinatani moslash
             if (mirrorVideo) {
               boxX = 100 - (boxX + boxW);
             }
 
-            const estimatedDistance = +(52 / Math.max(12, boxH)).toFixed(1);
+            // Masofa: pinhole modeli (yuz kengligi yoki obyekt balandligi) va silliqlash. Haqiqiy o'lchami noma'lum
+            // to'siqlar (stul, quti...) uchun kadrdagi balandlikdan taxminiy qiymat (jamoaning dastlabki formulasi)
+            const dist =
+              category === 'other'
+                ? {
+                    meters: Math.min(18, Math.max(0.18, +(45 / Math.max(10, boxH)).toFixed(2))),
+                    source: 'vehicle' as const,
+                    approx: true,
+                    upperBound: false
+                  }
+                : distanceEstimator.estimate(CAMERA_KEY, {
+                    cls,
+                    box: { x: rawX, y: rawY, width: rawW, height: rawH },
+                    faceBox: pred.identity?.faceBox ?? undefined,
+                    frameWidth: vW,
+                    frameHeight: vH
+                  });
+            // Juda yaqin begona jism qizil xavf rangiga o'tadi
+            if (dist.meters <= 0.4 && !isIdentifiedPerson) color = '#ef4444';
 
-            newObjects.push({
-              id: `face-obj-${fIdx}-${Date.now().toString().slice(-4)}`,
+            return {
+              // Barqaror kalit: React har kadrda ramkalarni o'chirib-qayta yaratmasin
+              id: `real-obj-${idx}`,
               label,
               confidence,
-              distance: Math.min(18.0, Math.max(0.6, estimatedDistance)),
+              distance: dist.meters,
+              distanceSource: dist.source,
+              distanceApprox: dist.approx,
+              distanceUpperBound: dist.upperBound,
               box: {
                 x: Math.max(0, Math.min(100 - boxW, boxX)),
                 y: Math.max(0, Math.min(100 - boxH, boxY)),
@@ -478,112 +543,104 @@ export const HUDView: React.FC = () => {
                 height: Math.min(100, boxH)
               },
               color,
-              category: 'person',
+              category,
               personName,
               isIdentifiedPerson
-            });
-          }
-        });
+            };
+          });
 
-        faceRecognitionService.pruneVoteHistory(activeTrackKeys);
-
-        // =========================================================================
-        // OPTIK YAQINLIK / TO'SIQNI TEKSHIRISH (Unclassified Close Obstacle Check)
-        // Kameraning to'g'ridan-to'g'ri oldida qo'l, quti yoki devor turganini sezish
-        // =========================================================================
+        // Optik yaqinlik: kamera oldi tekis jism (qo'l, devor, kitob) bilan to'silgan, lekin hech narsa tanilmagan bo'lsa
         try {
           if (!proximityCanvasRef.current) {
             proximityCanvasRef.current = document.createElement('canvas');
             proximityCanvasRef.current.width = 40;
             proximityCanvasRef.current.height = 30;
           }
-          const pCanvas = proximityCanvasRef.current;
-          const pCtx = pCanvas.getContext('2d', { willReadFrequently: true });
-          if (pCtx) {
+          const pCtx = proximityCanvasRef.current.getContext('2d', { willReadFrequently: true });
+          if (pCtx && newObjects.length === 0) {
             pCtx.drawImage(video, 0, 0, 40, 30);
-            const imgData = pCtx.getImageData(10, 12, 20, 16).data;
+            const px = pCtx.getImageData(10, 12, 20, 16).data;
             let totalLum = 0;
             let minLum = 255;
             let maxLum = 0;
-            const pixelCount = 20 * 16;
-            for (let i = 0; i < imgData.length; i += 4) {
-              const lum = (imgData[i] + imgData[i+1] + imgData[i+2]) / 3;
+            for (let i = 0; i < px.length; i += 4) {
+              const lum = (px[i] + px[i + 1] + px[i + 2]) / 3;
               totalLum += lum;
               if (lum < minLum) minLum = lum;
               if (lum > maxLum) maxLum = lum;
             }
-            const avgLum = totalLum / pixelCount;
-            const contrast = maxLum - minLum;
-
-            // Kamera oldi tekis jism (qo'l, devor, kitob) bilan to'silganda
-            if (contrast < 30 && (avgLum < 50 || avgLum > 200) && newObjects.length === 0) {
+            const avgLum = totalLum / (px.length / 4);
+            if (maxLum - minLum < 30 && (avgLum < 50 || avgLum > 200)) {
               obstacleCount++;
               newObjects.push({
-                id: `opt-barr-${Date.now().toString().slice(-4)}`,
-                label: "To'siq (Yaqin Jism / To'siq)",
+                id: 'opt-barrier',
+                label: "To'siq (Yaqin Jism)",
                 confidence: 0.94,
                 distance: 0.18,
+                distanceApprox: true,
                 box: { x: 20, y: 35, width: 60, height: 60 },
-                color: "#ef4444",
-                category: "other"
+                color: '#ef4444',
+                category: 'other'
               });
             }
           }
         } catch {
-          // Offscreen canvas tahlil xatosi e'tiborga olinmaydi
+          // Offscreen canvas tahlili xatosi e'tiborga olinmaydi
         }
 
-        // =========================================================================
-        // XAVFSIZLIK YO'LAGI (Central Collision Corridor) VA AVTOTORMOZ TAHLILI
-        // =========================================================================
-        let minCollisionDistCm = 200; // Standart ochiq yo'l
+        // Xavfsizlik yo'lagi: robot oldidagi markaziy koridordagi eng yaqin jism va aylanib o'tish yo'nalishi
+        let minCollisionCm = 200;
         let closestLabel = "Yo'l ochiq";
         let closestCenterX = 50;
         let closestWidth = 0;
-
-        newObjects.forEach((obj) => {
-          const objCenterX = obj.box.x + obj.box.width / 2;
-          const objBottomY = obj.box.y + obj.box.height;
+        for (const obj of newObjects) {
+          const centerX = obj.box.x + obj.box.width / 2;
+          const bottomY = obj.box.y + obj.box.height;
           const distCm = Math.round(obj.distance * 100);
-
-          // Robot harakat koridorida bo'lsa (x: 18% .. 82%, pastki qism)
-          if (objCenterX >= 18 && objCenterX <= 82 && objBottomY >= 25) {
-            if (distCm < minCollisionDistCm) {
-              minCollisionDistCm = distCm;
-              closestLabel = obj.label;
-              closestCenterX = objCenterX;
-              closestWidth = obj.box.width;
-            }
-          }
-        });
-
-        // Aylanib o'tish yoki chekinish yo'nalishini hisoblash
-        let evasionDirection: 'CLEAR' | 'LEFT' | 'RIGHT' | 'REVERSE' = 'CLEAR';
-        if (minCollisionDistCm <= 80) {
-          if (closestWidth >= 55) {
-            evasionDirection = 'REVERSE';
-          } else if (closestCenterX < 48) {
-            evasionDirection = 'RIGHT'; // To'siq chapda -> O'ngga burilish
-          } else {
-            evasionDirection = 'LEFT';  // To'siq o'ngda -> Chapga burilish
+          if (centerX >= 18 && centerX <= 82 && bottomY >= 25 && distCm < minCollisionCm) {
+            minCollisionCm = distCm;
+            closestLabel = obj.label;
+            closestCenterX = centerX;
+            closestWidth = obj.box.width;
           }
         }
+        let evasion: 'CLEAR' | 'LEFT' | 'RIGHT' | 'REVERSE' = 'CLEAR';
+        if (minCollisionCm <= 80) {
+          if (closestWidth >= 55) evasion = 'REVERSE';
+          else if (closestCenterX < 48) evasion = 'RIGHT'; // to'siq chapda: o'ngga burilish
+          else evasion = 'LEFT'; // to'siq o'ngda: chapga burilish
+        }
+        // Robot miyasiga (RobotContext) uzatish. Holat o'zgarmasa ~1 s da bir marta (kontekst "jonli" deb bilishi uchun)
+        const obstacleKey = `${Math.round(minCollisionCm / 2)}|${closestLabel}|${evasion}`;
+        const nowMs = Date.now();
+        if (obstacleKey !== lastObstacleRef.current.key || nowMs - lastObstacleRef.current.t > 1000) {
+          lastObstacleRef.current = { key: obstacleKey, t: nowMs };
+          updateCameraObstacle(minCollisionCm, closestLabel, evasion);
+        }
 
-        // Robot miyasiga (RobotContext) jonli uzatish
-        updateCameraObstacle(minCollisionDistCm, closestLabel, evasionDirection);
-
-        setDetectedObjects(newObjects);
-        setDetectedCounts({
-          people: personCount,
-          cars: carCount,
-          obstacles: obstacleCount,
-          total: newObjects.length
-        });
-      } catch (err) {
-        console.warn('[HUDView] Kadr deteksiyasida ogohlantirish:', err);
+        // Ramkalar ~0.6% (bir necha piksel) dan kam siljisa, qayta chizmaymiz: kamera shovqini tufayli har kadrda o'zgarmasin
+        const sig = newObjects
+          .map((o) => {
+            const q = (v: number) => Math.round(v / 0.6);
+            return `${o.label}|${o.isIdentifiedPerson ? 1 : 0}|${q(o.box.x)}|${q(o.box.y)}|${q(o.box.width)}|${q(o.box.height)}|${o.distance}|${o.distanceApprox ? 1 : 0}${o.distanceUpperBound ? 1 : 0}`;
+          })
+          .join(';');
+        if (sig !== lastObjectsSigRef.current) {
+          lastObjectsSigRef.current = sig;
+          setDetectedObjects(newObjects);
+          setDetectedCounts({
+            people: personCount,
+            cars: carCount,
+            obstacles: obstacleCount,
+            total: newObjects.length
+          });
+        }
+      } catch {
+        // AI detection pass
       } finally {
         isDetectingRef.current = false;
       }
+    }
   }, [aiEnabled, cameraSource, mirrorVideo, setDetectedObjects, updateCameraObstacle]);
 
   // Deteksiya sikli (har ~120ms da bir kadr tekshiriladi)
@@ -599,7 +656,7 @@ export const HUDView: React.FC = () => {
     };
   }, [cameraSource, aiEnabled, detectFrame]);
 
-  // Yangi shaxsni bazaga qo'shish (Yuz tekshiruvi va xatoliklar bilan)
+  // Yangi shaxsni bazaga qo'shish (yuz tekshiruvi, xatolik xabari va aksessuar variantlari jarayoni bilan)
   const handleAddNewPerson = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPersonName.trim()) {
@@ -613,21 +670,20 @@ export const HUDView: React.FC = () => {
 
     setIsAddingPerson(true);
     setAddPersonError(null);
-
+    const name = newPersonName.trim();
     try {
-      const added = await faceRecognitionService.addPerson({
-        fullName: newPersonName.trim(),
-        role: newPersonRole.trim() || 'Ruxsat berilgan shaxs',
-        photoDataUrl: newPersonPhoto,
-        color: '#38bdf8'
-      });
-
+      addLog('AI', 'info', `${name}: aksessuar variantlari hisoblanmoqda (ko'zoynak, bosh kiyim, niqob...), bir necha soniya...`);
+      const added = await faceRecognitionService.addPerson(
+        { fullName: name, role: newPersonRole.trim(), photoDataUrl: newPersonPhoto, color: '#38bdf8' },
+        (done, total) => {
+          if (done === total || done % 5 === 0) addLog('AI', 'info', `${name}: variantlar ${done}/${total}`);
+        }
+      );
       setKnownPersons([...faceRecognitionService.getPersons()]);
       addLog('AI', 'success', `Yuzlar bazasiga yangi shaxs muvaffaqiyatli qo'shildi: ${added.fullName}`);
       setNewPersonName('');
       setNewPersonRole('');
       setNewPersonPhoto(null);
-      setAddPersonError(null);
       setShowFaceDbModal(false);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Yuzni tanishda xatolik yuz berdi.";
@@ -636,6 +692,69 @@ export const HUDView: React.FC = () => {
     } finally {
       setIsAddingPerson(false);
     }
+  };
+
+  // Kalibrovka datchigi holati: yashil bo'lishi uchun yuz yetarli kadrda topilib, o'lchami barqaror bo'lishi kerak
+  const calibReady = faceStatus === 'ready' && faceInfo.calibCount >= CALIB_MIN_SAMPLES && faceInfo.calibStable;
+  const calibHint =
+    faceStatus === 'loading'
+      ? 'Yuz modeli yuklanmoqda...'
+      : faceStatus === 'error'
+      ? 'Yuz modeli xato: kalibrovka mumkin emas (jurnalga qarang).'
+      : faceInfo.calibCount === 0
+      ? "Yuz topilmadi: kameraga qarang, yuzga yorug'lik tushsin, kameradan taxminan 50 sm da turing."
+      : faceInfo.calibCount < CALIB_MIN_SAMPLES
+      ? `Yuz kadrlari yig'ilmoqda: ${faceInfo.calibCount}/${CALIB_MIN_SAMPLES}. Kamerada qimirlamay turing.`
+      : !faceInfo.calibStable
+      ? "Yuz o'lchami o'zgaryapti: qimirlamang va kameraga to'g'ri qarang."
+      : `Ma'lumot yetarli (${faceInfo.calibCount} kadr, barqaror). "Kalibrovka qilish"ni bosing.`;
+
+  // Kalibrovka: odam kameradan ma'lum masofada turganda yuz kengligidan fokus uzunligi hisoblanadi
+  const handleCalibrate = () => {
+    const dist = parseFloat(calibDistance.replace(',', '.'));
+    if (!(dist >= 0.3 && dist <= 10)) {
+      addLog('AI', 'warn', "Kalibrovka masofasi 0.3 dan 10 metrgacha bo'lishi kerak.");
+      return;
+    }
+    if (faceStatus !== 'ready') {
+      addLog('AI', 'warn', "Yuz modeli tayyor emas (yuqori chapdagi 'YUZ' holatiga qarang). Kalibrovka mumkin emas.");
+      return;
+    }
+    const now = Date.now();
+    const samples = faceSamplesRef.current.filter((s) => now - s.t < CALIB_WINDOW_MS);
+    const calib = evaluateCalibSamples(samples);
+    if (calib.count < CALIB_MIN_SAMPLES || !calib.stable) {
+      addLog('AI', 'warn', "Kalibrovka ma'lumoti hali yetarli emas: indikator yashil bo'lishini kuting.");
+      return;
+    }
+    const medianWidth = calib.median;
+    const result = distanceEstimator.calibrate(CAMERA_KEY, dist, medianWidth, samples[samples.length - 1].frameH);
+    if (!result.saved) {
+      addLog(
+        'AI',
+        'error',
+        `Kalibrovka rad etildi: natija ishonchsiz (kamera ko'rish burchagi ~${result.vFovDeg}°, odatda 40-60°). Haqiqiy masofa ${dist} m ekanini va yuz ${Math.round(medianWidth)} px bo'lganini tekshiring.`
+      );
+      return;
+    }
+    // Ko'z masofasi ham xuddi shu ma'lumotdan kalibrovka qilinadi (solishtirish uchun)
+    const eyeWidths = samples.map((s) => s.eyePx).filter((v) => v > 0).sort((a, b) => a - b);
+    if (eyeWidths.length > 0) {
+      distanceEstimator.calibrateEye(CAMERA_KEY, dist, eyeWidths[Math.floor(eyeWidths.length / 2)], samples[samples.length - 1].frameH);
+    }
+    setCalibrated(true);
+    setShowCalibration(false);
+    addLog(
+      'AI',
+      'success',
+      `Masofa kalibrovkasi saqlandi: ${dist} m, yuz ${Math.round(medianWidth)} px, ko'rish burchagi ~${result.vFovDeg}°.`
+    );
+  };
+
+  const handleResetCalibration = () => {
+    distanceEstimator.resetCalibration(CAMERA_KEY);
+    setCalibrated(false);
+    addLog('AI', 'info', "Kalibrovka tiklandi: standart ko'rish burchagi (45°) ishlatiladi.");
   };
 
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -658,16 +777,10 @@ export const HUDView: React.FC = () => {
     }));
   };
 
-  const getSonarColor = (distance: number, isCritical = false) => {
-    if (isCritical || distance <= 22) return 'text-rose-500 bg-rose-950/60 border-rose-500 shadow-[0_0_10px_rgba(255,34,56,0.6)] animate-pulse';
-    if (distance <= 45) return 'text-amber-400 bg-amber-950/40 border-amber-500/60';
-    return 'text-emerald-400 bg-emerald-950/30 border-emerald-500/50';
-  };
-
   return (
     <div className="flex-1 flex flex-col lg:flex-row gap-3 p-3 overflow-y-auto max-w-7xl mx-auto w-full">
       {/* LEFT COLUMN: Live Feed + HUD Overlays */}
-      <div className={`flex flex-col gap-3 ${cameraFullscreen ? 'fixed inset-0 z-50 p-2 bg-tactical-950' : 'flex-1'}`}>
+      <div className={`flex flex-col gap-3 min-h-0 ${cameraFullscreen ? 'fixed inset-0 z-50 p-2 bg-tactical-950' : 'flex-1'}`}>
         
         {/* TOP STATUS BAR: REAL GPS & CAMERA MODE SWITCHER */}
         <div className="bg-tactical-900/90 border border-tactical-700/70 rounded-lg p-2.5 flex flex-wrap items-center justify-between gap-2 shadow-md">
@@ -716,6 +829,17 @@ export const HUDView: React.FC = () => {
             </button>
 
             <button
+              onClick={() => setShowCalibration(true)}
+              className={`px-2 py-1 rounded bg-tactical-950 border flex items-center space-x-1 transition-all ${
+                calibrated ? 'border-emerald-600 text-emerald-300' : 'border-amber-500 text-amber-300'
+              }`}
+              title="Masofa o'lchashni kalibrovka qilish"
+            >
+              <Ruler className="w-3.5 h-3.5" />
+              <span>{calibrated ? 'Kalibrovka ✓' : 'Kalibrovka'}</span>
+            </button>
+
+            <button
               onClick={() => setCameraSource('FRONTAL')}
               className={`px-2.5 py-1 rounded font-bold flex items-center space-x-1 border transition-all ${
                 cameraSource === 'FRONTAL'
@@ -753,7 +877,8 @@ export const HUDView: React.FC = () => {
         </div>
 
         {/* MAIN HUD VIDEO FEED CONTAINER (Chiziq-chiziq filtr olib tashlangan - Tiniq HD kadr) */}
-        <div className="hud-panel rounded-lg overflow-hidden flex flex-col flex-1 relative min-h-[360px] max-h-[560px]">
+        <div className="hud-panel rounded-lg overflow-hidden flex flex-col relative flex-1 min-h-[420px]">
+
           {/* Header Bar inside Feed */}
           <div className="bg-tactical-950/85 px-3 py-2 border-b border-tactical-700/60 flex items-center justify-between z-20">
             <div className="flex items-center space-x-2 font-mono text-xs">
@@ -821,18 +946,24 @@ export const HUDView: React.FC = () => {
             </div>
           </div>
 
-          {/* Video Stream & Viewport: scanlines olib tashlangan, tiniq tasvir */}
-          <div className="relative flex-1 bg-black flex items-center justify-center overflow-hidden">
-            
+          {/* Video Stream & Viewport: kadr to'liq (kesilmaydi), kadr ustida faqat aniqlangan ramkalar bor.
+              Tashqi quti panelning qolgan bo'sh joyini oladi, ichki quti videoning haqiqiy nisbatida shu joyga sig'adi
+              (o'lchami ResizeObserver bilan hisoblanadi), shuning uchun pastki qatorlar har doim ekranga sig'adi. */}
+          <div ref={viewportWrapRef} className="bg-black flex-1 min-h-0 flex items-center justify-center overflow-hidden">
+          <div
+            className="relative bg-black flex items-center justify-center overflow-hidden"
+            style={{ aspectRatio: String(videoAspect), width: fitWidth ?? '100%' }}
+          >
+
             {/* 1-REJIM: FRONTAL WEBCAM */}
             {cameraSource === 'FRONTAL' && (
-              <div className="w-full h-full relative flex items-center justify-center bg-black">
+              <div className="absolute inset-0 bg-black">
                 <video
                   ref={videoRef}
                   autoPlay
                   playsInline
                   muted
-                  className={`w-full h-full object-cover transition-transform ${mirrorVideo ? 'scale-x-[-1]' : ''}`}
+                  className={`w-full h-full object-contain transition-transform ${mirrorVideo ? 'scale-x-[-1]' : ''}`}
                 />
 
                 {cameraLoading && (
@@ -863,17 +994,18 @@ export const HUDView: React.FC = () => {
               <img
                 src={`http://${system.rpiIp}:${system.rpiPort}/stream.mjpg`}
                 alt="RPi Live Stream"
+                style={{ position: 'absolute', inset: 0 }}
                 onError={() => {
                   addLog('RPI', 'warn', "RPi video oqimi mavjud emas, simulyatsiyaga o'tildi.");
                   setCameraSource('SIMULATION');
                 }}
-                className="w-full h-full object-cover"
+                className="w-full h-full object-contain"
               />
             )}
 
             {/* 3-REJIM: VIRTUAL TAKTIK SIMULYATOR */}
             {cameraSource === 'SIMULATION' && (
-              <div className="w-full h-full relative flex items-center justify-center bg-gradient-to-b from-tactical-950 via-[#0a1120] to-[#040810]">
+              <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-b from-tactical-950 via-[#0a1120] to-[#040810]">
                 <div className="absolute inset-0 opacity-25 pointer-events-none">
                   <div className="w-full h-full flex flex-col justify-end">
                     <div className="h-1/2 w-full bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-blue-900/30 via-transparent to-transparent" />
@@ -958,125 +1090,107 @@ export const HUDView: React.FC = () => {
                     className="px-1.5 py-0.5 text-[9px] font-mono text-black font-black rounded shadow-md ml-auto"
                     style={{ backgroundColor: `${obj.color}ee` }}
                   >
-                    D: {obj.distance}m
+                    D: {obj.distanceUpperBound ? '<' : obj.distanceApprox ? '~' : ''}{obj.distance}m
                   </div>
                 </div>
               </div>
             ))}
 
-            {/* DYNAMIC AR SAFETY CORRIDOR (Robot Ko'zi Traektoriya Yo'lagi) */}
-            {cameraSource === 'FRONTAL' && (
+            {/* Xavfsizlik yo'lagi: faqat yo'lda to'siq bo'lganda ko'rinadi (yo'l ochiq bo'lsa kadr toza qoladi) */}
+            {cameraSource === 'FRONTAL' && aiEnabled && (cameraObstacle.isBlocked || cameraObstacle.distanceCm < 80) && (
               <svg className="absolute inset-0 w-full h-full pointer-events-none z-10" viewBox="0 0 100 100" preserveAspectRatio="none">
-                <defs>
-                  <linearGradient id="corridorGradGreen" x1="0" y1="1" x2="0" y2="0">
-                    <stop offset="0%" stopColor="#10b981" stopOpacity="0.30" />
-                    <stop offset="100%" stopColor="#10b981" stopOpacity="0.03" />
-                  </linearGradient>
-                  <linearGradient id="corridorGradAmber" x1="0" y1="1" x2="0" y2="0">
-                    <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.45" />
-                    <stop offset="100%" stopColor="#f59e0b" stopOpacity="0.06" />
-                  </linearGradient>
-                  <linearGradient id="corridorGradRed" x1="0" y1="1" x2="0" y2="0">
-                    <stop offset="0%" stopColor="#ef4444" stopOpacity="0.65" />
-                    <stop offset="100%" stopColor="#ef4444" stopOpacity="0.10" />
-                  </linearGradient>
-                </defs>
-
-                {/* Trapezoid Safety Corridor */}
                 <polygon
                   points="18,100 82,100 62,56 38,56"
-                  fill={
-                    cameraObstacle.isBlocked 
-                      ? "url(#corridorGradRed)" 
-                      : cameraObstacle.distanceCm < 80 
-                      ? "url(#corridorGradAmber)" 
-                      : "url(#corridorGradGreen)"
-                  }
-                  stroke={
-                    cameraObstacle.isBlocked 
-                      ? "#ef4444" 
-                      : cameraObstacle.distanceCm < 80 
-                      ? "#f59e0b" 
-                      : "#10b981"
-                  }
-                  strokeWidth="0.8"
-                  strokeDasharray={cameraObstacle.isBlocked ? "none" : "2,1"}
+                  fill={cameraObstacle.isBlocked ? 'rgba(239,68,68,0.28)' : 'rgba(245,158,11,0.18)'}
+                  stroke={cameraObstacle.isBlocked ? '#ef4444' : '#f59e0b'}
+                  strokeWidth="0.6"
+                  strokeDasharray={cameraObstacle.isBlocked ? 'none' : '2,1'}
                 />
-
-                {/* Forward Barrier Line if blocked */}
                 {cameraObstacle.isBlocked && (
-                  <line x1="26" y1="78" x2="74" y2="78" stroke="#ef4444" strokeWidth="2.5" className="animate-pulse" />
+                  <line x1="26" y1="78" x2="74" y2="78" stroke="#ef4444" strokeWidth="2" className="animate-pulse" />
                 )}
               </svg>
             )}
 
-            {/* TOP AR ROBOT EYE TELEMETRY BANNER & EVASION HINT */}
-            {cameraSource === 'FRONTAL' && (
-              <div className="absolute top-3 inset-x-0 z-20 flex flex-col items-center pointer-events-none space-y-1.5 px-4">
-                <div className={`px-3 py-1 rounded-full font-mono text-xs font-black flex items-center space-x-2 border shadow-2xl backdrop-blur-md transition-all ${
-                  cameraObstacle.isBlocked
-                    ? 'bg-rose-950/95 text-rose-300 border-rose-500 animate-pulse ring-2 ring-rose-500/50'
-                    : cameraObstacle.distanceCm < 80
-                    ? 'bg-amber-950/90 text-amber-300 border-amber-500'
-                    : 'bg-tactical-950/85 text-emerald-300 border-emerald-500/60'
-                }`}>
-                  <Eye className={`w-3.5 h-3.5 ${cameraObstacle.isBlocked ? 'text-rose-400 animate-ping' : 'text-emerald-400'}`} />
-                  <span>👁️ ROBOT "KO'ZI": {cameraObstacle.label} — {cameraObstacle.distanceCm} sm</span>
-                  {cameraObstacle.isBlocked && (
-                    <span className="bg-rose-600 text-white text-[9px] px-1.5 py-0.5 rounded font-black tracking-wider animate-bounce ml-1">
-                      🛑 AVTOTORMOZ!
-                    </span>
-                  )}
-                </div>
+          </div>
+          </div>
 
-                {/* Evasion Suggestion Badge */}
-                {cameraObstacle.distanceCm <= 80 && cameraObstacle.evasionDirection !== 'CLEAR' && (
-                  <div className="flex items-center space-x-1.5 bg-police-blue/95 border border-police-cyan/80 px-3 py-0.5 rounded-full font-mono text-[11px] font-bold text-white shadow-xl animate-bounce">
-                    {cameraObstacle.evasionDirection === 'LEFT' && <span>⬅️ Chapdan chetlab o'tish tavsiya etiladi (A)</span>}
-                    {cameraObstacle.evasionDirection === 'RIGHT' && <span>➡️ O'ngdan chetlab o'tish tavsiya etiladi (D)</span>}
-                    {cameraObstacle.evasionDirection === 'REVERSE' && <span>⬇️ Orqaga chekinish tavsiya etiladi (S)</span>}
-                  </div>
-                )}
-              </div>
-            )}
+          {/* AI holati: video ustini yopmaslik uchun bitta qatorda, video ostida */}
+          <div className="bg-tactical-950/85 border-t border-tactical-700/60 px-3 py-1.5 min-h-[32px] flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px]">
+            <span className="flex items-center space-x-1.5 text-police-cyan font-bold">
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${aiModelLoaded ? 'bg-emerald-400' : 'bg-amber-400 animate-ping'}`}
+              />
+              <span>
+                AI: {aiModelLoaded ? 'COCO-SSD + YUZ' : aiModelLoading ? 'YUKLANMOQDA (birinchi marta 10-40 s, sahifa sekinlashishi mumkin)...' : 'DETEKTOR'}
+              </span>
+            </span>
+            <span className="text-slate-300">OBYEKT: {detectedCounts.total}</span>
+            <span className={faceStatus === 'error' ? 'text-rose-400' : faceInfo.count > 0 ? 'text-emerald-300' : 'text-amber-300'}>
+              YUZ:{' '}
+              {faceStatus === 'loading'
+                ? 'yuklanmoqda...'
+                : faceStatus === 'error'
+                ? 'MODEL XATO (jurnalga qarang)'
+                : faceInfo.count > 0
+                ? `${faceInfo.count} ta, ${faceInfo.widthPx}px`
+                : 'topilmadi'}
+              {faceStatus === 'ready' && faceInfo.cycleMs > 0 ? ` · ${faceInfo.cycleMs}ms` : ''}
+            </span>
+            <span className={faceInfo.faceDistM > 0 ? 'text-emerald-300' : 'text-slate-500'}>
+              RAMKA: {faceInfo.faceDistM > 0 ? `${Math.round(faceInfo.faceDistM * 100)} sm` : '—'}
+            </span>
+            <span className="text-slate-400 ml-auto">GPS ±{gps.accuracy || 3.5}m</span>
+          </div>
 
-            {/* Center Tactical Crosshair */}
-            <div className="relative pointer-events-none flex items-center justify-center z-10">
-              <Crosshair className="w-14 h-14 text-police-cyan/60 animate-pulse-subtle" />
-              <div className="absolute w-28 h-28 border border-dashed border-police-cyan/30 rounded-full" />
-              <div className="absolute -top-7 text-[10px] font-mono text-police-cyan font-bold bg-tactical-950/80 px-2 py-0.5 rounded border border-tactical-700/60 shadow-md">
-                GPS: {gps.latitude.toFixed(6)}° N, {gps.longitude.toFixed(6)}° E
-              </div>
-            </div>
-
-            {/* Front Obstacle Warning Overlay */}
-            {isFrontBlocked && (
-              <div className="absolute top-4 inset-x-4 bg-rose-600/90 text-white p-2.5 rounded border border-rose-400 flex items-center justify-center space-x-2 animate-bounce z-30 shadow-lg">
-                <ShieldAlert className="w-6 h-6 text-white animate-spin" />
-                <span className="font-mono font-black text-sm uppercase tracking-wide">
-                  XAVF: OLD TO'SIQ ({sonars.front} sm &lt; 22 sm) — AVTOTORMOZ!
+          {/* Robot "ko'zi": kamera masofasi, avtotormoz va aylanib o'tish tavsiyasi (kadr ustini yopmaslik uchun video ostida) */}
+          {cameraSource === 'FRONTAL' && (
+            <div
+              className={`border-t px-3 py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] ${
+                cameraObstacle.isBlocked
+                  ? 'bg-rose-950/80 border-rose-500/70 text-rose-300'
+                  : cameraObstacle.distanceCm < 80
+                  ? 'bg-amber-950/70 border-amber-500/60 text-amber-300'
+                  : 'bg-tactical-950/85 border-tactical-700/60 text-emerald-300'
+              }`}
+              data-robot-eye
+            >
+              <span className="flex items-center space-x-1.5 font-bold">
+                <Eye className={`w-3 h-3 ${cameraObstacle.isBlocked ? 'animate-ping' : ''}`} />
+                <span>
+                  ROBOT KO'ZI: {cameraObstacle.active ? `${cameraObstacle.label} — ${cameraObstacle.distanceCm} sm` : 'kutilmoqda'}
                 </span>
-              </div>
-            )}
-
-            {/* Corner Bracket HUD Graphics */}
-            <div className="absolute top-3 left-3 font-mono text-[10px] text-police-cyan/90 pointer-events-none bg-tactical-950/80 p-1.5 rounded border border-tactical-700/60 shadow z-10">
-              <div className="flex items-center space-x-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
-                <span>AI: {aiModelLoaded ? 'COCO-SSD & YUZ' : aiModelLoading ? 'YUKLANMOQDA...' : 'DETEKTOR'}</span>
-              </div>
-              <div>ANIQLANGAN: {detectedCounts.total} ta obyekt</div>
-              <div>ANIQLIK: ±{gps.accuracy || 3.5}m</div>
+              </span>
+              {cameraObstacle.isBlocked && (
+                <span className="bg-rose-600 text-white text-[9px] px-1.5 py-0.5 rounded font-black tracking-wider">AVTOTORMOZ</span>
+              )}
+              {cameraObstacle.distanceCm <= 80 && cameraObstacle.evasionDirection !== 'CLEAR' && (
+                <span className="text-police-cyan font-bold">
+                  {cameraObstacle.evasionDirection === 'LEFT' && "← Chapdan chetlab o'tish tavsiya etiladi (A)"}
+                  {cameraObstacle.evasionDirection === 'RIGHT' && "→ O'ngdan chetlab o'tish tavsiya etiladi (D)"}
+                  {cameraObstacle.evasionDirection === 'REVERSE' && '↓ Orqaga chekinish tavsiya etiladi (S)'}
+                </span>
+              )}
             </div>
+          )}
 
-            <div className="absolute bottom-3 left-3 font-mono text-[10px] text-police-cyan/90 pointer-events-none bg-tactical-950/80 p-1.5 rounded border border-tactical-700/60 flex items-center space-x-1.5 shadow z-10">
-              <Compass className="w-3.5 h-3.5 text-police-cyan animate-pulse" />
-              <span>AZIMUT: {String(gps.heading || 42).padStart(3, '0')}° {gps.isReal ? '(REAL KOMPAS)' : 'NE'}</span>
-            </div>
-
-            <div className="absolute bottom-3 right-3 font-mono text-[10px] text-slate-300 pointer-events-none bg-tactical-950/80 p-1.5 rounded border border-tactical-700/60 shadow z-10">
-              KOMANDA: <span className="font-bold text-police-cyan">{lastCommand}</span>
-            </div>
+          {/* Sonarlar va harakat holati: kadr ustini yopmaslik uchun video ostida, bitta qatorda */}
+          <div className="bg-tactical-950/85 border-t border-tactical-700/60 px-3 py-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px]">
+            <SonarChip side="front" label="OLD" pins="TRIG A0, ECHO A1" value={sonars.front} critical={isFrontBlocked} />
+            <SonarChip side="left" label="CHAP" value={sonars.left} />
+            <SonarChip side="right" label="O'NG" value={sonars.right} />
+            <SonarChip side="rear" label="ORQA" pins="TRIG A2, ECHO A3" value={sonars.rear} />
+            <span className="ml-auto flex items-center space-x-3 text-slate-300">
+              <span className="flex items-center space-x-1">
+                <Compass className="w-3 h-3 text-police-cyan" />
+                <span>
+                  AZIMUT {String(gps.heading || 42).padStart(3, '0')}°{gps.isReal ? ' (KOMPAS)' : ''}
+                </span>
+              </span>
+              <span>
+                KOMANDA: <span className="font-bold text-police-cyan">{lastCommand}</span>
+              </span>
+            </span>
           </div>
 
           {/* PTZ Quick Controls Bar */}
@@ -1116,49 +1230,6 @@ export const HUDView: React.FC = () => {
               >
                 {ptz.mode === 'AUTO_CAMERA' ? 'Avto' : 'Qo\'lda'}
               </button>
-            </div>
-          </div>
-        </div>
-
-        {/* HC-SR04 4X SONAR RADAR STATUS */}
-        <div className="hud-panel rounded-lg p-3">
-          <div className="flex items-center justify-between mb-2">
-            <span className="font-mono text-xs font-bold text-white flex items-center space-x-1.5">
-              <Zap className="w-3.5 h-3.5 text-police-cyan" />
-              <span>4X HC-SR04 ULTRATOVUSH SONARLARI</span>
-            </span>
-            <span className="text-[10px] font-mono text-slate-400">
-              Chegara: &lt;22sm = AVTOTORMOZ
-            </span>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <div className={`p-2 rounded border font-mono flex flex-col items-center justify-center transition-all ${getSonarColor(sonars.front, isFrontBlocked)}`}>
-              <span className="text-[10px] text-slate-300 font-bold">OLD (TRIG A0, ECHO A1)</span>
-              <span className="text-xl font-black mt-0.5">{sonars.front} sm</span>
-              <span className="text-[9px] mt-0.5 font-semibold">
-                {sonars.front <= 22 ? 'XAVF: TO\'SIQ!' : 'Xavfsiz'}
-              </span>
-            </div>
-
-            <div className={`p-2 rounded border font-mono flex flex-col items-center justify-center transition-all ${getSonarColor(sonars.rear)}`}>
-              <span className="text-[10px] text-slate-300 font-bold">ORQA (TRIG A2, ECHO A3)</span>
-              <span className="text-xl font-black mt-0.5">{sonars.rear} sm</span>
-              <span className="text-[9px] mt-0.5 font-semibold">
-                {sonars.rear <= 22 ? 'Orqa to\'siq' : 'Ochiq'}
-              </span>
-            </div>
-
-            <div className={`p-2 rounded border font-mono flex flex-col items-center justify-center transition-all ${getSonarColor(sonars.left)}`}>
-              <span className="text-[10px] text-slate-300 font-bold">CHAP YONLAMA</span>
-              <span className="text-xl font-black mt-0.5">{sonars.left} sm</span>
-              <span className="text-[9px] mt-0.5 font-semibold">Ochiq</span>
-            </div>
-
-            <div className={`p-2 rounded border font-mono flex flex-col items-center justify-center transition-all ${getSonarColor(sonars.right)}`}>
-              <span className="text-[10px] text-slate-300 font-bold">O'NG YONLAMA</span>
-              <span className="text-xl font-black mt-0.5">{sonars.right} sm</span>
-              <span className="text-[9px] mt-0.5 font-semibold">Ochiq</span>
             </div>
           </div>
         </div>
@@ -1386,6 +1457,96 @@ export const HUDView: React.FC = () => {
         </div>
       </div>
 
+      {/* MASOFA KALIBROVKASI MODAL OYNASI */}
+      {showCalibration && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-tactical-950 border border-tactical-700 rounded-xl max-w-md w-full p-4 flex flex-col gap-3 shadow-2xl font-mono text-xs">
+            <div className="flex items-center justify-between border-b border-tactical-800 pb-3">
+              <div className="flex items-center space-x-2">
+                <Ruler className="w-5 h-5 text-police-cyan" />
+                <h3 className="font-bold text-white text-sm">Masofa kalibrovkasi</h3>
+              </div>
+              <button
+                onClick={() => setShowCalibration(false)}
+                className="p-1 rounded text-slate-400 hover:text-white bg-tactical-900"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <ol className="list-decimal list-inside text-slate-300 space-y-1">
+              <li>Kameradan aniq 50 sm (0.5 m) o'lchab, yuzingiz shu masofada tursin.</li>
+              <li>Yuzingiz kadrda to'liq va aniq ko'rinsin (ramka paydo bo'lsin).</li>
+              <li>Pastdagi masofani kiriting va "Kalibrovka qilish"ni bosing.</li>
+            </ol>
+
+            <label className="flex items-center justify-between gap-2 text-slate-300">
+              <span>Haqiqiy masofa (metr):</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={calibDistance}
+                onChange={(e) => setCalibDistance(e.target.value)}
+                className="w-24 bg-tactical-900 border border-tactical-700 rounded px-2 py-1 text-white text-right focus:outline-none focus:border-police-cyan"
+              />
+            </label>
+
+            {/* Kalibrovka datchigi: sariq = ma'lumot yig'ilmoqda, yashil = yetarli */}
+            <div
+              className={`rounded border p-2.5 flex flex-col gap-1.5 transition-colors ${
+                calibReady ? 'border-emerald-500 bg-emerald-950/40' : 'border-amber-500 bg-amber-950/30'
+              }`}
+            >
+              <div className="flex items-center space-x-2">
+                <span className="relative flex h-3 w-3">
+                  {!calibReady && (
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+                  )}
+                  <span
+                    className={`relative inline-flex rounded-full h-3 w-3 ${calibReady ? 'bg-emerald-400' : 'bg-amber-400'}`}
+                  />
+                </span>
+                <span className={`font-bold ${calibReady ? 'text-emerald-300' : 'text-amber-300'}`}>
+                  {calibReady ? "DATCHIK TAYYOR: ma'lumot yetarli" : "DATCHIK: ma'lumot yig'ilmoqda"}
+                </span>
+              </div>
+              <div className="h-1.5 rounded bg-tactical-900 overflow-hidden">
+                <div
+                  className={`h-full transition-all ${calibReady ? 'bg-emerald-400' : 'bg-amber-400'}`}
+                  style={{ width: `${Math.min(100, (faceInfo.calibCount / CALIB_MIN_SAMPLES) * 100)}%` }}
+                />
+              </div>
+              <div className="text-[10px] text-slate-300">{calibHint}</div>
+            </div>
+
+            <div className="text-[10px] text-slate-500">
+              Holat: {calibrated ? 'kalibrovka qilingan' : "kalibrovka yo'q, standart ko'rish burchagi (45°) ishlatilmoqda"}.
+              Kamera yoki video o'lchami o'zgarsa, qayta kalibrovka qiling.
+            </div>
+
+            <div className="flex items-center justify-between gap-2">
+              <button
+                onClick={handleResetCalibration}
+                className="px-3 py-1.5 rounded bg-tactical-900 border border-tactical-700 text-slate-300 hover:text-white"
+              >
+                Tiklash
+              </button>
+              <button
+                onClick={handleCalibrate}
+                disabled={!calibReady}
+                className={`px-4 py-1.5 rounded font-bold shadow ${
+                  calibReady
+                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                    : 'bg-tactical-800 text-slate-500 cursor-not-allowed'
+                }`}
+              >
+                Kalibrovka qilish
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* YUZLAR BAZASINI BOSHQARISH MODAL OYNASI */}
       {showFaceDbModal && (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm">
@@ -1481,7 +1642,7 @@ export const HUDView: React.FC = () => {
                   }`}
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span>{isAddingPerson ? "Tekshirilmoqda..." : "Bazaga Saqlash"}</span>
+                  <span>{isAddingPerson ? 'Tekshirilmoqda...' : 'Bazaga Saqlash'}</span>
                 </button>
               </div>
             </form>

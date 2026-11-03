@@ -1,4 +1,4 @@
-name: Deploy Frontend to GitHub Pages
+name: Deploy Frontend to GitHub Pages & Sync gh-pages
 
 on:
   push:
@@ -23,6 +23,8 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -33,11 +35,14 @@ jobs:
 
       - name: Install Dependencies
         working-directory: frontend
-        run: npm ci
+        run: npm ci || npm install
 
       - name: Build Frontend Application
         working-directory: frontend
         run: npm run build
+
+      - name: Copy .nojekyll to dist
+        run: touch frontend/dist/.nojekyll
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -47,6 +52,14 @@ jobs:
         with:
           path: frontend/dist
 
-      - name: Deploy to GitHub Pages
+      - name: Deploy to GitHub Pages (Actions)
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Sync to gh-pages Branch (Dual Deployment)
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: frontend/dist
+          branch: gh-pages
+          clean: true
+          commit-message: "ci(deploy): auto-sync build to gh-pages [skip ci]"

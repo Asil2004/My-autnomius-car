@@ -27,7 +27,10 @@ export interface DetectedObject {
   id: string;
   label: string;
   confidence: number; // 0 - 1
-  distance: number;   // meters (calculated via Known Object Size / Focal)
+  distance: number;   // meters (pinhole: real size * focal / pixel size, sonar bilan tuzatilgan)
+  distanceSource?: 'face' | 'body' | 'vehicle' | 'sonar';
+  distanceApprox?: boolean; // ramka kadr chetida kesilgan, masofa taxminiy
+  distanceUpperBound?: boolean; // odam kadrni to'ldirgan: haqiqiy masofa ko'rsatilganidan kichik
   box: { x: number; y: number; width: number; height: number }; // percentages 0-100
   color: string;
   category?: 'person' | 'car' | 'vehicle' | 'sign' | 'other';

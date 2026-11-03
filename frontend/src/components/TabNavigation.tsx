@@ -2,7 +2,6 @@ import React from 'react';
 import { useRobot } from '../context/RobotContext';
 import {
   Gamepad2,
-  PhoneCall,
   BrainCircuit,
   Radar,
   Map as MapIcon,
@@ -11,19 +10,18 @@ import {
 import type { LucideIcon } from 'lucide-react';
 
 interface TabItem {
-  id: 'hud' | 'sos' | 'ai' | 'telemetry' | 'maps' | 'settings';
+  id: 'hud' | 'ai' | 'telemetry' | 'maps' | 'settings';
   label: string;
   icon: LucideIcon;
   alert?: boolean;
 }
 
 export const TabNavigation: React.FC = () => {
-  const { activeTab, setActiveTab, sos } = useRobot();
+  const { activeTab, setActiveTab } = useRobot();
 
   const tabs: TabItem[] = [
     { id: 'hud', label: 'Boshqaruv HUD', icon: Gamepad2 },
     { id: 'maps', label: 'Google Xarita', icon: MapIcon },
-    { id: 'sos', label: 'SOS 102', icon: PhoneCall, alert: sos.active },
     { id: 'ai', label: 'AI & Avtonom', icon: BrainCircuit },
     { id: 'telemetry', label: 'LiDAR Radar', icon: Radar },
     { id: 'settings', label: 'Sozlamalar', icon: Sliders },
@@ -48,7 +46,7 @@ export const TabNavigation: React.FC = () => {
               <span className="absolute top-1 right-1/4 w-2 h-2 rounded-full bg-rose-500 animate-ping" />
             )}
             <Icon className={`w-5 h-5 ${isActive ? 'text-police-cyan drop-shadow-[0_0_6px_rgba(0,229,255,0.7)]' : ''}`} />
-            <span className="text-[10px] font-mono tracking-tight mt-0.5 font-medium truncate max-w-[90px]">
+            <span className={`text-[10px] font-mono tracking-tight mt-0.5 ${isActive ? 'font-bold text-white' : ''}`}>
               {tab.label}
             </span>
           </button>
