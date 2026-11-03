@@ -5,6 +5,7 @@ import { faceRecognitionService, type KnownPerson } from '../services/faceRecogn
 import { distanceEstimator } from '../services/distanceService';
 import type * as cocoSsd from '@tensorflow-models/coco-ssd';
 import { loadCocoModel } from '../services/aiPreload';
+import { nvrRecordingService, type TimelineRange, type NvrChunk, type NvrStorageStats, NVR_MAX_STORAGE_BYTES } from '../services/nvrRecordingService';
 import { FloatingPanel } from './FloatingPanel';
 import {
   Activity,
@@ -195,6 +196,74 @@ export const HUDView: React.FC = () => {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   });
   const [playbackSec, setPlaybackSec] = useState<number>(14400); // 04:00:00
+  const [timelineRanges, setTimelineRanges] = useState<TimelineRange[]>([]);
+  const [storageStats, setStorageStats] = useState<NvrStorageStats>({
+    usedBytes: 0,
+    maxBytes: NVR_MAX_STORAGE_BYTES,
+    percentUsed: 0,
+    chunkCount: 0
+  });
+  const [currentPlaybackChunk, setCurrentPlaybackChunk] = useState<NvrChunk | null>(null);
+  const playbackVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  // NVR timeline oralig'i va 100MB xotira statistikasini yuklash
+  useEffect(() => {
+    let active = true;
+    const refreshData = async () => {
+      const ranges = await nvrRecordingService.getTimelineRanges(playbackDate);
+      const stats = await nvrRecordingService.getStorageStats();
+      if (!active) return;
+      setTimelineRanges(ranges);
+      setStorageStats(stats);
+    };
+
+    refreshData();
+    const unsub = nvrRecordingService.subscribe(refreshData);
+    return () => {
+      active = false;
+      unsub();
+    };
+  }, [playbackDate, viewMode]);
+
+  // Qayta ko'rish rejimida playbackSec ga mos keluvchi haqiqiy video bo'lagini ulash
+  useEffect(() => {
+    if (viewMode !== 'playback') return;
+    let cancelled = false;
+
+    nvrRecordingService.findChunkAt(playbackDate, playbackSec).then((found) => {
+      if (cancelled) return;
+      if (found && found.chunk.blobUrl) {
+        setCurrentPlaybackChunk(found.chunk);
+        if (playbackVideoRef.current) {
+          if (playbackVideoRef.current.src !== found.chunk.blobUrl) {
+            playbackVideoRef.current.src = found.chunk.blobUrl;
+          }
+          if (Math.abs(playbackVideoRef.current.currentTime - found.offsetSec) > 1) {
+            playbackVideoRef.current.currentTime = found.offsetSec;
+          }
+          if (isPlaying) {
+            playbackVideoRef.current.play().catch(() => {});
+          }
+        }
+      } else {
+        setCurrentPlaybackChunk(null);
+        if (playbackVideoRef.current) {
+          playbackVideoRef.current.pause();
+        }
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [playbackDate, playbackSec, viewMode, isPlaying]);
+
+  // Playback video tezligi
+  useEffect(() => {
+    if (playbackVideoRef.current) {
+      playbackVideoRef.current.playbackRate = playbackSpeed;
+    }
+  }, [playbackSpeed]);
 
   // Playback timer (sekundma-sekund oldinga siljish)
   useEffect(() => {
@@ -1207,7 +1276,7 @@ export const HUDView: React.FC = () => {
           aria-label="Kichik kameralar"
           style={{ width: activeCam === 'ptz' ? 'clamp(180px, 22vw, 260px)' : 'clamp(130px, 18vw, 210px)' }}
         >
-          {leftCameras.map((cam) => renderCameraTile(cam, 'w-full'))}
+          {leftCameras.map((cam) => renderCameraTile(cam, 'w-full max-w-[210px]'))}
 
           {/* PTZ KAMERA JOYSTIGI (Iloji boricha katta, o'ta qulay) */}
           {activeCam === 'ptz' && (
@@ -1279,6 +1348,46 @@ export const HUDView: React.FC = () => {
                   maxHeight: '100%'
                 }}
               >
+                {/* 2-REJIM: QAYTA KO'RISH (PLAYBACK) - HAQIQIY ARXIV VIDEO IJROSI */}
+                {viewMode === 'playback' && (
+                  <div className="absolute inset-0 bg-black flex items-center justify-center overflow-hidden z-20">
+                    <video
+                      ref={playbackVideoRef}
+                      playsInline
+                      className={`w-full h-full object-contain transition-transform origin-center ${
+                        currentPlaybackChunk ? 'block' : 'hidden'
+                      }`}
+                      style={{ transform: `scale(${zoomLevel})` }}
+                    />
+                    
+                    {!currentPlaybackChunk && (
+                      <div className="absolute inset-0 bg-tactical-950 flex flex-col items-center justify-center p-6 text-center z-10">
+                        <div className="p-4 rounded-full bg-slate-800/80 border border-slate-700 text-slate-400 mb-3 shadow-lg">
+                          <Film className="w-10 h-10" />
+                        </div>
+                        <div className="font-mono text-sm font-bold text-slate-200">
+                          Ushbu vaqtda ({formatSecToTime(playbackSec)}) video yozuv mavjud emas
+                        </div>
+                        <div className="text-xs text-slate-400 max-w-md mt-1.5 leading-relaxed">
+                          Scrollbarda faqat <span className="text-blue-400 font-bold">KO'K</span> rangli sohalarda NVR arxiv yozuvlari saqlangan. <span className="text-slate-400 font-bold">KULRANG</span> joylar esa zapis bo'lmagan oraliqlar.
+                        </div>
+                        {timelineRanges.length > 0 && (
+                          <button
+                            onClick={() => {
+                              setPlaybackSec(timelineRanges[0].startSec);
+                              setIsPlaying(true);
+                              resetOverlayTimer();
+                            }}
+                            className="mt-4 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-police-blue hover:from-blue-500 hover:to-blue-600 text-white font-mono text-xs font-bold shadow-lg shadow-blue-500/30 transition-all flex items-center gap-2 active:scale-95"
+                          >
+                            <Play className="w-4 h-4 fill-current" /> Eng yaqin yozuvga o'tish ({formatSecToTime(timelineRanges[0].startSec)})
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* 1-REJIM: FRONTAL WEBCAM (FACE ID) */}
                 {cameraSource === 'FRONTAL' && (
                   <div
@@ -1554,11 +1663,32 @@ export const HUDView: React.FC = () => {
 
                 {/* 2-qator: Scrollbar (Vaqt chizig'i / Timeline scrubber) */}
                 <div className="relative w-full flex flex-col gap-1 py-1">
-                  <div className="relative w-full flex items-center h-4">
-                    {/* Yozib olingan arxiv yashil chizig'i */}
-                    <div className="absolute inset-x-0 h-2 bg-tactical-800 rounded overflow-hidden">
-                      <div className="h-full bg-police-green/35 w-full" title="To'liq 24 soatlik NVR yozuvi saqlangan" />
+                  <div className="relative w-full flex items-center h-6">
+                    {/* Fon: KULRANG (Zapis bo'lmagan barcha vaqtlar) */}
+                    <div className="absolute inset-x-0 h-3 bg-slate-700/90 rounded overflow-hidden border border-slate-600/60 shadow-inner">
+                      {/* KO'K BLOKLAR: Faqat yozib olingan (zapis bo'lgan) vaqt oraliqlari */}
+                      {timelineRanges.map((rng, idx) => {
+                        const leftPercent = (rng.startSec / 86400) * 100;
+                        const widthPercent = Math.max(0.6, ((rng.endSec - rng.startSec) / 86400) * 100);
+                        return (
+                          <div
+                            key={idx}
+                            className="absolute top-0 bottom-0 bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.8)] cursor-pointer hover:bg-blue-400 transition-colors"
+                            style={{
+                              left: `${leftPercent}%`,
+                              width: `${widthPercent}%`
+                            }}
+                            title={`Zapis bor: ${formatSecToTime(rng.startSec)} - ${formatSecToTime(rng.endSec)}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPlaybackSec(rng.startSec);
+                              resetOverlayTimer();
+                            }}
+                          />
+                        );
+                      })}
                     </div>
+
                     {/* Interaktiv scrollbar slider */}
                     <input
                       type="range"
@@ -1566,13 +1696,16 @@ export const HUDView: React.FC = () => {
                       max={86400}
                       step={1}
                       value={playbackSec}
-                      onChange={(e) => { setPlaybackSec(Number(e.target.value)); resetOverlayTimer(); }}
-                      className="relative w-full h-3 bg-transparent appearance-none cursor-pointer accent-police-cyan z-10"
+                      onChange={(e) => {
+                        setPlaybackSec(Number(e.target.value));
+                        resetOverlayTimer();
+                      }}
+                      className="relative w-full h-4 bg-transparent appearance-none cursor-pointer accent-police-cyan z-20"
                     />
                   </div>
 
                   {/* 24 soatlik belgilar */}
-                  <div className="flex justify-between text-[9px] font-mono text-slate-500 px-0.5">
+                  <div className="flex justify-between text-[9px] font-mono text-slate-400 px-0.5">
                     <span>00:00</span>
                     <span>04:00</span>
                     <span>08:00</span>
@@ -1580,6 +1713,22 @@ export const HUDView: React.FC = () => {
                     <span>16:00</span>
                     <span>20:00</span>
                     <span>23:59</span>
+                  </div>
+
+                  {/* Legend va 100 MB xotira statistikasi */}
+                  <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 px-1 pt-0.5">
+                    <div className="flex items-center gap-3">
+                      <span className="flex items-center gap-1.5 text-slate-200">
+                        <span className="w-2.5 h-2.5 rounded-sm bg-blue-500 shadow-[0_0_6px_#3b82f6] inline-block" /> Zapis bor (Ko'k)
+                      </span>
+                      <span className="flex items-center gap-1.5 text-slate-400">
+                        <span className="w-2.5 h-2.5 rounded-sm bg-slate-700 border border-slate-600 inline-block" /> Zapis yo'q (Kulrang)
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1 text-police-cyan font-semibold">
+                      <span>NVR 100MB Xotira: {(storageStats.usedBytes / (1024 * 1024)).toFixed(1)} MB / 100 MB</span>
+                      <span className="text-slate-500">({storageStats.percentUsed}%)</span>
+                    </div>
                   </div>
                 </div>
 
