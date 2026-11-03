@@ -1,7 +1,7 @@
 # ⚙️ QALQON v1.0 — Mexatronika va Apparat Konstruksiyasi Bo'yicha Yagona Rasmiy Hisobot va Ish Rejasi
 
 > 👤 **Mas'ul muhandis (Kim):** Asilbek — Mexatronika va apparat konstruksiyasi bo'yicha bosh muhandis (Mechatronics & Hardware Lead)  
-> 📅 **Oxirgi yangilanish (Qachon):** 03-Noyabr, 2026-yil | 10:30 (Toshkent vaqti, UTC+5)  
+> 📅 **Oxirgi yangilanish (Qachon):** 03-Noyabr, 2026-yil | 11:25 (Toshkent vaqti, UTC+5)  
 > 🔗 **Loyiha repozitoriysi:** [https://github.com/Asil2004/My-autnomius-car](https://github.com/Asil2004/My-autnomius-car)  
 > 📌 **Eslatma:** Ushbu fayl loyihadagi **yagona rasmiy hisobot hujjati** hisoblanadi. Loyihada boshqa ortiqcha hisobot fayllari yuritilmaydi, barcha yangilanishlar faqat shu faylga kiritib boriladi.
 
@@ -36,6 +36,7 @@ Quyidagi jadvalda loyiha davomida amalga oshirilgan har bir muhandislik yangilan
 | **21** | 2026-11-02 \| 17:30 | **Boburjon & Asilbek** (AI & Vision) | **Mustaqil Native Android Face ID Tizimi (MobileFaceNet + ML Kit + Room SQLite):** 192-d Float32 vektorli TFLite modeli (18-24ms mobil CPU), Liveness & Anti-Spoofing (ko'z pirpirashi va $\Delta \ge 2.5^\circ$ bosh dinamikasi) tekshiruvi, xodimlar bazasi (Sarvar, Asilbek, Boburjon), 6 ta Material 3 ekrani yaratilib, smartfonga o'rnatildi (`uz.iiv.faceid.debug`) | `Bajarildi` |
 | **22** | 2026-11-03 \| 09:40 | **Asilbek & Boburjon** (Apparat & LiDAR) | **Haqiqiy 360° DToF Lazer Rangefinder — LDROBOT STL-19P Integratsiyasi:** 230400 bod UART, 4500 nuqta/sek, 10 Hz skaner apparat drayveri loyihaning `LidarRadarView.tsx` taktik HUD radariga, `RobotContext.tsx` va `run_lidar_stl19p.py` ga to'liq ulandi | `Bajarildi` |
 | **23** | 2026-11-03 \| 10:25 | **Asilbek** (Tizim & Dasturiy ta'minot) | **Windows Serial Mouse (`silabenm.sys` / `sermouse.sys`) va 5s Tizim Qotishini Bartaraf Etish:** 23 040 bayt/sek LiDAR oqimi tufayli Windows Raw Input navbati to'lib ketishi va kursor sakrashi aniqlandi. 1-klikli UAC avto-admin skripti (`fix_lidar_mouse.bat`) orqali `silabenm`, `sermouse`, `serenum` drayverlari to'liq o'chirilib, kursor va tizim barqarorlashtirildi | `Bajarildi` |
+| **24** | 2026-11-03 \| 11:25 | **Asilbek & Sarvar** (Apparat & Frontend) | **LiDAR Bo'limida Portni To'g'ridan-To'g'ri Ochish (Web Serial API @ 230400 bps):** Brauzer/planshet orqali tashqi dasturlarsiz to'g'ridan-to'g'ri CP2102 COM portini ochuvchi `lidarSerialService.ts` joriy etildi; `[⚡ LIDAR PORTINI OCHISH]` tugmasi qo'shilib, 47 baytli paketlar real-vaqtda dekodlanib radar kanvasiga ulandi | `Bajarildi` |
 
 ---
 

@@ -1,7 +1,7 @@
 # 🧠 QALQON v1.0 — "Miya" (Raspberry Pi 4) Dasturiy Ta'minoti Bo'yicha Yagona Rasmiy Hisobot va Ish Rejasi
 
 > 👤 **Mas'ul muhandis (Kim):** Boburjon — "Miya" (Raspberry Pi 4) dasturiy ta'minoti va sensorlar muhandisi (Software & Brain Engineer)  
-> 📅 **Oxirgi yangilanish (Qachon):** 03-Noyabr, 2026-yil | 10:30 (Toshkent vaqti, UTC+5)  
+> 📅 **Oxirgi yangilanish (Qachon):** 03-Noyabr, 2026-yil | 11:25 (Toshkent vaqti, UTC+5)  
 > 🔗 **Loyiha repozitoriysi:** [https://github.com/Asil2004/My-autnomius-car](https://github.com/Asil2004/My-autnomius-car)  
 > 📌 **Eslatma:** Ushbu hisobot bosh muhandis (Asilbek) tomonidan yuklatilgan vazifalar ijrosi, Raspberry Pi 4 dasturiy ta'minoti va jamoaviy integratsiya bo'yicha hisobot berib borish uchun yuritiladi.
 
@@ -33,6 +33,7 @@ Quyidagi jadvalda "Miya" (Raspberry Pi 4) yo'nalishida amalga oshirilgan har bir
 | **18** | 2026-11-02 \| 22:50 | **Boburjon** (AI & Vision Lead) | **To'liq Mustaqil Native Android Face ID Tizimi:** MobileFaceNet TFLite (192-d Float32, 18-24ms mobil CPU), Google ML Kit detektori, Room SQLite oflayn bazasi va soxta fotosuratlarni aniqlovchi liveness moduli (`uz.iiv.faceid.debug`) ishlab chiqilib, smartfonga o'rnatildi | `Bajarildi` |
 | **19** | 2026-11-03 \| 09:30 | **Boburjon** (Miya Lead) | **Haqiqiy LDROBOT STL-19P 360° DToF LiDAR Apparat Ulanishi:** CP2102 USB-UART (230400 bod) orqali haqiqiy lazer moduli ulandi; `lidar_module.py` drayveri real paketlarni (CRC8) o'qib, planshet Kiber-HUD radariga 4-sektorli to'siq masofalarini uzatadigan qilindi | `Bajarildi` |
 | **20** | 2026-11-03 \| 10:25 | **Boburjon** (Software & Brain) | **LiDAR 230400 Bod Kirish Oqimi va Windows Serial Mouse Muammosi Yechimi:** Sekundiga 23 KB ma'lumot Windows Raw Input'ni qotirib, `silabenm.sys` tufayli sichqonchani sakratayotgani aniqlandi. 1-klikli `fix_lidar_mouse.bat` skripti yaratilib, tizim to'liq xavfsiz holatga keltirildi | `Bajarildi` |
+| **21** | 2026-11-03 \| 11:25 | **Boburjon & Sarvar** (AI & Apparat) | **LiDAR Bo'limiga Real Port Ochish (Web Serial API 230400 Baud):** Foydalanuvchi interfeysdan turib to'g'ridan-to'g'ri CP2102 COM portini ochishi va 4500 nuqta/sek oqimni 30 FPS radar kanvasida ko'rishi uchun `lidarSerialService.ts` va `[⚡ LIDAR PORTINI OCHISH]` funksiyasi joriy qilindi | `Bajarildi` |
 
 ---
 
