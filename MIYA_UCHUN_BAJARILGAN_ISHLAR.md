@@ -1,7 +1,7 @@
 # 🧠 QALQON v1.0 — "Miya" (Raspberry Pi 4) Dasturiy Ta'minoti Bo'yicha Yagona Rasmiy Hisobot va Ish Rejasi
 
 > 👤 **Mas'ul muhandis (Kim):** Boburjon — "Miya" (Raspberry Pi 4) dasturiy ta'minoti va sensorlar muhandisi (Software & Brain Engineer)  
-> 📅 **Oxirgi yangilanish (Qachon):** 03-Noyabr, 2026-yil | 11:25 (Toshkent vaqti, UTC+5)  
+> 📅 **Oxirgi yangilanish (Qachon):** 03-Noyabr, 2026-yil | 22:50 (Toshkent vaqti, UTC+5)  
 > 🔗 **Loyiha repozitoriysi:** [https://github.com/Asil2004/My-autnomius-car](https://github.com/Asil2004/My-autnomius-car)  
 > 📌 **Eslatma:** Ushbu hisobot bosh muhandis (Asilbek) tomonidan yuklatilgan vazifalar ijrosi, Raspberry Pi 4 dasturiy ta'minoti va jamoaviy integratsiya bo'yicha hisobot berib borish uchun yuritiladi.
 
@@ -34,6 +34,7 @@ Quyidagi jadvalda "Miya" (Raspberry Pi 4) yo'nalishida amalga oshirilgan har bir
 | **19** | 2026-11-03 \| 09:30 | **Boburjon** (Miya Lead) | **Haqiqiy LDROBOT STL-19P 360° DToF LiDAR Apparat Ulanishi:** CP2102 USB-UART (230400 bod) orqali haqiqiy lazer moduli ulandi; `lidar_module.py` drayveri real paketlarni (CRC8) o'qib, planshet Kiber-HUD radariga 4-sektorli to'siq masofalarini uzatadigan qilindi | `Bajarildi` |
 | **20** | 2026-11-03 \| 10:25 | **Boburjon** (Software & Brain) | **LiDAR 230400 Bod Kirish Oqimi va Windows Serial Mouse Muammosi Yechimi:** Sekundiga 23 KB ma'lumot Windows Raw Input'ni qotirib, `silabenm.sys` tufayli sichqonchani sakratayotgani aniqlandi. 1-klikli `fix_lidar_mouse.bat` skripti yaratilib, tizim to'liq xavfsiz holatga keltirildi | `Bajarildi` |
 | **21** | 2026-11-03 \| 11:25 | **Boburjon & Sarvar** (AI & Apparat) | **LiDAR Bo'limiga Real Port Ochish (Web Serial API 230400 Baud):** Foydalanuvchi interfeysdan turib to'g'ridan-to'g'ri CP2102 COM portini ochishi va 4500 nuqta/sek oqimni 30 FPS radar kanvasida ko'rishi uchun `lidarSerialService.ts` va `[⚡ LIDAR PORTINI OCHISH]` funksiyasi joriy qilindi | `Bajarildi` |
+| **22** | 2026-11-03 \| 22:45 | **Boburjon** (Backend, AI & Cybersecurity Lead) | **Memorandum (2.1, 2.4, 2.5 & VIII-bob) Ijrosi:** <br>1. **LiDAR Occupancy Grid & Hazard Matrix (2.1, 2.5):** 230400 bodli STL-19P ma'lumotlari 60x60 ehtimolli to'siqlar matritsasi va Collision Risk Index ($CRI$) tahliliga to'liq bog'landi (`/api/occupancy_grid`, `/api/hazard_analysis`); <br>2. **Biometrik Kiberxavfsizlik (8.3, 8.4):** 128D Face ID embeddinglari `AES-256-GCM` va PBKDF2 (100k sikl) bilan shifrlangan lokal vaultga (`BiometricCryptoVault`) olindi, ochiq tarmoqqa sizish to'liq taqiqlandi; <br>3. **Watchdog Daemon & Serial Supervisor (2.4):** Arduino Uno (115200 baud) bilan aloqa uzilsa, 650 ms ichida avtomatik Favqulodda To'xtash ('S') beruvchi va RPi 4 apparat holatini nazorat qiluvchi `watchdog_daemon.py` joriy etildi. | `Bajarildi` |
 
 ---
 
@@ -51,8 +52,10 @@ graph TD
 
     subgraph Raspberry Pi 4 Miya Yadrosi
         CAM_MOD[CameraModule: OpenCV MJPEG Stream 30 FPS]
-        LIDAR_MOD[LidarModule: 360° Radar & Smart Simulator]
-        ARD_MOD[ArduinoBridge: Serial Bridge & Telemetry]
+        LIDAR_MOD[LidarModule: 360° Occupancy Grid & Radar]
+        ARD_MOD[ArduinoBridge: Serial Bridge 115200 baud]
+        WATCHDOG[WatchdogDaemon: 20 Hz Heartbeat & Failsafe]
+        BIO_VAULT[BiometricCryptoVault: AES-256-GCM Shifrlash]
         
         SAFETY[Safety Supervisor: 20 Hz Xavfsizlik Nazorati]
         API_SERVER[FastAPI & WebSockets: Port 8000 & 8080]
@@ -69,6 +72,7 @@ graph TD
 
     LIDAR_MOD --> SAFETY
     ARD_MOD --> SAFETY
+    WATCHDOG -->|Heartbeat Failsafe Tormoz| ARD_MOD
     SAFETY -->|Favqulodda Avto-Tormoz| ARD_MOD
 
     CAM_MOD --> API_SERVER
@@ -131,7 +135,31 @@ flowchart TD
 
 ---
 
-## 📁 4. "Miya" Papkasining Strukturasi
+---
+
+## 🔒 4. Memorandum Bo'yicha Kiberxavfsizlik va Watchdog Protokollari
+
+Navoiy viloyati IIB — NDU — NDKvaTU uch tomonlama Memorandumi 2.1, 2.4, 2.5 hamda VIII-bob talablari asosida quyidagi xavfsizlik mexanizmlari qat'iy joriy etildi:
+
+### 🛡️ A. Biometrik Ma'lumotlar Muhofazasi (Memorandum 8.3 va 8.4-moddalari):
+1. **AES-256-GCM Shifrlangan Vault:** Barcha xodimlarning 128D Face ID biometrik embeddinglari qurilmada faqat `AES-256-GCM` algoritmi va PBKDF2-SHA256 (100 000 sikl) orqali shifrlangan holda saqlanadi (`qalqon.faceVault.enc.v1`).
+2. **Zero-Leakage (Nol Chiqish) Kafolati:** Xom biometrik deskriptorlar tarmoq (HTTP/WebSocket) orqali hech qachon uzatilmaydi. Tarmoqqa faqat tozalangan metadata (`fullName`, `role`, `badge`) uzatiladi (`BiometricCryptoVault.sanitizePersonForExport()`).
+3. **Avtomatik Sanatsiya:** Dasturga `assertZeroBiometricLeakage()` qo'riqchisi o'rnatildi — agar biometrik vektor ochiq tarmoq paketida aniqlansa, darhol bloklanadi.
+
+### ⏱️ B. Watchdog Daemon & Serial Supervisor (Memorandum 2.4-bandi):
+1. **20 Hz Heartbeat Nazorati:** `watchdog_daemon.py` har 50 ms da Arduino Uno va Raspberry Pi o'rtasidagi buyruq va telemetriya zanjirini tekshiradi.
+2. **650 ms Failsafe Trigger:** Robot harakatlanayotgan paytda (`is_moving == True`) aloqa uzilsa yoki yadro 650 ms ichida javob bermasa, watchdog avtomatik ravishda Arduino Uno'ga qat'iy **HARD STOP ('S')** signali yuboradi va motor drayverini nolga tushiradi.
+3. **Resurslar monitoringi:** CPU harorati, yuklamasi va RAM holati `/api/watchdog/status` orqali real vaqtda uzatiladi.
+
+### 🗺️ C. STL-19P LiDAR Occupancy Grid & Hazard Monitoring (Memorandum 2.1 va 2.5):
+1. **Ehtimolli To'siqlar Panjarasi (Occupancy Grid):** 60x60 o'lchamli (har katak 10x10 sm, robot markazda) 2D xarita nurlar kesishmasi orqali hisoblanadi (`/api/occupancy_grid`).
+2. **To'qnashuv Xavfi Indeksi (Collision Risk Index - $CRI$):**
+   $$CRI = \max\left(0.0, \min\left(1.0, \frac{d_{warning} - d_{front}}{d_{warning} - d_{safe}}\right)\right)$$
+   $CRI = 1.0$ (masofa $\le 0.45$ m) bo'lganda avtotormoz faollashadi; $CRI \in [0.1, 0.9]$ bo'lganda tezlik 50% ga pasaytiriladi.
+
+---
+
+## 📁 5. "Miya" Papkasining Strukturasi
 
 ```text
 raspberry_pi/
@@ -146,7 +174,7 @@ raspberry_pi/
 
 ---
 
-## 🚀 5. Ertangi Real Robot Sinovining Bosh Rejasi
+## 🚀 6. Ertangi Real Robot Sinovining Bosh Rejasi
 
 1. **Stol ustida (havoda) sinov:** G'ildiraklarni havoda ushlab, `F`, `B`, `L`, `R` yo'nalishlarini va `U`, `D` minora aktuatorini tekshirish.
 2. **Datchik refleksi:** `F` ketayotganda datchik oldiga qo'l qo'yib, robot 20 sm dan avtomatik tormozlanishini va oldinga qulflanishini sinash.

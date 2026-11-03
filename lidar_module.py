@@ -304,28 +304,106 @@ class LidarModule:
         sectors = self.get_sectors()
         return sectors["front"] <= safe_distance
 
-    def get_slam_grid(self, grid_size: int = 60, resolution_m: float = 0.1):
+    def get_hazard_analysis(self, safe_distance_m: float = 0.45, warning_distance_m: float = 1.0) -> dict:
         """
-        2D SLAM Occupancy Grid Map (60x60 panjara, har katak 10x10 sm).
-        Robot markazda (30, 30).
-        0 = Bo'sh joy, 100 = To'siq/Devor.
+        Avtonom monitoring va to'siqlar xavfini ko'p darajali baholash zanjiri.
+        - CRITICAL: masofa <= safe_distance_m (Avtotormoz 'S' va harakatni qulflash)
+        - WARNING: masofa <= warning_distance_m (Tezlikni 50% ga cheklash)
+        - NORMAL: Yo'l ochiq
         """
-        grid = [[0 for _ in range(grid_size)] for _ in range(grid_size)]
-        center = grid_size // 2
         with self.lock:
+            sectors = self.get_sectors()
+            front_d = sectors["front"]
+            left_d = sectors["left"]
+            right_d = sectors["right"]
+            rear_d = sectors["rear"]
+
+            min_dist = 99.0
+            min_angle = 0
             for deg in range(360):
                 d = self.scan_distances[deg]
-                if 0.1 < d < (grid_size * resolution_m / 2.0):
-                    rad = math.radians(deg)
-                    gx = int(center + (d * math.sin(rad)) / resolution_m)
-                    gy = int(center - (d * math.cos(rad)) / resolution_m)
+                if 0.05 < d < min_dist:
+                    min_dist = d
+                    min_angle = deg
+
+            # Collision Risk Index (CRI: 0.0 - 1.0)
+            if front_d <= safe_distance_m:
+                cri = 1.0
+                hazard_level = "CRITICAL"
+                action = "EMERGENCY_STOP"
+            elif front_d <= warning_distance_m:
+                cri = round((warning_distance_m - front_d) / (warning_distance_m - safe_distance_m), 2)
+                hazard_level = "WARNING"
+                action = "DECELERATE"
+            else:
+                cri = 0.0
+                hazard_level = "NORMAL"
+                action = "PROCEED"
+
+            return {
+                "timestamp": round(time.time(), 3),
+                "collision_risk_index": cri,
+                "hazard_level": hazard_level,
+                "emergency_stop_required": (hazard_level == "CRITICAL"),
+                "recommended_action": action,
+                "zones": {
+                    "front_m": front_d,
+                    "right_m": right_d,
+                    "rear_m": rear_d,
+                    "left_m": left_d
+                },
+                "escape_routes": {
+                    "left_open": left_d > 0.60,
+                    "right_open": right_d > 0.60,
+                    "reverse_open": rear_d > 0.50
+                },
+                "nearest_obstacle": {
+                    "distance_m": round(min_dist, 2) if min_dist < 90 else None,
+                    "angle_deg": min_angle if min_dist < 90 else None
+                }
+            }
+
+    def get_slam_grid(self, grid_size: int = 60, resolution_m: float = 0.1):
+        """
+        2D SLAM Probabilistic Occupancy Grid Map (60x60 panjara, har katak 10x10 sm).
+        Robot markazda (30, 30).
+        0 = Bo'sh joy (Free Space), 50 = Noma'lum (Unknown), 100 = To'siq/Devor (Occupied).
+        """
+        grid = [[50 for _ in range(grid_size)] for _ in range(grid_size)]
+        center = grid_size // 2
+
+        with self.lock:
+            # 1. Nur bo'ylab bo'sh kataklarni (Free space: 0) tozalash
+            max_cells = int(min(center - 1, 6.0 / resolution_m))
+            for deg in range(0, 360, 2):
+                d = self.scan_distances[deg]
+                rad = math.radians(deg)
+                sin_a = math.sin(rad)
+                cos_a = math.cos(rad)
+
+                end_step = int(min(d, 5.0) / resolution_m) if d > 0.08 else int(2.5 / resolution_m)
+                for step in range(1, min(end_step, max_cells)):
+                    rx = int(center + (step * resolution_m * sin_a) / resolution_m)
+                    ry = int(center - (step * resolution_m * cos_a) / resolution_m)
+                    if 0 <= rx < grid_size and 0 <= ry < grid_size:
+                        grid[ry][rx] = 0
+
+                # 2. To'siq katagi (Occupied: 100)
+                if 0.08 < d < (center * resolution_m):
+                    gx = int(center + (d * sin_a) / resolution_m)
+                    gy = int(center - (d * cos_a) / resolution_m)
                     if 0 <= gx < grid_size and 0 <= gy < grid_size:
                         grid[gy][gx] = 100
+
+        grid[center][center] = 0
+
         return {
             "size": grid_size,
             "resolution_m": resolution_m,
             "center": [center, center],
-            "grid": grid
+            "grid": grid,
+            "timestamp": round(time.time(), 3),
+            "hazard": self.get_hazard_analysis()
         }
 
     def status(self):

@@ -3,6 +3,7 @@ import sarvarPhotoUrl from '../assets/faces/koldoshev_sarvar.jpg';
 import asilbekPhotoUrl from '../assets/faces/asilbek_ravshanov.png';
 import boburjonPhotoUrl from '../assets/faces/boburjon_bozorov.jpg';
 import descriptorsData from '../assets/faces/descriptors.json';
+import { BiometricCryptoVault } from './biometricCryptoVault';
 
 export interface KnownPerson {
   id: string;
@@ -152,21 +153,18 @@ class FaceRecognitionEngine {
         }
       }
 
-      // localStorage (qalqon.faceDb.v1) dagi qo'shilgan yangi shaxslarni yuklash
+      // Memorandum 8.3 & 8.4: Shifrlangan kiber-vault (AES-256-GCM) dan yuzlarni yuklash
       try {
-        const raw = localStorage.getItem(LOCALSTORAGE_KEY);
-        if (raw) {
-          const saved = JSON.parse(raw) as KnownPerson[];
-          if (Array.isArray(saved)) {
-            for (const sp of saved) {
-              if (!this.database.some(p => p.id === sp.id)) {
-                this.database.push(sp);
-              }
+        const secureSaved = await BiometricCryptoVault.loadSecurePersons();
+        if (Array.isArray(secureSaved)) {
+          for (const sp of secureSaved) {
+            if (!this.database.some(p => p.id === sp.id)) {
+              this.database.push(sp);
             }
           }
         }
       } catch (err) {
-        console.warn('[FaceID] localStorage dagi yuzlar bazasini o\'qishda xatolik:', err);
+        console.warn('[FaceID] Shifrlangan biometrik vaultni o\'qishda xatolik:', err);
       }
 
       this.isInitialized = true;
@@ -289,14 +287,14 @@ class FaceRecognitionEngine {
 
           this.database.push(newPerson);
 
-          // localStorage ga saqlash
+          // Memorandum 8.3 & 8.4: 128D embeddinglarni AES-256-GCM bilan shifrlab saqlash
           try {
             const customPersons = this.database.filter(
               p => !INITIAL_FACE_DATABASE.some(init => init.id === p.id)
             );
-            localStorage.setItem(LOCALSTORAGE_KEY, JSON.stringify(customPersons));
+            await BiometricCryptoVault.saveSecurePersons(customPersons);
           } catch (lsErr) {
-            console.warn('[FaceID] localStorage ga saqlashda xato:', lsErr);
+            console.warn('[FaceID] BiometricVault ga saqlashda xato:', lsErr);
           }
 
           resolve(newPerson);
