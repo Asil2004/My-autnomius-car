@@ -122,8 +122,9 @@ class LidarModule:
         if not HAS_SERIAL or list_ports is None:
             return None
         for p in list_ports.comports():
-            desc = f"{p.description} {p.manufacturer or ''}".lower()
-            if any(k in desc for k in ("cp210", "ch340", "ftdi", "silicon labs", "usb-serial", "lidar")):
+            desc = f"{p.description} {p.manufacturer or ''} {getattr(p, 'hwid', '')}".lower()
+            # LDROBOT STL-19P (CP2102: VID 10C4, PID EA60) va boshqa USB-UART adapterlar
+            if any(k in desc for k in ("cp210", "ch340", "ftdi", "silicon labs", "usb-serial", "lidar", "stl-19", "ld19", "10c4:ea60", "stl19p")):
                 return p.device
         return None
 
@@ -329,10 +330,17 @@ class LidarModule:
 
     def status(self):
         return {
+            "model": "LDROBOT STL-19P",
+            "type": "360 DToF Laser Scanner",
             "mode": "HARDWARE" if self.is_hardware else "SIMULATION",
             "is_hardware": self.is_hardware,
             "port": self.port or "VIRTUAL_LIDAR",
-            "rate_hz": self.rate_hz,
+            "baudrate": self.baudrate,
+            "rate_hz": self.rate_hz if self.is_hardware else 10.0,
+            "sample_rate_pts_sec": 4500,
+            "range_min_m": 0.05,
+            "range_max_m": 12.0,
+            "sectors": self.get_sectors(),
             "crc_errors": self.crc_errors,
             "packets": self.packets_count,
             "age_ms": round((time.time() - self.last_scan_time) * 1000) if self.last_scan_time > 0 else -1

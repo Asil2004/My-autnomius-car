@@ -98,10 +98,28 @@ export const INITIAL_FACE_DATABASE: KnownPerson[] = [
 ];
 
 const MODEL_URL = `${import.meta.env.BASE_URL}models/face`;
-const STORAGE_KEY = 'qalqon.faceDb.v1';
+export const LOCALSTORAGE_KEY = 'qalqon.faceDb.v1';
 
-// Yuz embeddinglari orasidagi Euclid masofasi. face-api standarti 0.6, 0.5 — qat'iyroq (begonani tanib yubormaslik uchun)
-const MATCH_DISTANCE = 0.5;
+// RobotFaceView (qulf ekrani salomlashuvi) uchun jamoaning asl parametrlari: matchFace() va votePerson() shularni ishlatadi
+export const MATCH_DISTANCE = 0.58;
+export const VOTE_WINDOW = 4;
+export const VOTE_NEEDED = 2;
+
+export interface FaceMatchResult {
+  person: KnownPerson | null;
+  isIdentified: boolean;
+  confidence: number;
+  distance: number;
+}
+
+export interface DetectedFace {
+  box: { x: number; y: number; width: number; height: number };
+  score: number;
+  descriptor: Float32Array;
+}
+
+// Jonli HUD tanishi: Euclid masofasi chegarasi. face-api standarti 0.6, 0.5 — qat'iyroq (begonani tanib yubormaslik uchun)
+const LIVE_MATCH_DISTANCE = 0.5;
 // Aksessuarli (sun'iy) shablonlar uchun chegara qat'iyroq: sinovda aksessuar taqqan HAR XIL odamlar o'zaro 0.45 gacha
 // yaqinlashadi (toza yuzlarda ~0.65+), shuning uchun 0.5 da begonani tanib yuborish xavfi sezilarli (833 juftdan 8 tasi <0.5, 0 tasi <0.45).
 const OCC_MATCH_DISTANCE = 0.4;
@@ -110,9 +128,9 @@ const MIN_RATIO_MARGIN = 0.12;
 // Bazadagi rasm jonli kadrga o'xshash sahnaga joylanganda yuz kengligi (piksel). Aksessuar variantlari shu sahnada chiziladi
 const SCENE_FACE_PX = 280;
 
-// Ism ko'rsatilishi uchun oxirgi VOTE_WINDOW ta yuz kadridan kamida VOTE_NEEDED tasi bir xil shaxsni ko'rsatishi shart
-const VOTE_WINDOW = 5;
-const VOTE_NEEDED = 3;
+// HUD: ism ko'rsatilishi uchun oxirgi LIVE_VOTE_WINDOW ta yuz kadridan kamida LIVE_VOTE_NEEDED tasi bir xil shaxsni ko'rsatishi shart
+const LIVE_VOTE_WINDOW = 5;
+const LIVE_VOTE_NEEDED = 3;
 // Iz (track) vaqt bo'yicha emas, kadrlar soni bo'yicha eskiradi: sekin qurilmada bitta tahlil 2-3 s olishi mumkin va
 // 1.5 s lik vaqt chegarasi ovozlarni har kadrda o'chirib yuborar edi (ism hech qachon chiqmasdi). Vaqt chegarasi faqat to'xtab qolgan holat uchun.
 const TRACK_TTL_CYCLES = 6;
@@ -187,6 +205,9 @@ class FaceRecognitionEngine {
   private builtinIds = new Set(INITIAL_FACE_DATABASE.map((p) => p.id));
   private initPromise: Promise<void> | null = null;
   private ready = false;
+  private warm = false;
+  private warmPromise: Promise<void> | null = null;
+  private voteHistory: Map<string, string[]> = new Map();
   private tracks: Track[] = [];
   private cycle = 0;
   private padCanvas: HTMLCanvasElement | null = null;
@@ -240,17 +261,38 @@ class FaceRecognitionEngine {
       }
     }
 
-    // WebGL shaderlarini birinchi jonli kadrdan oldin kompilyatsiya qilib qo'yish (aks holda 1-kadr bir necha soniya qotadi)
     lap('baza');
-    try {
-      await this.warmUp();
-    } catch {
-      // isitish muvaffaqiyatsiz bo'lsa ham jonli ishlashga halaqit bermaydi
-    }
-    lap('isitish');
     this.loadCustomPersons();
     this.ready = true;
     console.info('[FaceID] tayyor (ms):', this.timings);
+  }
+
+  /**
+   * initDatabase() + WebGL shaderlarini isitish. HUD jonli tahlilni boshlashdan oldin chaqiradi (aks holda birinchi kadr
+   * bir necha soniya qotadi). Qulf ekrani (RobotFaceView) faqat yengil initDatabase() ni chaqiradi.
+   */
+  public prepare(): Promise<void> {
+    if (!this.warmPromise) {
+      this.warmPromise = this.initDatabase()
+        .then(async () => {
+          try {
+            await this.warmUp();
+          } catch {
+            // isitish muvaffaqiyatsiz bo'lsa ham jonli ishlashga halaqit bermaydi
+          }
+          this.warm = true;
+        })
+        .catch((err) => {
+          this.warmPromise = null;
+          throw err;
+        });
+    }
+    return this.warmPromise;
+  }
+
+  /** Modellar yuklangan va shaderlar isitilgan: HUD tahlili tayyor */
+  public isWarm(): boolean {
+    return this.warm;
   }
 
   // Uchala tarmoqni (detektor, landmark, tanish) jonli rejimdagi sozlama bilan bir marta ishlatib, shaderlarni kompilyatsiya qiladi.
@@ -278,16 +320,35 @@ class FaceRecognitionEngine {
   }
 
   /**
-   * Yangi shaxsni bazaga qo'shadi. Asl rasmdan tashqari, rasmga aksessuarlar chizilgan variantlardan ham embedding oladi
-   * (~15 ta, bir necha soniya). onProgress(i, n) — jarayonni ko'rsatish uchun.
+   * Yangi shaxsni bazaga qo'shadi (faqat yuzi aniq ko'ringan rasm bilan). Asl rasmdan tashqari, rasmga aksessuarlar
+   * chizilgan variantlardan ham embedding oladi (~15 ta, bir necha soniya). onProgress(i, n) — jarayonni ko'rsatish uchun.
    */
-  public async addPerson(person: KnownPerson, onProgress?: (done: number, total: number) => void): Promise<void> {
+  public async addPerson(
+    personData: { fullName: string; role: string; photoDataUrl: string; color?: string },
+    onProgress?: (done: number, total: number) => void
+  ): Promise<KnownPerson> {
     await this.initDatabase();
-    if (!person.photoUrl) throw new Error('Rasm yuklanmagan');
-
-    const img = await loadImage(person.photoUrl);
-    const descriptor = await this.descriptorFromImage(img);
-    person.descriptor = descriptor;
+    let img: HTMLImageElement;
+    try {
+      img = await loadImage(personData.photoDataUrl);
+    } catch {
+      throw new Error("Rasmni o'qib bo'lmadi.");
+    }
+    let descriptor: number[];
+    try {
+      descriptor = await this.descriptorFromImage(img);
+    } catch {
+      throw new Error("Rasmda yuz topilmadi! Iltimos, yuzingiz aniq va to'g'ri ko'ringan rasm yuklang.");
+    }
+    const person: KnownPerson = {
+      id: `person-${Date.now()}`,
+      fullName: personData.fullName.trim(),
+      role: personData.role.trim() || 'Ruxsat berilgan shaxs',
+      photoUrl: '',
+      color: personData.color || '#38bdf8',
+      badge: 'IIV VERIFIED',
+      descriptor
+    };
     try {
       const { variants } = await this.buildVariantDescriptors(img, onProgress);
       person.templates = Object.entries(variants).map(([v, d]) => ({ v, d }));
@@ -298,6 +359,7 @@ class FaceRecognitionEngine {
     person.photoUrl = this.makeThumbnail(img);
     this.database.push(person);
     this.saveCustomPersons();
+    return person;
   }
 
   /**
@@ -411,7 +473,7 @@ class FaceRecognitionEngine {
 
   private loadCustomPersons(): void {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(LOCALSTORAGE_KEY);
       if (!raw) return;
       const saved = JSON.parse(raw) as KnownPerson[];
       for (const p of saved) {
@@ -427,13 +489,13 @@ class FaceRecognitionEngine {
   private saveCustomPersons(): void {
     try {
       const custom = this.database.filter((p) => !this.builtinIds.has(p.id));
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(custom));
+      localStorage.setItem(LOCALSTORAGE_KEY, JSON.stringify(custom));
     } catch (err) {
       console.warn('[FaceID] Bazani saqlab bo\'lmadi:', err);
     }
   }
 
-  // Eng yaqin shaxs. Asl rasm 0.5 chegara bilan, aksessuarli shablonlar 0.4 chegara bilan solishtiriladi:
+  // Eng yaqin shaxs. Asl rasm 0.5 (LIVE_MATCH_DISTANCE) chegara bilan, aksessuarli shablonlar 0.4 chegara bilan solishtiriladi:
   // har ikkisi chegaraga nisbatan normallanadi (<=1 = qabul), shaxs eng kichik nisbat bo'yicha tanlanadi.
   private nearest(descriptor: ArrayLike<number>): { person: KnownPerson | null; distance: number; accepted: boolean } {
     let best: KnownPerson | null = null;
@@ -450,12 +512,12 @@ class FaceRecognitionEngine {
           if (d < occD) occD = d;
         }
       }
-      const ratio = Math.min(baseD / MATCH_DISTANCE, occD / OCC_MATCH_DISTANCE);
+      const ratio = Math.min(baseD / LIVE_MATCH_DISTANCE, occD / OCC_MATCH_DISTANCE);
       if (ratio < bestRatio) {
         secondRatio = bestRatio;
         bestRatio = ratio;
         best = p;
-        bestDist = baseD / MATCH_DISTANCE <= occD / OCC_MATCH_DISTANCE ? baseD : occD;
+        bestDist = baseD / LIVE_MATCH_DISTANCE <= occD / OCC_MATCH_DISTANCE ? baseD : occD;
       } else if (ratio < secondRatio) {
         secondRatio = ratio;
       }
@@ -500,7 +562,7 @@ class FaceRecognitionEngine {
         winner = id;
       }
     }
-    return max >= VOTE_NEEDED ? winner : null;
+    return max >= LIVE_VOTE_NEEDED ? winner : null;
   }
 
   /**
@@ -590,7 +652,7 @@ class FaceRecognitionEngine {
         faceScore = face.score;
         const { person, distance, accepted } = this.nearest(face.descriptor);
         track.votes.push(person && accepted ? person.id : null);
-        if (track.votes.length > VOTE_WINDOW) track.votes.shift();
+        if (track.votes.length > LIVE_VOTE_WINDOW) track.votes.shift();
         if (person && accepted) track.lastDistance = distance;
       }
       const id = this.resolveTrack(track);
@@ -655,6 +717,95 @@ class FaceRecognitionEngine {
     ctx.fillRect(0, 0, w, h);
     ctx.drawImage(video, (w * (1 - PAD_SCALE)) / 2, (h * (1 - PAD_SCALE)) / 2, w * PAD_SCALE, h * PAD_SCALE);
     return canvas;
+  }
+  // =========================================================================
+  // RobotFaceView (qulf ekrani) bilan moslik: jamoaning asl API si va parametrlari
+  // =========================================================================
+  private compatOptions = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.2 });
+
+  /** Modellarni yuklaydi (initDatabase ning ichida). Eski nom saqlangan */
+  public async loadModels(): Promise<void> {
+    await this.initDatabase();
+  }
+
+  public async extractDescriptorFromImage(img: HTMLImageElement | HTMLCanvasElement): Promise<number[] | null> {
+    await this.initDatabase();
+    try {
+      const results = await faceapi
+        .detectAllFaces(img, new faceapi.TinyFaceDetectorOptions(PHOTO_OPTIONS))
+        .withFaceLandmarks()
+        .withFaceDescriptors();
+      if (results.length === 0 && img instanceof HTMLImageElement) return await this.descriptorFromImage(img);
+      if (results.length === 0) return null;
+      const largest = results.reduce((a, b) => (a.detection.box.area >= b.detection.box.area ? a : b));
+      return Array.from(largest.descriptor);
+    } catch {
+      return null;
+    }
+  }
+
+  public async extractDescriptorFromUrl(url: string): Promise<number[] | null> {
+    try {
+      return await this.descriptorFromUrl(url);
+    } catch {
+      return null;
+    }
+  }
+
+  public async detectFacesInVideo(video: HTMLVideoElement): Promise<DetectedFace[]> {
+    if (!this.ready) return [];
+    try {
+      const detections = await faceapi
+        .detectAllFaces(video, this.compatOptions)
+        .withFaceLandmarks()
+        .withFaceDescriptors();
+      return detections.map((d) => ({
+        box: { x: d.detection.box.x, y: d.detection.box.y, width: d.detection.box.width, height: d.detection.box.height },
+        score: d.detection.score,
+        descriptor: d.descriptor
+      }));
+    } catch (err) {
+      console.warn('[FaceID] Video kadrida yuzlarni aniqlash xatosi:', err);
+      return [];
+    }
+  }
+
+  public euclideanDistance(v1: number[] | Float32Array, v2: number[] | Float32Array): number {
+    return euclidean(v1, v2);
+  }
+
+  /** Qulf ekrani uchun oddiy moslashtirish: faqat asl rasm, jamoaning 0.58 chegarasi */
+  public matchFace(descriptor: Float32Array | number[]): FaceMatchResult {
+    let bestPerson: KnownPerson | null = null;
+    let minDistance = Infinity;
+    for (const person of this.database) {
+      if (!person.descriptor || person.descriptor.length === 0) continue;
+      const dist = euclidean(descriptor, person.descriptor);
+      if (dist < minDistance) {
+        minDistance = dist;
+        bestPerson = person;
+      }
+    }
+    if (bestPerson && minDistance <= MATCH_DISTANCE) {
+      const confidence = Math.min(0.98, Math.max(0.8, +(1.0 - minDistance * 0.35).toFixed(2)));
+      return { person: bestPerson, isIdentified: true, confidence, distance: +minDistance.toFixed(3) };
+    }
+    return { person: null, isIdentified: false, confidence: 0, distance: minDistance === Infinity ? 1.0 : +minDistance.toFixed(3) };
+  }
+
+  public votePerson(trackKey: string, matchedPersonId: string | null): string | null {
+    if (!this.voteHistory.has(trackKey)) this.voteHistory.set(trackKey, []);
+    const history = this.voteHistory.get(trackKey)!;
+    history.push(matchedPersonId || '__PEDESTRIAN__');
+    if (history.length > VOTE_WINDOW) history.shift();
+    if (matchedPersonId && history.filter((id) => id === matchedPersonId).length >= VOTE_NEEDED) return matchedPersonId;
+    return null;
+  }
+
+  public pruneVoteHistory(activeKeys: Set<string>) {
+    for (const key of this.voteHistory.keys()) {
+      if (!activeKeys.has(key)) this.voteHistory.delete(key);
+    }
   }
 }
 

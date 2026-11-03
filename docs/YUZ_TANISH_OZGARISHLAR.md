@@ -181,6 +181,28 @@ O'lchov (sun'iy aksessuarlar, 3 kishi, 45 ta sinov kadri, shablonlarda ishlatilm
 - **O'xshashlik xavfi:** Muhammadali va Asilbek (familiyalari bir xil) toza yuzlari orasida masofa **0.478**, qabul chegarasi (0.50) dan kichik. Ikkalasi bazada bo'lganda adashmaydi (o'z shaxsiga masofa ancha kichik va ikkinchisidan farqi chegaraning 12% idan katta bo'lishi shart: `MIN_RATIO_MARGIN`). Lekin **bazada bo'lmagan qarindosh yoki juda o'xshash odam** Asilbek yoki Muhammadali deb tanilishi mumkin (masalan, Muhammadali bazadan olib tashlansa, uning yuzi Asilbek deb tanilar edi: 0.47 < 0.50). Bu face-api embeddingining chegarasi. Chegarani (0.50) kamaytirish bu xavfni kamaytiradi, lekin haqiqiy kamerada o'z yuzini tanimay qolish ham ortadi. Aniq tanlash uchun har bir odamning haqiqiy kamera kadrlarini yig'ib o'lchash kerak.
 - HUD'da Muhammadali bilan oxirigacha avtomatik sinov to'liq o'tkazilmadi (sinov vositam va oyna holati sabab to'xtadi). 3 shaxs bilan HUD sinovi to'liq o'tgan (bazada 9/9, begona 4/4).
 
+## `main` bilan birlashtirish (2026-11-03)
+
+Jamoa `main` ga robot "ko'zi" (to'siq/avtotormoz), RobotFaceView salomlashuvi, LiDAR va Edge TTS qo'shgan. Ikkala tomon ham saqlandi.
+
+| Qism | Qaror |
+|---|---|
+| `faceRecognitionService.ts` | Mening dvigatelim asos. Jamoaning API si (`matchFace`, `votePerson`, `pruneVoteHistory`, `detectFacesInVideo`, `loadModels`, `extractDescriptorFromImage/Url`, `euclideanDistance`) saqlandi va eski parametrlar bilan ishlaydi (qulf ekrani o'zgarmadi: chegara 0.58, ovoz 2/4) |
+| HUD tanishi | Mening dvigatel: chegara 0.5 (aksessuar 0.4), ovoz 3/5, begona = "Piyoda". Qulf ekranida 0.58, HUD da 0.5: ikki xil chegara ataylab qoldirilgan |
+| `initDatabase()` | Yengil (modellar + baza), shader isitishsiz. Isitish alohida `prepare()` da, uni faqat HUD chaqiradi, shuning uchun qulf ekrani sekinlashmaydi |
+| `addPerson()` | Jamoaning imzosi `{fullName, role, photoDataUrl}` -> `KnownPerson`, ichida aksessuar variantlari ham hisoblanadi (+ jarayon callback) |
+| To'siqlar | Barcha COCO klasslari, `UZ_OBSTACLE_NAMES`, "To'siq" hisoblagichi, optik yaqinlik (tekis qorong'u/yorug' kadr) |
+| Yo'lak va avtotormoz | Markaziy yo'lakdagi eng yaqin jism `updateCameraObstacle` ga uzatiladi (kontekst 28 sm da bloklaydi, 80 sm da chetlab o'tishni tavsiya qiladi) |
+| Masofa | To'siq masofasi mening pinhole modelim (kalibrovka bilan). Jamoaning `52 / ramka balandligi %` formulasi faqat noma'lum jismlar uchun qoldi |
+| Interfeys | "ROBOT KO'ZI" banneri va chetlab o'tish tavsiyasi video USTIDA emas, video ostidagi alohida qatorda (video ustini yopmaslik haqidagi talab). Yo'lak trapetsiyasi faqat to'siq <80 sm yoki bloklanganda chiziladi |
+
+Bilib qo'yish kerak bo'lgan oqibatlar:
+
+- **Sonar bilan tuzatish o'chirildi.** Kamera `updateCameraObstacle` orqali `sonars.front` ni o'zi yozadi; uni qaytib kameraga berish o'z-o'zini kuchaytiruvchi sikl bo'lardi.
+- **Odam bo'lmagan jismlar** 0.28 baho bilan olinadi, odam esa 0.40 dan (past baholi "odam" soxta bo'lishi mumkin). Odam ichidagi kichik jismlar (galstuk, sumka, telefon) to'siq hisoblanmaydi.
+- **Masofa semantikasi o'zgardi.** Jamoaning formulasida odam ramkasi balandligi 65% bo'lsa ~80 sm chiqardi (o'tirgan odam, noutbuk kamerasi). Pinhole modelida shunday ramka ~3 m. Avtotormoz va chetlab o'tish endi haqiqiy masofaga bog'liq. Haqiqiy robotda kameraning balandligi va kalibrovkasi tekshirilishi kerak.
+- `assets/faces/descriptors.json` (jamoaning eski formati) endi ishlatilmaydi; embeddinglar `descriptors-cache.json` dan olinadi (Muhammadali ham shu yerda).
+
 ## Tekshirilgan
 
 | Sinov | Natija |

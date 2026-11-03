@@ -12,6 +12,11 @@ export const loadCocoModel = (): Promise<cocoSsd.ObjectDetection> => {
   if (!cocoModelPromise) {
     cocoModelPromise = cocoSsd
       .load({ base: 'lite_mobilenet_v2', modelUrl: `${import.meta.env.BASE_URL}models/coco-ssd/model.json` })
+      .catch((localErr) => {
+        // Lokal fayl topilmasa, standart manzildan (internet orqali) yuklashga urinamiz
+        console.warn('[AI] Lokal COCO-SSD topilmadi, tarmoq orqali yuklanadi:', localErr);
+        return cocoSsd.load({ base: 'lite_mobilenet_v2' });
+      })
       .catch((err) => {
         cocoModelPromise = null;
         throw err;

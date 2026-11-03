@@ -34,6 +34,32 @@ import {
   Ruler
 } from 'lucide-react';
 
+// COCO-SSD klasslari uchun o'zbekcha nomlar. Odam va transport alohida ishlanadi, qolgan hamma jism robot uchun "to'siq"
+const UZ_OBSTACLE_NAMES: Record<string, string> = {
+  chair: "Stul (To'siq)",
+  couch: "Divan (To'siq)",
+  'dining table': "Stol (To'siq)",
+  bed: "Karovot (To'siq)",
+  'potted plant': "Gultuvak (To'siq)",
+  tv: 'Monitor / TV',
+  laptop: 'Noutbuk',
+  'cell phone': 'Telefon (Obyekt)',
+  bottle: 'Idish / Butilka',
+  cup: 'Chashka / Finka',
+  backpack: 'Ryukzak (Yuk)',
+  handbag: 'Sumka',
+  suitcase: 'Chemodan (Yuk)',
+  book: 'Kitob / Blok',
+  umbrella: 'Soyabon',
+  box: "Quti (To'siq)",
+  dog: 'It (Hayvon)',
+  cat: 'Mushuk (Hayvon)'
+};
+// COCO-SSD ni odam bo'lmagan jismlar uchun past baho bilan qidiramiz (to'siqlarni ko'proq ushlash), odam uchun esa qat'iy chegara
+const OBSTACLE_MIN_SCORE = 0.28;
+const PERSON_MIN_SCORE = 0.4;
+const VEHICLE_CLASSES = ['car', 'truck', 'bus', 'motorcycle', 'bicycle'];
+
 // Kalibrovka kamera turi bo'yicha alohida saqlanadi (hozir faqat frontal kamera aniqlanadi)
 const CAMERA_KEY = 'FRONTAL';
 
@@ -95,6 +121,8 @@ export const HUDView: React.FC = () => {
     setSpeedLevel,
     sonars,
     isFrontBlocked,
+    cameraObstacle,
+    updateCameraObstacle,
     ptz,
     setPTZ,
     detectedObjects,
@@ -104,8 +132,7 @@ export const HUDView: React.FC = () => {
     gps,
     startRealGPS,
     toggleGPSMode,
-    addLog,
-    isSimulationMode
+    addLog
   } = useRobot();
 
   const [cameraFullscreen, setCameraFullscreen] = useState(false);
@@ -138,7 +165,7 @@ export const HUDView: React.FC = () => {
   const [aiModelLoaded, setAiModelLoaded] = useState(false);
   const [aiModelLoading, setAiModelLoading] = useState(false);
   const [aiEnabled, setAiEnabled] = useState(true);
-  const [detectedCounts, setDetectedCounts] = useState({ people: 0, cars: 0, total: 0 });
+  const [detectedCounts, setDetectedCounts] = useState({ people: 0, cars: 0, obstacles: 0, total: 0 });
 
   // Yuzlar bazasi modali va ro'yxati
   const [showFaceDbModal, setShowFaceDbModal] = useState(false);
@@ -146,16 +173,15 @@ export const HUDView: React.FC = () => {
   const [newPersonName, setNewPersonName] = useState('');
   const [newPersonRole, setNewPersonRole] = useState('');
   const [newPersonPhoto, setNewPersonPhoto] = useState<string | null>(null);
+  const [addPersonError, setAddPersonError] = useState<string | null>(null);
+  const [isAddingPerson, setIsAddingPerson] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const cameraRequestRef = useRef(0);
 
-  // Sonar masofaga faqat haqiqiy robot ulanganda ishoniladi (simulyatsiyada qiymatlar tasodifiy)
-  const sonarRealRef = useRef<number | undefined>(undefined);
-  useEffect(() => {
-    sonarRealRef.current = !isSimulationMode && system.rpiConnected ? sonars.front : undefined;
-  }, [isSimulationMode, system.rpiConnected, sonars.front]);
+  // ESLATMA: sonar bilan masofani tuzatish o'chirilgan. Kamera "robot ko'zi" sifatida o'z masofasini sonars.front ga yozadi
+  // (RobotContext.updateCameraObstacle), shuning uchun sonars.front ni qaytib kameraga berish o'z-o'zini kuchaytiruvchi sikl bo'lardi.
 
   // Kalibrovka uchun oxirgi yuz o'lchamlari (eng yaqin yuz, piksel)
   const faceSamplesRef = useRef<FaceSample[]>([]);
@@ -178,6 +204,9 @@ export const HUDView: React.FC = () => {
   const cocoModelRef = useRef<cocoSsd.ObjectDetection | null>(null);
   const isDetectingRef = useRef<boolean>(false);
   const lastObjectsSigRef = useRef('');
+  const proximityCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Kontekstga oxirgi yuborilgan to'siq holati: bir xil qiymatni har kadrda yuborib, butun ilovani qayta chizdirmaslik uchun
+  const lastObstacleRef = useRef({ key: '', t: 0 });
 
   // =========================================================================
   // 1. TENSORFLOW COCO-SSD VA YUZ BAZASINI YUKLASH
@@ -193,7 +222,7 @@ export const HUDView: React.FC = () => {
         
         // Yuz modeli va bazani yuklash. Xato bo'lsa ham COCO ishlayveradi, odamlar "Piyoda" bo'ladi
         let faceReady = true;
-        const faceInit = faceRecognitionService.initDatabase().catch((faceErr: unknown) => {
+        const faceInit = faceRecognitionService.prepare().catch((faceErr: unknown) => {
           faceReady = false;
           if (isMounted) setFaceStatus('error');
           const msg = faceErr instanceof Error ? faceErr.message : String(faceErr);
@@ -332,14 +361,29 @@ export const HUDView: React.FC = () => {
       try {
         isDetectingRef.current = true;
         const cycleStart = performance.now();
-        const predictions = await cocoModelRef.current.detect(video, 8, 0.40);
+        const predictions = await cocoModelRef.current.detect(video, 12, OBSTACLE_MIN_SCORE);
 
         let personCount = 0;
         let carCount = 0;
+        let obstacleCount = 0;
 
-        const vehicleClasses = ['car', 'truck', 'bus', 'motorcycle', 'bicycle'];
-        const vehiclePreds = predictions.filter((pred) => vehicleClasses.includes(pred.class.toLowerCase()));
-        const personPreds = predictions.filter((pred) => pred.class.toLowerCase() === 'person');
+        const vehiclePreds = predictions.filter((pred) => VEHICLE_CLASSES.includes(pred.class.toLowerCase()));
+        // Odam uchun chegara qat'iyroq: past baholi "odam" soxta bo'lishi mumkin
+        const personPreds = predictions.filter(
+          (pred) => pred.class.toLowerCase() === 'person' && pred.score >= PERSON_MIN_SCORE
+        );
+        // Odam ustidagi/ichidagi kichik jismlar (galstuk, sumka, telefon...) robot uchun to'siq emas: odamning o'zi hisobga olinadi
+        const insidePerson = (b: number[]) =>
+          personPreds.some((pp) => {
+            const [px, py, pw, ph] = pp.bbox;
+            const cx = b[0] + b[2] / 2;
+            const cy = b[1] + b[3] / 2;
+            return cx >= px && cx <= px + pw && cy >= py && cy <= py + ph && b[2] * b[3] < pw * ph * 0.25;
+          });
+        const otherPreds = predictions.filter((pred) => {
+          const cls = pred.class.toLowerCase();
+          return cls !== 'person' && cls !== 'tie' && !VEHICLE_CLASSES.includes(cls) && !insidePerson(pred.bbox);
+        });
 
         // Odamlar: yuz orqali tanish. Bazada yo'q yoki yuzi ko'rinmagan odam — "Piyoda"
         const identities = await faceRecognitionService.identifyPeople(
@@ -348,7 +392,7 @@ export const HUDView: React.FC = () => {
         );
 
         // Yuz dvigateli hali tayyor bo'lmasa (qayta yuklanmoqda), "topilmadi" emas, "yuklanmoqda" ko'rsatiladi
-        setFaceStatus((prev) => (prev === 'error' ? prev : faceRecognitionService.isReady() ? 'ready' : 'loading'));
+        setFaceStatus((prev) => (prev === 'error' ? prev : faceRecognitionService.isWarm() ? 'ready' : 'loading'));
 
         // Eng katta (eng yaqin) yuz: kalibrovka ma'lumoti va ko'z masofasini ko'rsatish uchun
         const withFace = identities.filter((i) => i.faceBox);
@@ -391,7 +435,9 @@ export const HUDView: React.FC = () => {
             score: personPreds[i]?.score ?? identity.faceScore ?? 0.5,
             identity
           })),
-          ...vehiclePreds.map((pred) => ({ class: pred.class, bbox: pred.bbox, score: pred.score, identity: undefined }))
+          ...vehiclePreds.map((pred) => ({ class: pred.class, bbox: pred.bbox, score: pred.score, identity: undefined })),
+          // Odam ham, transport ham bo'lmagan har qanday jism robot uchun to'siq
+          ...otherPreds.map((pred) => ({ class: pred.class, bbox: pred.bbox, score: pred.score, identity: undefined }))
         ];
 
         const newObjects: DetectedObject[] = items
@@ -443,6 +489,11 @@ export const HUDView: React.FC = () => {
               label = cls === 'motorcycle' ? "Motosikl" : "Velosiped";
               color = "#fbbf24"; // Sariq
               category = 'vehicle';
+            } else {
+              obstacleCount++;
+              label = UZ_OBSTACLE_NAMES[cls] || `To'siq (${cls})`;
+              color = "#f59e0b";
+              category = 'other';
             }
 
             // Foiz koordinatalar (0 - 100%)
@@ -456,15 +507,25 @@ export const HUDView: React.FC = () => {
               boxX = 100 - (boxX + boxW);
             }
 
-            // Masofa: pinhole modeli (yuz kengligi yoki obyekt balandligi), sonar tuzatishi va silliqlash
-            const dist = distanceEstimator.estimate(CAMERA_KEY, {
-              cls,
-              box: { x: rawX, y: rawY, width: rawW, height: rawH },
-              faceBox: pred.identity?.faceBox ?? undefined,
-              frameWidth: vW,
-              frameHeight: vH,
-              sonarFrontCm: sonarRealRef.current
-            });
+            // Masofa: pinhole modeli (yuz kengligi yoki obyekt balandligi) va silliqlash. Haqiqiy o'lchami noma'lum
+            // to'siqlar (stul, quti...) uchun kadrdagi balandlikdan taxminiy qiymat (jamoaning dastlabki formulasi)
+            const dist =
+              category === 'other'
+                ? {
+                    meters: Math.min(18, Math.max(0.18, +(45 / Math.max(10, boxH)).toFixed(2))),
+                    source: 'vehicle' as const,
+                    approx: true,
+                    upperBound: false
+                  }
+                : distanceEstimator.estimate(CAMERA_KEY, {
+                    cls,
+                    box: { x: rawX, y: rawY, width: rawW, height: rawH },
+                    faceBox: pred.identity?.faceBox ?? undefined,
+                    frameWidth: vW,
+                    frameHeight: vH
+                  });
+            // Juda yaqin begona jism qizil xavf rangiga o'tadi
+            if (dist.meters <= 0.4 && !isIdentifiedPerson) color = '#ef4444';
 
             return {
               // Barqaror kalit: React har kadrda ramkalarni o'chirib-qayta yaratmasin
@@ -488,6 +549,75 @@ export const HUDView: React.FC = () => {
             };
           });
 
+        // Optik yaqinlik: kamera oldi tekis jism (qo'l, devor, kitob) bilan to'silgan, lekin hech narsa tanilmagan bo'lsa
+        try {
+          if (!proximityCanvasRef.current) {
+            proximityCanvasRef.current = document.createElement('canvas');
+            proximityCanvasRef.current.width = 40;
+            proximityCanvasRef.current.height = 30;
+          }
+          const pCtx = proximityCanvasRef.current.getContext('2d', { willReadFrequently: true });
+          if (pCtx && newObjects.length === 0) {
+            pCtx.drawImage(video, 0, 0, 40, 30);
+            const px = pCtx.getImageData(10, 12, 20, 16).data;
+            let totalLum = 0;
+            let minLum = 255;
+            let maxLum = 0;
+            for (let i = 0; i < px.length; i += 4) {
+              const lum = (px[i] + px[i + 1] + px[i + 2]) / 3;
+              totalLum += lum;
+              if (lum < minLum) minLum = lum;
+              if (lum > maxLum) maxLum = lum;
+            }
+            const avgLum = totalLum / (px.length / 4);
+            if (maxLum - minLum < 30 && (avgLum < 50 || avgLum > 200)) {
+              obstacleCount++;
+              newObjects.push({
+                id: 'opt-barrier',
+                label: "To'siq (Yaqin Jism)",
+                confidence: 0.94,
+                distance: 0.18,
+                distanceApprox: true,
+                box: { x: 20, y: 35, width: 60, height: 60 },
+                color: '#ef4444',
+                category: 'other'
+              });
+            }
+          }
+        } catch {
+          // Offscreen canvas tahlili xatosi e'tiborga olinmaydi
+        }
+
+        // Xavfsizlik yo'lagi: robot oldidagi markaziy koridordagi eng yaqin jism va aylanib o'tish yo'nalishi
+        let minCollisionCm = 200;
+        let closestLabel = "Yo'l ochiq";
+        let closestCenterX = 50;
+        let closestWidth = 0;
+        for (const obj of newObjects) {
+          const centerX = obj.box.x + obj.box.width / 2;
+          const bottomY = obj.box.y + obj.box.height;
+          const distCm = Math.round(obj.distance * 100);
+          if (centerX >= 18 && centerX <= 82 && bottomY >= 25 && distCm < minCollisionCm) {
+            minCollisionCm = distCm;
+            closestLabel = obj.label;
+            closestCenterX = centerX;
+            closestWidth = obj.box.width;
+          }
+        }
+        let evasion: 'CLEAR' | 'LEFT' | 'RIGHT' | 'REVERSE' = 'CLEAR';
+        if (minCollisionCm <= 80) {
+          if (closestWidth >= 55) evasion = 'REVERSE';
+          else if (closestCenterX < 48) evasion = 'RIGHT'; // to'siq chapda: o'ngga burilish
+          else evasion = 'LEFT'; // to'siq o'ngda: chapga burilish
+        }
+        // Robot miyasiga (RobotContext) uzatish. Holat o'zgarmasa ~1 s da bir marta (kontekst "jonli" deb bilishi uchun)
+        const obstacleKey = `${Math.round(minCollisionCm / 2)}|${closestLabel}|${evasion}`;
+        const nowMs = Date.now();
+        if (obstacleKey !== lastObstacleRef.current.key || nowMs - lastObstacleRef.current.t > 1000) {
+          lastObstacleRef.current = { key: obstacleKey, t: nowMs };
+          updateCameraObstacle(minCollisionCm, closestLabel, evasion);
+        }
+
         // Ramkalar ~0.6% (bir necha piksel) dan kam siljisa, qayta chizmaymiz: kamera shovqini tufayli har kadrda o'zgarmasin
         const sig = newObjects
           .map((o) => {
@@ -501,6 +631,7 @@ export const HUDView: React.FC = () => {
           setDetectedCounts({
             people: personCount,
             cars: carCount,
+            obstacles: obstacleCount,
             total: newObjects.length
           });
         }
@@ -510,7 +641,7 @@ export const HUDView: React.FC = () => {
         isDetectingRef.current = false;
       }
     }
-  }, [aiEnabled, cameraSource, mirrorVideo, setDetectedObjects]);
+  }, [aiEnabled, cameraSource, mirrorVideo, setDetectedObjects, updateCameraObstacle]);
 
   // Deteksiya sikli (har ~120ms da bir kadr tekshiriladi)
   useEffect(() => {
@@ -525,39 +656,42 @@ export const HUDView: React.FC = () => {
     };
   }, [cameraSource, aiEnabled, detectFrame]);
 
-  // Yangi shaxsni bazaga qo'shish
+  // Yangi shaxsni bazaga qo'shish (yuz tekshiruvi, xatolik xabari va aksessuar variantlari jarayoni bilan)
   const handleAddNewPerson = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newPersonName.trim()) return;
+    if (!newPersonName.trim()) {
+      setAddPersonError("Iltimos, shaxsning to'liq ism-familiyasini kiriting.");
+      return;
+    }
     if (!newPersonPhoto) {
-      addLog('AI', 'warn', "Shaxsni qo'shish uchun yuzi aniq ko'ringan rasm yuklang.");
+      setAddPersonError("Iltimos, shaxsning yuzi aniq ko'ringan fotosuratini yuklang.");
       return;
     }
 
-    const newPerson: KnownPerson = {
-      id: `person-${Date.now()}`,
-      fullName: newPersonName.trim(),
-      role: newPersonRole.trim() || 'Ruxsat berilgan shaxs',
-      photoUrl: newPersonPhoto,
-      color: '#38bdf8',
-      badge: 'VERIFIED'
-    };
-
+    setIsAddingPerson(true);
+    setAddPersonError(null);
+    const name = newPersonName.trim();
     try {
-      addLog('AI', 'info', `${newPerson.fullName}: aksessuar variantlari hisoblanmoqda (ko'zoynak, bosh kiyim, niqob...), bir necha soniya...`);
-      await faceRecognitionService.addPerson(newPerson, (done, total) => {
-        if (done === total || done % 5 === 0) addLog('AI', 'info', `${newPerson.fullName}: variantlar ${done}/${total}`);
-      });
+      addLog('AI', 'info', `${name}: aksessuar variantlari hisoblanmoqda (ko'zoynak, bosh kiyim, niqob...), bir necha soniya...`);
+      const added = await faceRecognitionService.addPerson(
+        { fullName: name, role: newPersonRole.trim(), photoDataUrl: newPersonPhoto, color: '#38bdf8' },
+        (done, total) => {
+          if (done === total || done % 5 === 0) addLog('AI', 'info', `${name}: variantlar ${done}/${total}`);
+        }
+      );
+      setKnownPersons([...faceRecognitionService.getPersons()]);
+      addLog('AI', 'success', `Yuzlar bazasiga yangi shaxs muvaffaqiyatli qo'shildi: ${added.fullName}`);
+      setNewPersonName('');
+      setNewPersonRole('');
+      setNewPersonPhoto(null);
+      setShowFaceDbModal(false);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      addLog('AI', 'error', `${newPerson.fullName} bazaga qo'shilmadi: ${msg}`);
-      return;
+      const msg = err instanceof Error ? err.message : "Yuzni tanishda xatolik yuz berdi.";
+      setAddPersonError(msg);
+      addLog('AI', 'error', `Yangi shaxs qo'shilmadi: ${msg}`);
+    } finally {
+      setIsAddingPerson(false);
     }
-    setKnownPersons([...faceRecognitionService.getPersons()]);
-    addLog('AI', 'success', `Yuzlar bazasiga yangi shaxs qo'shildi: ${newPerson.fullName}`);
-    setNewPersonName('');
-    setNewPersonRole('');
-    setNewPersonPhoto(null);
   };
 
   // Kalibrovka datchigi holati: yashil bo'lishi uchun yuz yetarli kadrda topilib, o'lchami barqaror bo'lishi kerak
@@ -772,6 +906,11 @@ export const HUDView: React.FC = () => {
                   <Car className="w-3 h-3" />
                   <span>{detectedCounts.cars} Mashina</span>
                 </span>
+                <span className="text-slate-600">|</span>
+                <span className={`flex items-center space-x-1 font-bold ${detectedCounts.obstacles > 0 ? 'text-amber-400' : 'text-slate-400'}`}>
+                  <AlertTriangle className="w-3 h-3" />
+                  <span>{detectedCounts.obstacles} To'siq</span>
+                </span>
               </div>
 
               {cameraSource === 'FRONTAL' && (
@@ -957,6 +1096,22 @@ export const HUDView: React.FC = () => {
               </div>
             ))}
 
+            {/* Xavfsizlik yo'lagi: faqat yo'lda to'siq bo'lganda ko'rinadi (yo'l ochiq bo'lsa kadr toza qoladi) */}
+            {cameraSource === 'FRONTAL' && aiEnabled && (cameraObstacle.isBlocked || cameraObstacle.distanceCm < 80) && (
+              <svg className="absolute inset-0 w-full h-full pointer-events-none z-10" viewBox="0 0 100 100" preserveAspectRatio="none">
+                <polygon
+                  points="18,100 82,100 62,56 38,56"
+                  fill={cameraObstacle.isBlocked ? 'rgba(239,68,68,0.28)' : 'rgba(245,158,11,0.18)'}
+                  stroke={cameraObstacle.isBlocked ? '#ef4444' : '#f59e0b'}
+                  strokeWidth="0.6"
+                  strokeDasharray={cameraObstacle.isBlocked ? 'none' : '2,1'}
+                />
+                {cameraObstacle.isBlocked && (
+                  <line x1="26" y1="78" x2="74" y2="78" stroke="#ef4444" strokeWidth="2" className="animate-pulse" />
+                )}
+              </svg>
+            )}
+
           </div>
           </div>
 
@@ -987,6 +1142,37 @@ export const HUDView: React.FC = () => {
             </span>
             <span className="text-slate-400 ml-auto">GPS ±{gps.accuracy || 3.5}m</span>
           </div>
+
+          {/* Robot "ko'zi": kamera masofasi, avtotormoz va aylanib o'tish tavsiyasi (kadr ustini yopmaslik uchun video ostida) */}
+          {cameraSource === 'FRONTAL' && (
+            <div
+              className={`border-t px-3 py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] ${
+                cameraObstacle.isBlocked
+                  ? 'bg-rose-950/80 border-rose-500/70 text-rose-300'
+                  : cameraObstacle.distanceCm < 80
+                  ? 'bg-amber-950/70 border-amber-500/60 text-amber-300'
+                  : 'bg-tactical-950/85 border-tactical-700/60 text-emerald-300'
+              }`}
+              data-robot-eye
+            >
+              <span className="flex items-center space-x-1.5 font-bold">
+                <Eye className={`w-3 h-3 ${cameraObstacle.isBlocked ? 'animate-ping' : ''}`} />
+                <span>
+                  ROBOT KO'ZI: {cameraObstacle.active ? `${cameraObstacle.label} — ${cameraObstacle.distanceCm} sm` : 'kutilmoqda'}
+                </span>
+              </span>
+              {cameraObstacle.isBlocked && (
+                <span className="bg-rose-600 text-white text-[9px] px-1.5 py-0.5 rounded font-black tracking-wider">AVTOTORMOZ</span>
+              )}
+              {cameraObstacle.distanceCm <= 80 && cameraObstacle.evasionDirection !== 'CLEAR' && (
+                <span className="text-police-cyan font-bold">
+                  {cameraObstacle.evasionDirection === 'LEFT' && "← Chapdan chetlab o'tish tavsiya etiladi (A)"}
+                  {cameraObstacle.evasionDirection === 'RIGHT' && "→ O'ngdan chetlab o'tish tavsiya etiladi (D)"}
+                  {cameraObstacle.evasionDirection === 'REVERSE' && '↓ Orqaga chekinish tavsiya etiladi (S)'}
+                </span>
+              )}
+            </div>
+          )}
 
           {/* Sonarlar va harakat holati: kadr ustini yopmaslik uchun video ostida, bitta qatorda */}
           <div className="bg-tactical-950/85 border-t border-tactical-700/60 px-3 py-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px]">
@@ -1413,8 +1599,15 @@ export const HUDView: React.FC = () => {
             <form onSubmit={handleAddNewPerson} className="border-t border-tactical-800 pt-3 flex flex-col gap-2.5 font-mono text-xs">
               <span className="font-semibold text-slate-300 flex items-center space-x-1">
                 <Plus className="w-3.5 h-3.5 text-police-cyan" />
-                <span>Yangi shaxsni bazaga kiritish:</span>
+                <span>Yangi shaxsni bazaga kiritish (face-api.js tekshiruvi bilan):</span>
               </span>
+
+              {addPersonError && (
+                <div className="p-2.5 bg-rose-950/70 border border-rose-500/60 rounded text-rose-300 text-xs flex items-center space-x-2">
+                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>{addPersonError}</span>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <input
@@ -1443,10 +1636,13 @@ export const HUDView: React.FC = () => {
 
                 <button
                   type="submit"
-                  className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-bold shadow flex items-center space-x-1"
+                  disabled={isAddingPerson}
+                  className={`px-4 py-1.5 rounded font-bold shadow flex items-center space-x-1.5 text-white transition-all ${
+                    isAddingPerson ? 'bg-tactical-700 cursor-not-allowed opacity-70' : 'bg-emerald-600 hover:bg-emerald-500'
+                  }`}
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span>Bazaga Saqlash</span>
+                  <span>{isAddingPerson ? 'Tekshirilmoqda...' : 'Bazaga Saqlash'}</span>
                 </button>
               </div>
             </form>
