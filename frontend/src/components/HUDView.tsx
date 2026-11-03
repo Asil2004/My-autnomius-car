@@ -920,18 +920,78 @@ export const HUDView: React.FC = () => {
         </div>
       </div>
 
-      {/* ===== Sahna: asosiy kamera + 4 ta kichik kamera ===== */}
-      <div ref={stageRef} className="relative flex-1 min-h-0 flex flex-col bg-black">
-        <div className="relative flex-1 min-h-0 flex flex-col">
-          <div className={`flex-1 min-h-0 flex flex-col ${activeCam === 'face' ? '' : 'invisible'}`}>
-          {/* Video Stream & Viewport: kadr to'liq (kesilmaydi), kadr ustida faqat aniqlangan ramkalar bor.
-              Tashqi quti panelning qolgan bo'sh joyini oladi, ichki quti videoning haqiqiy nisbatida shu joyga sig'adi
-              (o'lchami ResizeObserver bilan hisoblanadi), shuning uchun pastki qatorlar har doim ekranga sig'adi. */}
-          <div ref={viewportWrapRef} className="bg-black flex-1 min-h-0 flex items-center justify-center overflow-hidden">
-          <div
-            className="relative bg-black flex items-center justify-center overflow-hidden"
-            style={{ aspectRatio: String(videoAspect), width: fitWidth ?? '100%' }}
-          >
+      {/* ===== Sahna: chap tomonda 4 ta kichik kamera (vertikal) + o'ngda to'liq kengaytirilgan asosiy kamera ===== */}
+      <div ref={stageRef} className="relative flex-1 min-h-0 flex flex-row bg-black overflow-hidden">
+        {/* 4 ta kichik kamera: ekranning chap tomoniga vertikal qilib terilgan */}
+        <div
+          className="flex flex-col justify-center gap-2.5 p-2 bg-tactical-900/95 border-r border-tactical-700 z-10 shrink-0 overflow-y-auto"
+          role="group"
+          aria-label="Kameralar"
+        >
+          {CAMERAS.map((cam) => {
+            const active = activeCam === cam.id;
+            return (
+              <button
+                key={cam.id}
+                onClick={() => setActiveCam(active ? 'face' : cam.id)}
+                aria-pressed={active}
+                title={`${cam.long} kamera (bosing - ${active ? "Face ID ga qaytish" : "kattalashtirish"})`}
+                className={`relative flex-none rounded-lg overflow-hidden bg-tactical-950 border-2 transition-all ${
+                  active
+                    ? 'border-police-cyan ring-2 ring-police-cyan/40 shadow-md shadow-police-cyan/30'
+                    : 'border-tactical-700 hover:border-tactical-500'
+                }`}
+                style={{ aspectRatio: '16 / 9', width: 'clamp(76px, 11vw, 130px)' }}
+              >
+                {cam.id === 'front' ? (
+                  <>
+                    <img
+                      src={`http://${system.rpiIp}:${system.rpiPort}/stream.mjpg?r=${rpiRetry}`}
+                      alt=""
+                      onLoad={() => setRpiOk(true)}
+                      onError={() => setRpiOk(false)}
+                      className={`absolute inset-0 w-full h-full object-cover ${rpiOk ? '' : 'hidden'}`}
+                    />
+                    {!rpiOk && (
+                      <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-slate-500">
+                        <VideoOff className="w-3.5 h-3.5" />
+                        <span className="text-[9px]">Signal yo'q</span>
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-slate-500">
+                    <VideoOff className="w-3.5 h-3.5" />
+                    <span className="text-[9px]">Signal yo'q</span>
+                  </span>
+                )}
+                <span className="absolute left-1.5 top-1 px-1.5 py-0.5 rounded bg-black/80 text-[10px] font-semibold text-white">
+                  {cam.short}
+                </span>
+                {active && (
+                  <span className="absolute right-1 bottom-1 px-1 py-0.5 rounded bg-police-cyan text-tactical-950 text-[8px] font-bold leading-none">
+                    FAOL
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Katta ekranli kamera: pastdagi ochilgan joygacha to'liq cho'zilgan va kengaygan */}
+        <div className="relative flex-1 min-h-0 h-full flex flex-col bg-black overflow-hidden">
+          <div className={`flex-1 min-h-0 w-full h-full flex flex-col ${activeCam === 'face' ? '' : 'invisible'}`}>
+            {/* Video Stream & Viewport: kadr to'liq (kesilmaydi), kadr ustida faqat aniqlangan ramkalar bor */}
+            <div ref={viewportWrapRef} className="bg-black flex-1 min-h-0 w-full h-full flex items-center justify-center overflow-hidden">
+              <div
+                className="relative bg-black flex items-center justify-center overflow-hidden"
+                style={{
+                  aspectRatio: String(videoAspect),
+                  width: fitWidth ?? '100%',
+                  maxWidth: '100%',
+                  maxHeight: '100%'
+                }}
+              >
 
             {/* 1-REJIM: FRONTAL WEBCAM */}
             {cameraSource === 'FRONTAL' && (
@@ -1032,51 +1092,6 @@ export const HUDView: React.FC = () => {
               </button>
             </div>
           )}
-        </div>
-
-        {/* Kichik kameralar: bosilgani asosiy bo'ladi */}
-        <div className="flex justify-center gap-2 p-2 bg-tactical-900 border-t border-tactical-700" role="group" aria-label="Kameralar">
-          {CAMERAS.map((cam) => {
-            const active = activeCam === cam.id;
-            return (
-              <button
-                key={cam.id}
-                onClick={() => setActiveCam(cam.id)}
-                aria-pressed={active}
-                title={`${cam.long} kamera`}
-                className={`relative flex-none rounded-lg overflow-hidden bg-tactical-950 border-2 transition-colors ${
-                  active ? 'border-police-cyan' : 'border-tactical-700 hover:border-tactical-600'
-                }`}
-                style={{ aspectRatio: '16 / 9', height: 'clamp(64px, 13vh, 120px)', maxWidth: '24%' }}
-              >
-                {cam.id === 'front' ? (
-                  <>
-                    <img
-                      src={`http://${system.rpiIp}:${system.rpiPort}/stream.mjpg?r=${rpiRetry}`}
-                      alt=""
-                      onLoad={() => setRpiOk(true)}
-                      onError={() => setRpiOk(false)}
-                      className={`absolute inset-0 w-full h-full object-cover ${rpiOk ? '' : 'hidden'}`}
-                    />
-                    {!rpiOk && (
-                      <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-slate-500">
-                        <VideoOff className="w-4 h-4" />
-                        <span className="text-[10px]">Signal yo'q</span>
-                      </span>
-                    )}
-                  </>
-                ) : (
-                  <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-slate-500">
-                    <VideoOff className="w-4 h-4" />
-                    <span className="text-[10px]">Signal yo'q</span>
-                  </span>
-                )}
-                <span className="absolute left-1.5 top-1.5 px-1.5 py-0.5 rounded-md bg-black/70 text-[10px] font-semibold text-white">
-                  {cam.short}
-                </span>
-              </button>
-            );
-          })}
         </div>
 
         {/* ===== Suzuvchi panellar (video ustida, sudrab surish mumkin) ===== */}
