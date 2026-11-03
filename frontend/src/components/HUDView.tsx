@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useRobot } from '../context/RobotContext';
-import type { SpeedLevel, DetectedObject } from '../types/robot';
+import type { SpeedLevel, DetectedObject, MecanumCommand } from '../types/robot';
 import { faceRecognitionService, type KnownPerson } from '../services/faceRecognitionService';
 import { distanceEstimator } from '../services/distanceService';
 import type * as cocoSsd from '@tensorflow-models/coco-ssd';
 import { loadCocoModel } from '../services/aiPreload';
+import { FloatingPanel } from './FloatingPanel';
 import {
+  Activity,
   ArrowUp,
   ArrowDown,
   ArrowLeft,
@@ -17,13 +19,16 @@ import {
   Gauge,
   SlidersHorizontal,
   ShieldAlert,
-  Maximize2,
+  ShieldCheck,
+  ScrollText,
+  VideoOff,
+  ChevronsUp,
+  ChevronsDown,
   Camera,
   Radio,
   MapPin,
   Car,
   User,
-  UserCheck,
   RefreshCw,
   Eye,
   AlertTriangle,
@@ -31,8 +36,34 @@ import {
   Plus,
   X,
   CheckCircle2,
-  Ruler
+  Ruler,
+  UserCheck
 } from 'lucide-react';
+
+type PanelId = 'control' | 'sensors' | 'ai' | 'ptz' | 'log';
+type CamId = 'front' | 'rear' | 'left' | 'right';
+
+// Robotning 4 tomonidagi kameralar. Hozir faqat old kamera haqiqiy (frontal/RPi/simulyatsiya), qolganlari ulanishni kutadi
+const CAMERAS: { id: CamId; short: string; long: string }[] = [
+  { id: 'front', short: 'Old', long: 'Old' },
+  { id: 'rear', short: 'Orqa', long: 'Orqa' },
+  { id: 'left', short: 'Chap', long: 'Chap' },
+  { id: 'right', short: "O'ng", long: "O'ng" }
+];
+
+// 3x3 yo'nalish tugmalari (null = bo'sh katak)
+const KEYPAD: ({ key: string; cmd: MecanumCommand; label: string; title: string; icon: React.ElementType } | null)[] = [
+  { key: 'q', cmd: 'Q', label: 'Chapga siljish', title: 'Chapga yonlama (Q)', icon: RotateCcw },
+  { key: 'f', cmd: 'F', label: 'Oldinga', title: 'Oldinga (F)', icon: ArrowUp },
+  { key: 'e', cmd: 'E', label: "O'ngga siljish", title: "O'ngga yonlama (E)", icon: RotateCw },
+  { key: 'l', cmd: 'L', label: 'Chapga burilish', title: 'Chapga burilish (L)', icon: ArrowLeft },
+  { key: 's', cmd: 'S', label: "To'xtatish", title: "To'xtatish (S)", icon: Square },
+  { key: 'r', cmd: 'R', label: "O'ngga burilish", title: "O'ngga burilish (R)", icon: ArrowRight },
+  null,
+  { key: 'b', cmd: 'B', label: 'Orqaga', title: 'Orqaga (B)', icon: ArrowDown },
+  null
+];
+const OPEN_KEY = 'qalqon.hud.open.v1';
 
 // COCO-SSD klasslari uchun o'zbekcha nomlar. Odam va transport alohida ishlanadi, qolgan hamma jism robot uchun "to'siq"
 const UZ_OBSTACLE_NAMES: Record<string, string> = {
@@ -65,9 +96,9 @@ const CAMERA_KEY = 'FRONTAL';
 
 // Sonar masofasiga (sm) qarab rang: <=22 xavf (avtotormoz), <=45 ogohlantirish, qolgani xavfsiz
 const getSonarColor = (distance: number, isCritical = false) => {
-  if (isCritical || distance <= 22) return 'text-rose-400 bg-rose-950/80 border-rose-500 shadow-[0_0_10px_rgba(255,34,56,0.6)] animate-pulse';
-  if (distance <= 45) return 'text-amber-300 bg-amber-950/70 border-amber-500/70';
-  return 'text-emerald-300 bg-emerald-950/60 border-emerald-500/60';
+  if (isCritical || distance <= 22) return 'text-police-red bg-police-red/10 border-police-red/60';
+  if (distance <= 45) return 'text-police-amber bg-police-amber/10 border-police-amber/50';
+  return 'text-police-green bg-tactical-850 border-tactical-700';
 };
 
 const SONAR_ARROW = { front: ArrowUp, rear: ArrowDown, left: ArrowLeft, right: ArrowRight } as const;
@@ -85,14 +116,13 @@ const SonarChip: React.FC<{
   const title = `${label} sonar${pins ? ` (${pins})` : ''}: ${value} sm. Chegara: <22 sm = avtotormoz`;
   return (
     <div
-      className={`px-2 py-0.5 rounded border font-bold flex items-center space-x-1.5 whitespace-nowrap transition-colors ${getSonarColor(value, critical)}`}
+      className={`px-2.5 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap transition-colors ${getSonarColor(value, critical)}`}
       title={title}
       data-sonar={side}
     >
       {danger ? <ShieldAlert className="w-3 h-3 shrink-0" /> : <Arrow className="w-3 h-3 shrink-0" />}
-      <span className="text-[9px] font-semibold text-slate-300">{label}</span>
-      <span>{value} sm</span>
-      {side === 'front' && danger && <span className="text-[9px]">TO'SIQ</span>}
+      <span className="text-[10px] font-medium text-slate-300">{label}</span>
+      <span className="ml-auto">{value} sm</span>
     </div>
   );
 };
@@ -135,7 +165,38 @@ export const HUDView: React.FC = () => {
     addLog
   } = useRobot();
 
-  const [cameraFullscreen, setCameraFullscreen] = useState(false);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const thumbVideoRef = useRef<HTMLVideoElement | null>(null);
+  const [activeCam, setActiveCam] = useState<CamId>('front');
+  // Ochiq suzuvchi panellar (oxirgisi eng ustida). Hech narsa ochiq bo'lmasa, kadr toza qoladi
+  const [openPanels, setOpenPanels] = useState<PanelId[]>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(OPEN_KEY) || '[]') as PanelId[];
+      return Array.isArray(saved) ? saved : [];
+    } catch {
+      return [];
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(OPEN_KEY, JSON.stringify(openPanels));
+    } catch {
+      // saqlab bo'lmasa, panellar shu sessiyada ishlayveradi
+    }
+  }, [openPanels]);
+  const openOnly = (id: PanelId) => setOpenPanels((prev) => (prev.includes(id) ? prev : [...prev, id]));
+
+  // Esc: eng ustidagi panelni yopadi (kiritish maydonida yozilayotganda tegmaydi)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+      setOpenPanels((prev) => (prev.length ? prev.slice(0, -1) : prev));
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
   // Videoning haqiqiy eni/bo'yi nisbati (kamera 16:9 yoki 4:3 bo'lishi mumkin)
   const [videoAspect, setVideoAspect] = useState(16 / 9);
   // Video qutisi eni: panelning bo'sh joyiga nisbatni saqlagan holda sig'adigan eng katta o'lcham
@@ -155,7 +216,7 @@ export const HUDView: React.FC = () => {
     const ro = new ResizeObserver(update);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [videoAspect, cameraFullscreen]);
+  }, [videoAspect]);
   const [cameraSource, setCameraSource] = useState<'FRONTAL' | 'RPI' | 'SIMULATION'>('FRONTAL');
   const [cameraLoading, setCameraLoading] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -324,6 +385,14 @@ export const HUDView: React.FC = () => {
     }
   }, [addLog, stopCameraStream]);
 
+  // Old kamera kichik oynasi (4 kamera qatori) asosiy oqimning o'zini ko'rsatadi
+  useEffect(() => {
+    const v = thumbVideoRef.current;
+    if (!v) return;
+    v.srcObject = cameraLoading ? null : streamRef.current;
+    if (v.srcObject) v.play().catch(() => undefined);
+  }, [cameraLoading, cameraSource, activeCam]);
+
   // Kamera rejimi o'zgarganda ishga tushirish
   useEffect(() => {
     if (cameraSource === 'FRONTAL') {
@@ -446,7 +515,7 @@ export const HUDView: React.FC = () => {
             const [rawX, rawY, rawW, rawH] = pred.bbox;
 
             let label = "Noma'lum";
-            let color = "#00e5ff";
+            let color = "#5ad1e6";
             let category: DetectedObject['category'] = 'other';
             let personName: string | undefined = undefined;
             let isIdentifiedPerson = false;
@@ -460,39 +529,39 @@ export const HUDView: React.FC = () => {
               if (match?.person) {
                 label = match.person.fullName;
                 personName = match.person.fullName;
-                color = match.person.color || '#00e676';
+                color = match.person.color || '#4ade80';
                 isIdentifiedPerson = true;
                 confidence = +(match.confidence ?? pred.score).toFixed(2);
               } else {
                 label = "Piyoda";
                 personName = undefined;
-                color = "#38bdf8";
+                color = "#5ad1e6";
                 isIdentifiedPerson = false;
                 confidence = +pred.score.toFixed(2);
               }
             } else if (cls === 'car') {
               carCount++;
               label = "Mashina (Avtomobil)";
-              color = "#00e5ff"; // Tsian / Moviy
+              color = "#5ad1e6"; // Tsian / Moviy
               category = 'car';
             } else if (cls === 'truck') {
               carCount++;
               label = "Yuk mashinasi";
-              color = "#38bdf8";
+              color = "#5ad1e6";
               category = 'car';
             } else if (cls === 'bus') {
               carCount++;
               label = "Avtobus";
-              color = "#818cf8";
+              color = "#5ad1e6";
               category = 'car';
             } else if (cls === 'motorcycle' || cls === 'bicycle') {
               label = cls === 'motorcycle' ? "Motosikl" : "Velosiped";
-              color = "#fbbf24"; // Sariq
+              color = "#f5b544"; // Sariq
               category = 'vehicle';
             } else {
               obstacleCount++;
               label = UZ_OBSTACLE_NAMES[cls] || `To'siq (${cls})`;
-              color = "#f59e0b";
+              color = "#f5b544";
               category = 'other';
             }
 
@@ -525,7 +594,7 @@ export const HUDView: React.FC = () => {
                     frameHeight: vH
                   });
             // Juda yaqin begona jism qizil xavf rangiga o'tadi
-            if (dist.meters <= 0.4 && !isIdentifiedPerson) color = '#ef4444';
+            if (dist.meters <= 0.4 && !isIdentifiedPerson) color = '#ef5b5b';
 
             return {
               // Barqaror kalit: React har kadrda ramkalarni o'chirib-qayta yaratmasin
@@ -579,7 +648,7 @@ export const HUDView: React.FC = () => {
                 distance: 0.18,
                 distanceApprox: true,
                 box: { x: 20, y: 35, width: 60, height: 60 },
-                color: '#ef4444',
+                color: '#ef5b5b',
                 category: 'other'
               });
             }
@@ -674,7 +743,7 @@ export const HUDView: React.FC = () => {
     try {
       addLog('AI', 'info', `${name}: aksessuar variantlari hisoblanmoqda (ko'zoynak, bosh kiyim, niqob...), bir necha soniya...`);
       const added = await faceRecognitionService.addPerson(
-        { fullName: name, role: newPersonRole.trim(), photoDataUrl: newPersonPhoto, color: '#38bdf8' },
+        { fullName: name, role: newPersonRole.trim(), photoDataUrl: newPersonPhoto, color: '#5ad1e6' },
         (done, total) => {
           if (done === total || done % 5 === 0) addLog('AI', 'info', `${name}: variantlar ${done}/${total}`);
         }
@@ -777,175 +846,95 @@ export const HUDView: React.FC = () => {
     }));
   };
 
+  const togglePanel = (id: PanelId) =>
+    setOpenPanels((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  const closePanel = (id: PanelId) => setOpenPanels((prev) => prev.filter((x) => x !== id));
+  const isOpen = (id: PanelId) => openPanels.includes(id);
+
+  // Xavfsizlik belgisi: panel yopiq bo'lsa ham to'siq/avtotormoz holati doim ko'rinib turadi
+  const safetyTone = cameraObstacle.isBlocked ? 'danger' : cameraObstacle.distanceCm < 80 ? 'warn' : 'ok';
+  const safetyLabel = cameraObstacle.isBlocked
+    ? `Avtotormoz: ${cameraObstacle.label}, ${cameraObstacle.distanceCm} sm`
+    : cameraObstacle.distanceCm < 80
+    ? `${cameraObstacle.label}, ${cameraObstacle.distanceCm} sm`
+    : "Yo'l ochiq";
+
+  const DOCK: { id: PanelId; label: string; icon: React.ReactNode }[] = [
+    { id: 'control', label: 'Boshqaruv', icon: <Gauge className="w-4 h-4" /> },
+    { id: 'sensors', label: 'Sensorlar', icon: <Activity className="w-4 h-4" /> },
+    { id: 'ai', label: 'AI', icon: <Eye className="w-4 h-4" /> },
+    { id: 'ptz', label: 'PTZ', icon: <SlidersHorizontal className="w-4 h-4" /> },
+    { id: 'log', label: 'Jurnal', icon: <ScrollText className="w-4 h-4" /> }
+  ];
+
   return (
-    <div className="flex-1 flex flex-col lg:flex-row gap-3 p-3 overflow-y-auto max-w-7xl mx-auto w-full">
-      {/* LEFT COLUMN: Live Feed + HUD Overlays */}
-      <div className={`flex flex-col gap-3 min-h-0 ${cameraFullscreen ? 'fixed inset-0 z-50 p-2 bg-tactical-950' : 'flex-1'}`}>
-        
-        {/* TOP STATUS BAR: REAL GPS & CAMERA MODE SWITCHER */}
-        <div className="bg-tactical-900/90 border border-tactical-700/70 rounded-lg p-2.5 flex flex-wrap items-center justify-between gap-2 shadow-md">
-          {/* Real GPS Info Pill */}
-          <div className="flex items-center space-x-2">
-            <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded bg-tactical-950 border border-tactical-700 font-mono text-xs">
-              <span className="flex h-2.5 w-2.5 relative">
-                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${gps.isReal ? 'bg-emerald-400' : 'bg-amber-400'}`}></span>
-                <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${gps.isReal ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
-              </span>
-              <span className="font-bold text-white flex items-center space-x-1">
-                <MapPin className="w-3.5 h-3.5 text-police-cyan" />
-                <span>{gps.isReal ? 'HAQIQIY GPS' : 'GPS SIMULYATSIYA'}:</span>
-              </span>
-              <span className="text-police-cyan font-bold tracking-tight">
-                {gps.latitude.toFixed(6)}° N, {gps.longitude.toFixed(6)}° E
-              </span>
-              <span className="text-[10px] text-slate-400 hidden sm:inline">
-                (±{gps.accuracy || 3.5}m • {gps.altitude || 340}m balandlik)
-              </span>
-            </div>
-
+    <div className="flex-1 min-h-0 flex flex-col relative">
+      {/* ===== Yuqori satr: manba, xavfsizlik holati, panellar doki ===== */}
+      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-tactical-900 border-b border-tactical-700">
+        <div className="flex items-center gap-1" role="group" aria-label="Kamera manbasi">
+          {(
+            [
+              ['FRONTAL', 'Frontal', <Camera key="f" className="w-3.5 h-3.5" />],
+              ['RPI', 'RPi oqim', <Radio key="r" className="w-3.5 h-3.5" />],
+              ['SIMULATION', 'Simulyatsiya', null]
+            ] as const
+          ).map(([id, label, icon]) => (
             <button
-              onClick={gps.isReal ? toggleGPSMode : startRealGPS}
-              title={gps.isReal ? "Simulyatsiyaga o'tish" : "Haqiqiy GPS datchigini yoqish"}
-              className={`px-2 py-1 rounded text-xs font-mono font-bold flex items-center space-x-1 border transition-all ${
-                gps.isReal
-                  ? 'bg-emerald-600/30 text-emerald-300 border-emerald-500 hover:bg-emerald-600/50'
-                  : 'bg-police-blue/30 text-police-cyan border-police-cyan/60 hover:bg-police-blue/50'
+              key={id}
+              onClick={() => setCameraSource(id)}
+              aria-pressed={cameraSource === id}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors ${
+                cameraSource === id
+                  ? 'bg-police-blue text-white'
+                  : 'text-slate-300 hover:bg-tactical-800'
               }`}
             >
-              <RefreshCw className={`w-3 h-3 ${gps.status === 'SEARCHING' ? 'animate-spin' : ''}`} />
-              <span>{gps.isReal ? 'Real GPS Faol' : 'Real GPS Yoqish'}</span>
+              {icon}
+              {label}
             </button>
-          </div>
-
-          {/* Camera Source Selector & Database Trigger */}
-          <div className="flex items-center space-x-1.5 font-mono text-xs">
-            <button
-              onClick={() => setShowFaceDbModal(true)}
-              className="px-2 py-1 rounded bg-tactical-950 border border-tactical-700 text-slate-300 hover:text-white flex items-center space-x-1 transition-all"
-              title="Yuzlar bazasini ko'rish va yangi odamlarni qo'shish"
-            >
-              <Users className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Yuzlar Bazasi ({knownPersons.length})</span>
-            </button>
-
-            <button
-              onClick={() => setShowCalibration(true)}
-              className={`px-2 py-1 rounded bg-tactical-950 border flex items-center space-x-1 transition-all ${
-                calibrated ? 'border-emerald-600 text-emerald-300' : 'border-amber-500 text-amber-300'
-              }`}
-              title="Masofa o'lchashni kalibrovka qilish"
-            >
-              <Ruler className="w-3.5 h-3.5" />
-              <span>{calibrated ? 'Kalibrovka ✓' : 'Kalibrovka'}</span>
-            </button>
-
-            <button
-              onClick={() => setCameraSource('FRONTAL')}
-              className={`px-2.5 py-1 rounded font-bold flex items-center space-x-1 border transition-all ${
-                cameraSource === 'FRONTAL'
-                  ? 'bg-police-blue text-white border-police-cyan shadow-[0_0_10px_rgba(0,229,255,0.4)]'
-                  : 'bg-tactical-950 text-slate-300 border-tactical-700 hover:bg-tactical-800'
-              }`}
-            >
-              <Camera className="w-3.5 h-3.5 text-police-cyan" />
-              <span>Frontal Kamera</span>
-            </button>
-
-            <button
-              onClick={() => setCameraSource('RPI')}
-              className={`px-2.5 py-1 rounded font-bold flex items-center space-x-1 border transition-all ${
-                cameraSource === 'RPI'
-                  ? 'bg-police-blue text-white border-police-cyan shadow-[0_0_10px_rgba(0,229,255,0.4)]'
-                  : 'bg-tactical-950 text-slate-300 border-tactical-700 hover:bg-tactical-800'
-              }`}
-            >
-              <Radio className="w-3.5 h-3.5 text-police-cyan" />
-              <span>RPi Oqim</span>
-            </button>
-
-            <button
-              onClick={() => setCameraSource('SIMULATION')}
-              className={`px-2.5 py-1 rounded font-bold border transition-all ${
-                cameraSource === 'SIMULATION'
-                  ? 'bg-police-blue text-white border-police-cyan'
-                  : 'bg-tactical-950 text-slate-300 border-tactical-700 hover:bg-tactical-800'
-              }`}
-            >
-              Simulyatsiya
-            </button>
-          </div>
+          ))}
         </div>
 
-        {/* MAIN HUD VIDEO FEED CONTAINER (Chiziq-chiziq filtr olib tashlangan - Tiniq HD kadr) */}
-        <div className="hud-panel rounded-lg overflow-hidden flex flex-col relative flex-1 min-h-[420px]">
+        <button
+          onClick={() => openOnly('sensors')}
+          title="Sensorlar panelini ochish"
+          data-safety={safetyTone}
+          className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-2 border transition-colors ${
+            safetyTone === 'danger'
+              ? 'bg-police-red/15 text-police-red border-police-red/60'
+              : safetyTone === 'warn'
+              ? 'bg-police-amber/15 text-police-amber border-police-amber/50'
+              : 'bg-tactical-850 text-police-green border-tactical-700'
+          }`}
+        >
+          {safetyTone === 'ok' ? <ShieldCheck className="w-4 h-4" /> : <ShieldAlert className="w-4 h-4" />}
+          <span>{safetyLabel}</span>
+        </button>
 
-          {/* Header Bar inside Feed */}
-          <div className="bg-tactical-950/85 px-3 py-2 border-b border-tactical-700/60 flex items-center justify-between z-20">
-            <div className="flex items-center space-x-2 font-mono text-xs">
-              <span className="flex h-2.5 w-2.5 relative">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
-              </span>
-              <span className="font-bold text-white tracking-wider">
-                {cameraSource === 'FRONTAL' ? 'FRONTAL TINIK AI KAMERA' : cameraSource === 'RPI' ? '360° PTZ RPI GUMBAZ KAMERA' : 'TAKTIK VIRTUAL SIMULYATOR'}
-              </span>
-              <span className="px-1.5 py-0.5 rounded text-[10px] bg-tactical-800 text-slate-300 border border-tactical-700">
-                {ptz.mode}
-              </span>
-            </div>
+        <div className="flex items-center gap-1" role="group" aria-label="Panellar">
+          {DOCK.map((d) => (
+            <button
+              key={d.id}
+              onClick={() => togglePanel(d.id)}
+              aria-pressed={isOpen(d.id)}
+              title={`${d.label} paneli`}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 border transition-colors ${
+                isOpen(d.id)
+                  ? 'bg-tactical-700 text-white border-tactical-600'
+                  : 'text-slate-300 border-transparent hover:bg-tactical-800'
+              }`}
+            >
+              {d.icon}
+              <span className="hidden md:inline">{d.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
 
-            {/* AI Detected Objects Live Summary Badges */}
-            <div className="flex items-center space-x-2">
-              <div className="hidden sm:flex items-center space-x-1.5 bg-tactical-950/90 px-2 py-0.5 rounded border border-tactical-700 font-mono text-[11px]">
-                <span className="text-emerald-400 flex items-center space-x-1 font-bold">
-                  <UserCheck className="w-3 h-3" />
-                  <span>{detectedCounts.people} Odam</span>
-                </span>
-                <span className="text-slate-600">|</span>
-                <span className="text-police-cyan flex items-center space-x-1 font-bold">
-                  <Car className="w-3 h-3" />
-                  <span>{detectedCounts.cars} Mashina</span>
-                </span>
-                <span className="text-slate-600">|</span>
-                <span className={`flex items-center space-x-1 font-bold ${detectedCounts.obstacles > 0 ? 'text-amber-400' : 'text-slate-400'}`}>
-                  <AlertTriangle className="w-3 h-3" />
-                  <span>{detectedCounts.obstacles} To'siq</span>
-                </span>
-              </div>
-
-              {cameraSource === 'FRONTAL' && (
-                <button
-                  onClick={() => setMirrorVideo(!mirrorVideo)}
-                  title="Oyna (Mirror) effektini almashtirish"
-                  className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-all ${
-                    mirrorVideo ? 'bg-police-blue/30 text-police-cyan border-police-blue' : 'bg-tactical-800 text-slate-400 border-tactical-700'
-                  }`}
-                >
-                  {mirrorVideo ? 'Mirror ON' : 'Mirror OFF'}
-                </button>
-              )}
-
-              <button
-                onClick={() => setAiEnabled(!aiEnabled)}
-                title="AI Obyekt Detektorini yoqish/o'chirish"
-                className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-all flex items-center space-x-1 ${
-                  aiEnabled ? 'bg-emerald-950 text-emerald-300 border-emerald-500' : 'bg-tactical-800 text-slate-400 border-tactical-700'
-                }`}
-              >
-                <Eye className="w-3 h-3" />
-                <span>AI {aiEnabled ? 'FAOL' : 'O\'CHIQ'}</span>
-              </button>
-
-              <button
-                onClick={() => setCameraFullscreen(!cameraFullscreen)}
-                className="p-1 rounded bg-tactical-800 text-slate-300 hover:text-white"
-                title="To'liq ekranga ochish"
-              >
-                <Maximize2 className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-
+      {/* ===== Sahna: asosiy kamera + 4 ta kichik kamera ===== */}
+      <div ref={stageRef} className="relative flex-1 min-h-0 flex flex-col bg-black">
+        <div className="relative flex-1 min-h-0 flex flex-col">
+          <div className={`flex-1 min-h-0 flex flex-col ${activeCam === 'front' ? '' : 'invisible'}`}>
           {/* Video Stream & Viewport: kadr to'liq (kesilmaydi), kadr ustida faqat aniqlangan ramkalar bor.
               Tashqi quti panelning qolgan bo'sh joyini oladi, ichki quti videoning haqiqiy nisbatida shu joyga sig'adi
               (o'lchami ResizeObserver bilan hisoblanadi), shuning uchun pastki qatorlar har doim ekranga sig'adi. */}
@@ -975,7 +964,7 @@ export const HUDView: React.FC = () => {
 
                 {cameraError && (
                   <div className="absolute inset-0 bg-tactical-950/90 flex flex-col items-center justify-center p-4 text-center z-10">
-                    <AlertTriangle className="w-10 h-10 text-rose-500 mb-2 animate-bounce" />
+                    <AlertTriangle className="w-10 h-10 text-police-red mb-2" />
                     <span className="font-mono text-sm font-bold text-white">Frontal kameraga ulanib bo'lmadi</span>
                     <span className="font-mono text-xs text-slate-400 mt-1 max-w-sm">{cameraError}</span>
                     <button
@@ -1102,358 +1091,354 @@ export const HUDView: React.FC = () => {
                 <polygon
                   points="18,100 82,100 62,56 38,56"
                   fill={cameraObstacle.isBlocked ? 'rgba(239,68,68,0.28)' : 'rgba(245,158,11,0.18)'}
-                  stroke={cameraObstacle.isBlocked ? '#ef4444' : '#f59e0b'}
+                  stroke={cameraObstacle.isBlocked ? '#ef5b5b' : '#f5b544'}
                   strokeWidth="0.6"
                   strokeDasharray={cameraObstacle.isBlocked ? 'none' : '2,1'}
                 />
                 {cameraObstacle.isBlocked && (
-                  <line x1="26" y1="78" x2="74" y2="78" stroke="#ef4444" strokeWidth="2" className="animate-pulse" />
+                  <line x1="26" y1="78" x2="74" y2="78" stroke="#ef5b5b" strokeWidth="2" className="animate-pulse" />
                 )}
               </svg>
             )}
 
           </div>
           </div>
-
-          {/* AI holati: video ustini yopmaslik uchun bitta qatorda, video ostida */}
-          <div className="bg-tactical-950/85 border-t border-tactical-700/60 px-3 py-1.5 min-h-[32px] flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px]">
-            <span className="flex items-center space-x-1.5 text-police-cyan font-bold">
-              <span
-                className={`w-1.5 h-1.5 rounded-full ${aiModelLoaded ? 'bg-emerald-400' : 'bg-amber-400 animate-ping'}`}
-              />
-              <span>
-                AI: {aiModelLoaded ? 'COCO-SSD + YUZ' : aiModelLoading ? 'YUKLANMOQDA (birinchi marta 10-40 s, sahifa sekinlashishi mumkin)...' : 'DETEKTOR'}
-              </span>
-            </span>
-            <span className="text-slate-300">OBYEKT: {detectedCounts.total}</span>
-            <span className={faceStatus === 'error' ? 'text-rose-400' : faceInfo.count > 0 ? 'text-emerald-300' : 'text-amber-300'}>
-              YUZ:{' '}
-              {faceStatus === 'loading'
-                ? 'yuklanmoqda...'
-                : faceStatus === 'error'
-                ? 'MODEL XATO (jurnalga qarang)'
-                : faceInfo.count > 0
-                ? `${faceInfo.count} ta, ${faceInfo.widthPx}px`
-                : 'topilmadi'}
-              {faceStatus === 'ready' && faceInfo.cycleMs > 0 ? ` · ${faceInfo.cycleMs}ms` : ''}
-            </span>
-            <span className={faceInfo.faceDistM > 0 ? 'text-emerald-300' : 'text-slate-500'}>
-              RAMKA: {faceInfo.faceDistM > 0 ? `${Math.round(faceInfo.faceDistM * 100)} sm` : '—'}
-            </span>
-            <span className="text-slate-400 ml-auto">GPS ±{gps.accuracy || 3.5}m</span>
           </div>
 
-          {/* Robot "ko'zi": kamera masofasi, avtotormoz va aylanib o'tish tavsiyasi (kadr ustini yopmaslik uchun video ostida) */}
-          {cameraSource === 'FRONTAL' && (
-            <div
-              className={`border-t px-3 py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] ${
-                cameraObstacle.isBlocked
-                  ? 'bg-rose-950/80 border-rose-500/70 text-rose-300'
-                  : cameraObstacle.distanceCm < 80
-                  ? 'bg-amber-950/70 border-amber-500/60 text-amber-300'
-                  : 'bg-tactical-950/85 border-tactical-700/60 text-emerald-300'
-              }`}
-              data-robot-eye
-            >
-              <span className="flex items-center space-x-1.5 font-bold">
-                <Eye className={`w-3 h-3 ${cameraObstacle.isBlocked ? 'animate-ping' : ''}`} />
-                <span>
-                  ROBOT KO'ZI: {cameraObstacle.active ? `${cameraObstacle.label} — ${cameraObstacle.distanceCm} sm` : 'kutilmoqda'}
-                </span>
-              </span>
-              {cameraObstacle.isBlocked && (
-                <span className="bg-rose-600 text-white text-[9px] px-1.5 py-0.5 rounded font-black tracking-wider">AVTOTORMOZ</span>
-              )}
-              {cameraObstacle.distanceCm <= 80 && cameraObstacle.evasionDirection !== 'CLEAR' && (
-                <span className="text-police-cyan font-bold">
-                  {cameraObstacle.evasionDirection === 'LEFT' && "← Chapdan chetlab o'tish tavsiya etiladi (A)"}
-                  {cameraObstacle.evasionDirection === 'RIGHT' && "→ O'ngdan chetlab o'tish tavsiya etiladi (D)"}
-                  {cameraObstacle.evasionDirection === 'REVERSE' && '↓ Orqaga chekinish tavsiya etiladi (S)'}
-                </span>
-              )}
+          {activeCam !== 'front' && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-tactical-950 text-center px-6">
+              <VideoOff className="w-10 h-10 text-slate-500" />
+              <div className="text-sm font-semibold text-slate-200">{CAMERAS.find((c) => c.id === activeCam)?.long} kamerasi ulanmagan</div>
+              <div className="text-xs text-slate-400 max-w-xs">
+                Raspberry Pi dan shu tomonning oqimi ulanganda kadr shu yerda ko'rinadi.
+              </div>
+              <button
+                onClick={() => setActiveCam('front')}
+                className="px-3 py-1.5 rounded-lg bg-police-blue text-white text-xs font-semibold"
+              >
+                Old kameraga qaytish
+              </button>
             </div>
           )}
-
-          {/* Sonarlar va harakat holati: kadr ustini yopmaslik uchun video ostida, bitta qatorda */}
-          <div className="bg-tactical-950/85 border-t border-tactical-700/60 px-3 py-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px]">
-            <SonarChip side="front" label="OLD" pins="TRIG A0, ECHO A1" value={sonars.front} critical={isFrontBlocked} />
-            <SonarChip side="left" label="CHAP" value={sonars.left} />
-            <SonarChip side="right" label="O'NG" value={sonars.right} />
-            <SonarChip side="rear" label="ORQA" pins="TRIG A2, ECHO A3" value={sonars.rear} />
-            <span className="ml-auto flex items-center space-x-3 text-slate-300">
-              <span className="flex items-center space-x-1">
-                <Compass className="w-3 h-3 text-police-cyan" />
-                <span>
-                  AZIMUT {String(gps.heading || 42).padStart(3, '0')}°{gps.isReal ? ' (KOMPAS)' : ''}
-                </span>
-              </span>
-              <span>
-                KOMANDA: <span className="font-bold text-police-cyan">{lastCommand}</span>
-              </span>
-            </span>
-          </div>
-
-          {/* PTZ Quick Controls Bar */}
-          <div className="bg-tactical-900/90 p-2 border-t border-tactical-700/60 flex items-center justify-between gap-2 text-xs">
-            <div className="flex items-center space-x-1 font-mono text-slate-300">
-              <SlidersHorizontal className="w-3.5 h-3.5 text-police-cyan" />
-              <span className="text-[11px]">PTZ BURILISH:</span>
-            </div>
-            <div className="flex items-center space-x-1">
-              <button
-                onClick={() => adjustPTZ(-15, 0)}
-                className="px-2 py-1 bg-tactical-800 hover:bg-tactical-700 border border-tactical-600 rounded text-slate-200 font-mono text-xs"
-              >
-                ◀ Chap
-              </button>
-              <button
-                onClick={() => adjustPTZ(0, 10)}
-                className="px-2 py-1 bg-tactical-800 hover:bg-tactical-700 border border-tactical-600 rounded text-slate-200 font-mono text-xs"
-              >
-                ▲ Yuqori
-              </button>
-              <button
-                onClick={() => adjustPTZ(0, -10)}
-                className="px-2 py-1 bg-tactical-800 hover:bg-tactical-700 border border-tactical-600 rounded text-slate-200 font-mono text-xs"
-              >
-                ▼ Quyi
-              </button>
-              <button
-                onClick={() => adjustPTZ(15, 0)}
-                className="px-2 py-1 bg-tactical-800 hover:bg-tactical-700 border border-tactical-600 rounded text-slate-200 font-mono text-xs"
-              >
-                O'ng ▶
-              </button>
-              <button
-                onClick={() => setPTZ((p) => ({ ...p, pan: 0, tilt: 15, zoom: 1, mode: p.mode === 'AUTO_CAMERA' ? 'MANUAL' : 'AUTO_CAMERA' }))}
-                className="px-2 py-1 bg-police-blue/30 text-police-cyan border border-police-blue/60 rounded font-mono text-xs hover:bg-police-blue/50"
-              >
-                {ptz.mode === 'AUTO_CAMERA' ? 'Avto' : 'Qo\'lda'}
-              </button>
-            </div>
-          </div>
         </div>
-      </div>
 
-      {/* RIGHT COLUMN: Mecanum Directional Controller & Speed & Logs */}
-      <div className="w-full lg:w-96 flex flex-col gap-3">
-        {/* Mecanum Kinematics Controller */}
-        <div className="hud-panel rounded-lg p-3.5 flex flex-col items-center">
-          <div className="w-full flex items-center justify-between pb-2 mb-2 border-b border-tactical-700/60 font-mono text-xs">
-            <span className="font-bold text-white flex items-center space-x-1.5">
-              <Gauge className="w-4 h-4 text-police-cyan" />
-              <span>MECANUM 4WD BOSHQARUV</span>
-            </span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-tactical-800 text-police-cyan border border-tactical-700">
-              L293D SHIELD
-            </span>
-          </div>
+        {/* Kichik kameralar: bosilgani asosiy bo'ladi */}
+        <div className="flex justify-center gap-2 p-2 bg-tactical-900 border-t border-tactical-700" role="group" aria-label="Kameralar">
+          {CAMERAS.map((cam) => {
+            const active = activeCam === cam.id;
+            return (
+              <button
+                key={cam.id}
+                onClick={() => setActiveCam(cam.id)}
+                aria-pressed={active}
+                title={`${cam.long} kamera`}
+                className={`relative flex-none rounded-lg overflow-hidden bg-tactical-950 border-2 transition-colors ${
+                  active ? 'border-police-cyan' : 'border-tactical-700 hover:border-tactical-600'
+                }`}
+                style={{ aspectRatio: '16 / 9', height: 'clamp(64px, 13vh, 120px)', maxWidth: '24%' }}
+              >
+                {cam.id === 'front' && cameraSource === 'FRONTAL' ? (
+                  <video
+                    ref={thumbVideoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className={`absolute inset-0 w-full h-full object-cover ${mirrorVideo ? 'scale-x-[-1]' : ''}`}
+                  />
+                ) : (
+                  <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-slate-500">
+                    <VideoOff className="w-4 h-4" />
+                    <span className="text-[10px]">{cam.id === 'front' ? 'Manba: ' + cameraSource : 'Signal yo\'q'}</span>
+                  </span>
+                )}
+                <span className="absolute left-1.5 top-1.5 px-1.5 py-0.5 rounded-md bg-black/70 text-[10px] font-semibold text-white">
+                  {cam.short}
+                </span>
+              </button>
+            );
+          })}
+        </div>
 
-          {/* Speed Selector (1, 2, 3) */}
-          <div className="w-full flex items-center justify-between bg-tactical-900/80 p-1.5 rounded border border-tactical-700/50 mb-3">
-            <span className="text-[11px] font-mono text-slate-300 pl-1 font-semibold">TEZLIK (PWM):</span>
-            <div className="flex space-x-1.5">
-              {([1, 2, 3] as SpeedLevel[]).map((lvl) => {
-                const pwmLabel = lvl === 1 ? '130' : lvl === 2 ? '190' : '250';
-                const active = speedLevel === lvl;
-                return (
+        {/* ===== Suzuvchi panellar (video ustida, sudrab surish mumkin) ===== */}
+        <div className="absolute inset-0 pointer-events-none">
+          <FloatingPanel id="control" title="Boshqaruv" icon={<Gauge className="w-4 h-4" />} open={isOpen('control')} onClose={() => closePanel('control')} anchor="br" width={300}>
+            <div className="flex flex-col gap-3 items-stretch">
+              <div className="flex items-center justify-between rounded-lg bg-tactical-850 p-1.5">
+                <span className="text-[11px] text-slate-300 pl-1">Tezlik (PWM)</span>
+                <div className="flex gap-1">
+                  {([1, 2, 3] as SpeedLevel[]).map((lvl) => {
+                    const pwmLabel = lvl === 1 ? '130' : lvl === 2 ? '190' : '250';
+                    return (
+                      <button
+                        key={lvl}
+                        onClick={() => setSpeedLevel(lvl)}
+                        aria-pressed={speedLevel === lvl}
+                        className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
+                          speedLevel === lvl ? 'bg-police-blue text-white' : 'text-slate-300 hover:bg-tactical-800'
+                        }`}
+                      >
+                        {lvl} <span className="text-[9px] opacity-70">({pwmLabel})</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                {KEYPAD.map((k, i) => {
+                  if (!k) return <span key={i} />;
+                  const blocked = k.cmd === 'F' && isFrontBlocked;
+                  const Icon = k.icon;
+                  const active = lastCommand === k.cmd && k.cmd !== 'S';
+                  return (
+                    <button
+                      key={k.key}
+                      onClick={() => sendMecanumCommand(k.cmd)}
+                      disabled={blocked}
+                      title={k.title}
+                      className={`py-3 rounded-lg border flex flex-col items-center justify-center gap-1 text-[11px] font-medium transition-transform active:scale-95 ${
+                        k.cmd === 'S'
+                          ? 'bg-police-red/15 border-police-red/60 text-police-red'
+                          : blocked
+                          ? 'opacity-40 cursor-not-allowed bg-tactical-950 border-tactical-700 text-slate-500'
+                          : active
+                          ? 'bg-police-blue border-police-blue text-white'
+                          : 'bg-tactical-850 border-tactical-700 text-slate-200 hover:bg-tactical-800'
+                      }`}
+                    >
+                      <Icon className="w-5 h-5" />
+                      <span>{k.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => sendMecanumCommand('U')}
+                  title="Teleskopik minorani ko'tarish (U)"
+                  className="py-2 rounded-lg border border-tactical-700 bg-tactical-850 text-slate-200 hover:bg-tactical-800 text-xs font-medium flex items-center justify-center gap-1.5"
+                >
+                  <ChevronsUp className="w-4 h-4" /> Minora (U)
+                </button>
+                <button
+                  onClick={() => sendMecanumCommand('D')}
+                  title="Teleskopik minorani tushirish (D)"
+                  className="py-2 rounded-lg border border-tactical-700 bg-tactical-850 text-slate-200 hover:bg-tactical-800 text-xs font-medium flex items-center justify-center gap-1.5"
+                >
+                  <ChevronsDown className="w-4 h-4" /> Minora (D)
+                </button>
+              </div>
+
+              <p className="text-[11px] text-slate-400 text-center">
+                Klaviatura: <span className="text-police-cyan">W A S D Q E, Space (to'xtatish), 1-3 (tezlik)</span>
+              </p>
+            </div>
+          </FloatingPanel>
+          <FloatingPanel id="sensors" title="Sensorlar" icon={<Activity className="w-4 h-4" />} open={isOpen('sensors')} onClose={() => closePanel('sensors')} anchor="bl" width={320}>
+            <div className="flex flex-col gap-3">
+              <div className="grid grid-cols-2 gap-2">
+                <SonarChip side="front" label="OLD" pins="TRIG A0, ECHO A1" value={sonars.front} critical={isFrontBlocked} />
+                <SonarChip side="rear" label="ORQA" pins="TRIG A2, ECHO A3" value={sonars.rear} />
+                <SonarChip side="left" label="CHAP" value={sonars.left} />
+                <SonarChip side="right" label="O'NG" value={sonars.right} />
+              </div>
+
+              <div
+                data-robot-eye
+                className={`rounded-lg border px-3 py-2 text-xs ${
+                  cameraObstacle.isBlocked
+                    ? 'bg-police-red/10 border-police-red/50 text-police-red'
+                    : cameraObstacle.distanceCm < 80
+                    ? 'bg-police-amber/10 border-police-amber/40 text-police-amber'
+                    : 'bg-tactical-850 border-tactical-700 text-police-green'
+                }`}
+              >
+                <div className="font-semibold flex items-center gap-1.5">
+                  <Eye className="w-3.5 h-3.5" />
+                  Robot ko'zi: {cameraObstacle.active ? `${cameraObstacle.label}, ${cameraObstacle.distanceCm} sm` : 'kutilmoqda'}
+                </div>
+                {cameraObstacle.isBlocked && <div className="mt-1 font-semibold">Avtotormoz ishga tushdi</div>}
+                {cameraObstacle.distanceCm <= 80 && cameraObstacle.evasionDirection !== 'CLEAR' && (
+                  <div className="mt-1 text-police-cyan">
+                    {cameraObstacle.evasionDirection === 'LEFT' && "Chapdan chetlab o'tish tavsiya etiladi (A)"}
+                    {cameraObstacle.evasionDirection === 'RIGHT' && "O'ngdan chetlab o'tish tavsiya etiladi (D)"}
+                    {cameraObstacle.evasionDirection === 'REVERSE' && 'Orqaga chekinish tavsiya etiladi (S)'}
+                  </div>
+                )}
+              </div>
+
+              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+                <dt className="text-slate-400 flex items-center gap-1"><Compass className="w-3 h-3" /> Azimut</dt>
+                <dd className="text-right text-slate-100">{String(gps.heading || 42).padStart(3, '0')}°{gps.isReal ? ' (kompas)' : ''}</dd>
+                <dt className="text-slate-400">Komanda</dt>
+                <dd className="text-right text-police-cyan font-semibold">{lastCommand}</dd>
+                <dt className="text-slate-400 flex items-center gap-1"><MapPin className="w-3 h-3" /> GPS</dt>
+                <dd className="text-right text-slate-100">{gps.latitude.toFixed(5)}, {gps.longitude.toFixed(5)}</dd>
+                <dt className="text-slate-400">Aniqlik</dt>
+                <dd className="text-right text-slate-100">±{gps.accuracy || 3.5} m</dd>
+              </dl>
+
+              <button
+                onClick={gps.isReal ? toggleGPSMode : startRealGPS}
+                className="w-full px-3 py-1.5 rounded-lg border border-tactical-700 bg-tactical-850 text-xs font-medium text-slate-200 hover:bg-tactical-800 flex items-center justify-center gap-1.5"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${gps.status === 'SEARCHING' ? 'animate-spin' : ''}`} />
+                {gps.isReal ? 'Simulyatsiya GPS ga o\'tish' : 'Haqiqiy GPS ni yoqish'}
+              </button>
+            </div>
+          </FloatingPanel>
+          <FloatingPanel id="ai" title="AI va yuz tanish" icon={<Eye className="w-4 h-4" />} open={isOpen('ai')} onClose={() => closePanel('ai')} anchor="tl" width={320}>
+            <div className="flex flex-col gap-3 text-xs">
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setAiEnabled(!aiEnabled)}
+                  aria-pressed={aiEnabled}
+                  className={`flex-1 px-2.5 py-1.5 rounded-lg border font-medium flex items-center justify-center gap-1.5 ${
+                    aiEnabled ? 'bg-police-blue border-police-blue text-white' : 'bg-tactical-850 border-tactical-700 text-slate-300'
+                  }`}
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  AI {aiEnabled ? 'yoqilgan' : "o'chiq"}
+                </button>
+                {cameraSource === 'FRONTAL' && (
                   <button
-                    key={lvl}
-                    onClick={() => setSpeedLevel(lvl)}
-                    className={`px-2.5 py-1 rounded text-xs font-mono font-bold transition-all ${
-                      active
-                        ? 'bg-police-blue text-white shadow-[0_0_10px_rgba(29,99,255,0.7)]'
-                        : 'bg-tactical-800 text-slate-400 hover:text-white border border-tactical-700'
+                    onClick={() => setMirrorVideo(!mirrorVideo)}
+                    aria-pressed={mirrorVideo}
+                    className={`flex-1 px-2.5 py-1.5 rounded-lg border font-medium ${
+                      mirrorVideo ? 'bg-tactical-700 border-tactical-600 text-white' : 'bg-tactical-850 border-tactical-700 text-slate-300'
                     }`}
                   >
-                    {lvl} <span className="text-[9px] opacity-75">({pwmLabel})</span>
+                    Oyna {mirrorVideo ? 'yoqilgan' : "o'chiq"}
                   </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* 3x3 Mecanum Tactical Keypad */}
-          <div className="grid grid-cols-3 gap-2 w-full max-w-[280px]">
-            <button
-              onClick={() => sendMecanumCommand('Q')}
-              title="Chapga Yonlama (Strafe Q)"
-              className={`p-3.5 rounded-lg border font-mono font-bold flex flex-col items-center justify-center transition-all active:scale-95 ${
-                lastCommand === 'Q'
-                  ? 'bg-police-blue text-white border-police-cyan shadow-[0_0_14px_rgba(29,99,255,0.8)]'
-                  : 'bg-tactical-900/90 text-slate-300 border-tactical-700/70 hover:bg-tactical-800'
-              }`}
-            >
-              <RotateCcw className="w-5 h-5 text-police-cyan mb-1" />
-              <span className="text-[11px]">STRAFE Q</span>
-            </button>
-
-            <button
-              onClick={() => sendMecanumCommand('F')}
-              disabled={isFrontBlocked}
-              title="Oldinga (F)"
-              className={`p-3.5 rounded-lg border font-mono font-bold flex flex-col items-center justify-center transition-all active:scale-95 ${
-                isFrontBlocked
-                  ? 'opacity-40 bg-tactical-950 border-rose-900 cursor-not-allowed'
-                  : lastCommand === 'F'
-                  ? 'bg-emerald-600 text-white border-emerald-400 shadow-[0_0_14px_rgba(0,230,118,0.8)]'
-                  : 'bg-tactical-900/90 text-slate-300 border-tactical-700/70 hover:bg-tactical-800'
-              }`}
-            >
-              <ArrowUp className="w-6 h-6 text-emerald-400 mb-1" />
-              <span className="text-xs">OLDINGA (F)</span>
-            </button>
-
-            <button
-              onClick={() => sendMecanumCommand('E')}
-              title="O'ngga Yonlama (Strafe E)"
-              className={`p-3.5 rounded-lg border font-mono font-bold flex flex-col items-center justify-center transition-all active:scale-95 ${
-                lastCommand === 'E'
-                  ? 'bg-police-blue text-white border-police-cyan shadow-[0_0_14px_rgba(29,99,255,0.8)]'
-                  : 'bg-tactical-900/90 text-slate-300 border-tactical-700/70 hover:bg-tactical-800'
-              }`}
-            >
-              <RotateCw className="w-5 h-5 text-police-cyan mb-1" />
-              <span className="text-[11px]">STRAFE E</span>
-            </button>
-
-            <button
-              onClick={() => sendMecanumCommand('L')}
-              title="Chapga Burilish (L)"
-              className={`p-3.5 rounded-lg border font-mono font-bold flex flex-col items-center justify-center transition-all active:scale-95 ${
-                lastCommand === 'L'
-                  ? 'bg-police-blue text-white border-police-cyan shadow-[0_0_14px_rgba(29,99,255,0.8)]'
-                  : 'bg-tactical-900/90 text-slate-300 border-tactical-700/70 hover:bg-tactical-800'
-              }`}
-            >
-              <ArrowLeft className="w-6 h-6 text-police-cyan mb-1" />
-              <span className="text-xs">CHAP (L)</span>
-            </button>
-
-            <button
-              onClick={() => sendMecanumCommand('S')}
-              title="To'xtatish (S)"
-              className={`p-3.5 rounded-lg border-2 font-mono font-black flex flex-col items-center justify-center transition-all active:scale-95 ${
-                lastCommand === 'S'
-                  ? 'bg-rose-600 text-white border-rose-400 shadow-[0_0_18px_rgba(255,34,56,0.9)] animate-pulse'
-                  : 'bg-tactical-800 text-rose-300 border-rose-600/70 hover:bg-rose-900/50'
-              }`}
-            >
-              <Square className="w-6 h-6 text-white mb-1 fill-current" />
-              <span className="text-xs">STOP (S)</span>
-            </button>
-
-            <button
-              onClick={() => sendMecanumCommand('R')}
-              title="O'ngga Burilish (R)"
-              className={`p-3.5 rounded-lg border font-mono font-bold flex flex-col items-center justify-center transition-all active:scale-95 ${
-                lastCommand === 'R'
-                  ? 'bg-police-blue text-white border-police-cyan shadow-[0_0_14px_rgba(29,99,255,0.8)]'
-                  : 'bg-tactical-900/90 text-slate-300 border-tactical-700/70 hover:bg-tactical-800'
-              }`}
-            >
-              <ArrowRight className="w-6 h-6 text-police-cyan mb-1" />
-              <span className="text-xs">O'NG (R)</span>
-            </button>
-
-            <button
-              onClick={() => sendMecanumCommand('L')}
-              title="360° Joyida Burilish"
-              className="p-3 rounded-lg border font-mono text-[10px] text-slate-400 border-tactical-700/70 bg-tactical-900/90 hover:bg-tactical-800 flex flex-col items-center justify-center"
-            >
-              <RotateCcw className="w-4 h-4 mb-0.5 text-slate-400" />
-              <span>360° BURIL</span>
-            </button>
-
-            <button
-              onClick={() => sendMecanumCommand('B')}
-              title="Orqaga (B)"
-              className={`p-3.5 rounded-lg border font-mono font-bold flex flex-col items-center justify-center transition-all active:scale-95 ${
-                lastCommand === 'B'
-                  ? 'bg-police-blue text-white border-police-cyan shadow-[0_0_14px_rgba(29,99,255,0.8)]'
-                  : 'bg-tactical-900/90 text-slate-300 border-tactical-700/70 hover:bg-tactical-800'
-              }`}
-            >
-              <ArrowDown className="w-6 h-6 text-police-cyan mb-1" />
-              <span className="text-xs">ORQAGA (B)</span>
-            </button>
-
-            <button
-              onClick={() => sendMecanumCommand('R')}
-              title="360° Joyida O'ngga Burilish"
-              className="p-3 rounded-lg border font-mono text-[10px] text-slate-400 border-tactical-700/70 bg-tactical-900/90 hover:bg-tactical-800 flex flex-col items-center justify-center"
-            >
-              <RotateCw className="w-4 h-4 mb-0.5 text-slate-400" />
-              <span>360° SPUR</span>
-            </button>
-          </div>
-
-          {/* Teleskopik Minora Boshqaruvi */}
-          <div className="grid grid-cols-2 gap-2 mt-2 w-full max-w-[280px]">
-            <button
-              onClick={() => sendMecanumCommand('U')}
-              title="Teleskopik Minorani Ko'tarish (U)"
-              className="p-2 rounded-lg border font-mono text-xs font-bold text-police-cyan border-police-cyan/40 bg-tactical-900/90 hover:bg-tactical-800 flex items-center justify-center space-x-1"
-            >
-              <span>🗼 MINORA ↑ (U)</span>
-            </button>
-            <button
-              onClick={() => sendMecanumCommand('D')}
-              title="Teleskopik Minorani Tushirish (D)"
-              className="p-2 rounded-lg border font-mono text-xs font-bold text-slate-300 border-tactical-700 bg-tactical-900/90 hover:bg-tactical-800 flex items-center justify-center space-x-1"
-            >
-              <span>🗼 MINORA ↓ (D)</span>
-            </button>
-          </div>
-
-          <div className="mt-3 text-[10px] font-mono text-slate-400 text-center">
-            Klaviatura: <span className="text-police-cyan">W, A, S, D, Q, E, Space (Stop), 1-3 (Tezlik)</span>
-          </div>
-        </div>
-
-        {/* Real-time Telemetry & Arduino Serial Stream */}
-        <div className="hud-panel rounded-lg p-3 flex flex-col flex-1 min-h-[160px]">
-          <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-tactical-700/60 font-mono text-xs">
-            <span className="font-bold text-white flex items-center space-x-1.5">
-              <span className="w-2 h-2 rounded-full bg-police-cyan animate-pulse" />
-              <span>SERIAL TELEMETRIYA KONSOLI</span>
-            </span>
-            <span className="text-[10px] text-slate-400">{system.arduinoPort}</span>
-          </div>
-
-          <div className="flex-1 bg-tactical-950/90 rounded border border-tactical-800 p-2 overflow-y-auto max-h-40 font-mono text-[11px] space-y-1">
-            {logs.slice(0, 15).map((log) => (
-              <div key={log.id} className="flex items-start space-x-1.5">
-                <span className="text-slate-500 shrink-0">[{log.time}]</span>
-                <span
-                  className={`px-1 rounded text-[9px] font-bold shrink-0 ${
-                    log.level === 'error'
-                      ? 'bg-rose-950 text-rose-400'
-                      : log.level === 'warn'
-                      ? 'bg-amber-950 text-amber-400'
-                      : log.level === 'success'
-                      ? 'bg-emerald-950 text-emerald-400'
-                      : 'bg-tactical-800 text-slate-300'
-                  }`}
-                >
-                  {log.source}
-                </span>
-                <span
-                  className={`break-all ${
-                    log.level === 'error'
-                      ? 'text-rose-400 font-semibold'
-                      : log.level === 'warn'
-                      ? 'text-amber-300'
-                      : log.level === 'success'
-                      ? 'text-emerald-300'
-                      : 'text-slate-300'
-                  }`}
-                >
-                  {log.text}
-                </span>
+                )}
               </div>
-            ))}
-          </div>
+
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="rounded-lg bg-tactical-850 py-2">
+                  <div className="text-base font-semibold text-police-green">{detectedCounts.people}</div>
+                  <div className="text-[10px] text-slate-400">Odam</div>
+                </div>
+                <div className="rounded-lg bg-tactical-850 py-2">
+                  <div className="text-base font-semibold text-police-cyan">{detectedCounts.cars}</div>
+                  <div className="text-[10px] text-slate-400">Mashina</div>
+                </div>
+                <div className="rounded-lg bg-tactical-850 py-2">
+                  <div className={`text-base font-semibold ${detectedCounts.obstacles > 0 ? 'text-police-amber' : 'text-slate-300'}`}>
+                    {detectedCounts.obstacles}
+                  </div>
+                  <div className="text-[10px] text-slate-400">To'siq</div>
+                </div>
+              </div>
+
+              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+                <dt className="text-slate-400">Model</dt>
+                <dd className="text-right text-slate-100">
+                  {aiModelLoaded ? 'COCO-SSD + yuz tayyor' : aiModelLoading ? 'Yuklanmoqda (birinchi marta 10-40 s)' : 'Detektor'}
+                </dd>
+                <dt className="text-slate-400">Yuz</dt>
+                <dd className={`text-right ${faceStatus === 'error' ? 'text-police-red' : faceInfo.count > 0 ? 'text-police-green' : 'text-police-amber'}`}>
+                  {faceStatus === 'loading'
+                    ? 'yuklanmoqda'
+                    : faceStatus === 'error'
+                    ? 'model xato (jurnalga qarang)'
+                    : faceInfo.count > 0
+                    ? `${faceInfo.count} ta, ${faceInfo.widthPx}px`
+                    : 'topilmadi'}
+                  {faceStatus === 'ready' && faceInfo.cycleMs > 0 ? `, ${faceInfo.cycleMs} ms` : ''}
+                </dd>
+                <dt className="text-slate-400">Masofa (yuz)</dt>
+                <dd className="text-right text-slate-100">{faceInfo.faceDistM > 0 ? `${Math.round(faceInfo.faceDistM * 100)} sm` : 'yo\'q'}</dd>
+                <dt className="text-slate-400">Obyektlar</dt>
+                <dd className="text-right text-slate-100">{detectedCounts.total}</dd>
+              </dl>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => setShowFaceDbModal(true)}
+                  className="px-2.5 py-1.5 rounded-lg border border-tactical-700 bg-tactical-850 text-slate-200 hover:bg-tactical-800 font-medium flex items-center justify-center gap-1.5"
+                >
+                  <Users className="w-3.5 h-3.5 text-police-green" />
+                  Yuzlar bazasi ({knownPersons.length})
+                </button>
+                <button
+                  onClick={() => setShowCalibration(true)}
+                  className={`px-2.5 py-1.5 rounded-lg border bg-tactical-850 hover:bg-tactical-800 font-medium flex items-center justify-center gap-1.5 ${
+                    calibrated ? 'border-tactical-700 text-police-green' : 'border-police-amber/60 text-police-amber'
+                  }`}
+                >
+                  <Ruler className="w-3.5 h-3.5" />
+                  {calibrated ? 'Kalibrovka tayyor' : 'Kalibrovka'}
+                </button>
+              </div>
+            </div>
+          </FloatingPanel>
+          <FloatingPanel id="ptz" title="PTZ burilish" icon={<SlidersHorizontal className="w-4 h-4" />} open={isOpen('ptz')} onClose={() => closePanel('ptz')} anchor="tr" width={260}>
+            <div className="flex flex-col gap-3 text-xs">
+              <div className="grid grid-cols-3 gap-2">
+                <span />
+                <button onClick={() => adjustPTZ(0, 10)} className="py-2 rounded-lg border border-tactical-700 bg-tactical-850 text-slate-200 hover:bg-tactical-800 flex justify-center" title="Yuqoriga">
+                  <ArrowUp className="w-4 h-4" />
+                </button>
+                <span />
+                <button onClick={() => adjustPTZ(-15, 0)} className="py-2 rounded-lg border border-tactical-700 bg-tactical-850 text-slate-200 hover:bg-tactical-800 flex justify-center" title="Chapga">
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setPTZ((p) => ({ ...p, pan: 0, tilt: 15, zoom: 1, mode: p.mode === 'AUTO_CAMERA' ? 'MANUAL' : 'AUTO_CAMERA' }))}
+                  className="py-2 rounded-lg border border-police-blue bg-police-blue/20 text-police-cyan font-semibold"
+                  title="Markazga qaytarish va rejimni almashtirish"
+                >
+                  {ptz.mode === 'AUTO_CAMERA' ? 'Avto' : "Qo'lda"}
+                </button>
+                <button onClick={() => adjustPTZ(15, 0)} className="py-2 rounded-lg border border-tactical-700 bg-tactical-850 text-slate-200 hover:bg-tactical-800 flex justify-center" title="O'ngga">
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+                <span />
+                <button onClick={() => adjustPTZ(0, -10)} className="py-2 rounded-lg border border-tactical-700 bg-tactical-850 text-slate-200 hover:bg-tactical-800 flex justify-center" title="Pastga">
+                  <ArrowDown className="w-4 h-4" />
+                </button>
+                <span />
+              </div>
+              <dl className="grid grid-cols-3 gap-2 text-center">
+                <div className="rounded-lg bg-tactical-850 py-1.5"><dt className="text-[10px] text-slate-400">Pan</dt><dd className="text-slate-100">{ptz.pan}°</dd></div>
+                <div className="rounded-lg bg-tactical-850 py-1.5"><dt className="text-[10px] text-slate-400">Tilt</dt><dd className="text-slate-100">{ptz.tilt}°</dd></div>
+                <div className="rounded-lg bg-tactical-850 py-1.5"><dt className="text-[10px] text-slate-400">Zoom</dt><dd className="text-slate-100">{ptz.zoom}x</dd></div>
+              </dl>
+            </div>
+          </FloatingPanel>
+          <FloatingPanel id="log" title="Serial jurnal" icon={<ScrollText className="w-4 h-4" />} open={isOpen('log')} onClose={() => closePanel('log')} anchor="tr" width={380}>
+            <div className="flex flex-col gap-2 text-[11px]">
+              <div className="text-slate-400">{system.arduinoPort}</div>
+              <div className="rounded-lg bg-tactical-950 border border-tactical-800 p-2 overflow-y-auto max-h-64 space-y-1">
+                {logs.slice(0, 15).map((log) => (
+                  <div key={log.id} className="flex items-start gap-1.5">
+                    <span className="text-slate-500 shrink-0">{log.time}</span>
+                    <span
+                      className={`px-1 rounded text-[9px] font-semibold shrink-0 ${
+                        log.level === 'error'
+                          ? 'bg-police-red/15 text-police-red'
+                          : log.level === 'warn'
+                          ? 'bg-police-amber/15 text-police-amber'
+                          : log.level === 'success'
+                          ? 'bg-police-green/15 text-police-green'
+                          : 'bg-tactical-800 text-slate-300'
+                      }`}
+                    >
+                      {log.source}
+                    </span>
+                    <span
+                      className={`break-words min-w-0 ${
+                        log.level === 'error' ? 'text-police-red' : log.level === 'warn' ? 'text-police-amber' : log.level === 'success' ? 'text-police-green' : 'text-slate-300'
+                      }`}
+                    >
+                      {log.text}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </FloatingPanel>
         </div>
       </div>
 

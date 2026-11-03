@@ -41,10 +41,10 @@ const AppShell: React.FC = () => {
     );
   }
 
-  // DEFAULT VIEW: Robot Minora Yuzi (Oyna ortida 3D result.glb odam)
+  // DEFAULT VIEW: Robot yuzi (2D ko'zlar, kamera yoqilgach odamni kuzatadi)
   if (!isUnlocked) {
     return (
-      <div className="relative h-screen w-screen bg-[#05080e] overflow-hidden select-none">
+      <div className="relative h-screen w-screen bg-tactical-950 overflow-hidden select-none">
         <RobotFaceView onUnlockRequest={() => setAuthModalOpen(true)} />
         <OperatorAuthModal
           isOpen={authModalOpen}

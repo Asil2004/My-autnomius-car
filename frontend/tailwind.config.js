@@ -6,29 +6,33 @@ export default {
   ],
   theme: {
     extend: {
+      // Bitta palitra: grafit neytral qatlamlar + bitta urg'u (teal-cyan). Qizil/sariq/yashil faqat holat (xavf/ogohlantirish/xavfsiz) uchun.
+      // Eski nomlar (tactical, police) saqlangan, shuning uchun hamma tablar yangi palitrani avtomatik oladi.
       colors: {
         tactical: {
-          950: '#06090e',
-          900: '#0a0f18',
-          850: '#0e1524',
-          800: '#141d30',
-          700: '#1d2a44',
-          600: '#2b3c5e',
-          500: '#3d527d',
+          950: '#0b0e13',
+          900: '#10141b',
+          850: '#141922',
+          800: '#1a202a',
+          700: '#252d3a',
+          600: '#343e50',
+          500: '#4a566b',
         },
         police: {
-          blue: '#1d63ff',
-          blueGlow: 'rgba(29, 99, 255, 0.4)',
-          red: '#ff2238',
-          redGlow: 'rgba(255, 34, 56, 0.4)',
-          cyan: '#00e5ff',
-          amber: '#ffb300',
-          green: '#00e676',
+          blue: '#1f7f95',
+          blueGlow: 'rgba(31, 127, 149, 0.35)',
+          red: '#ef5b5b',
+          redGlow: 'rgba(239, 91, 91, 0.35)',
+          cyan: '#5ad1e6',
+          amber: '#f5b544',
+          green: '#4ade80',
         }
       },
+      // Bitta shrift oilasi (Onest, o'zida saqlanadi). Mono ham shu shrift: raqamlar tabular-nums orqali tekislanadi
       fontFamily: {
-        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
-        display: ['Inter', 'system-ui', 'sans-serif'],
+        sans: ['Onest', 'system-ui', 'sans-serif'],
+        mono: ['Onest', 'system-ui', 'sans-serif'],
+        display: ['Onest', 'system-ui', 'sans-serif'],
       },
       animation: {
         'strobe-police': 'policeStrobe 0.8s infinite ease-in-out',
@@ -37,9 +41,9 @@ export default {
       },
       keyframes: {
         policeStrobe: {
-          '0%, 45%': { borderColor: '#ff2238', boxShadow: '0 0 25px rgba(255, 34, 56, 0.8)' },
-          '50%, 95%': { borderColor: '#1d63ff', boxShadow: '0 0 25px rgba(29, 99, 255, 0.8)' },
-          '100%': { borderColor: '#ff2238', boxShadow: '0 0 25px rgba(255, 34, 56, 0.8)' },
+          '0%, 45%': { borderColor: '#ef5b5b' },
+          '50%, 95%': { borderColor: '#1f7f95' },
+          '100%': { borderColor: '#ef5b5b' },
         },
         radarSweep: {
           '0%': { transform: 'rotate(0deg)' },

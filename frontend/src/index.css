@@ -4,9 +4,18 @@
 
 :root {
   color-scheme: dark;
-  --bg-primary: #070a0f;
-  --panel-bg: rgba(14, 21, 36, 0.92);
-  --border-color: rgba(43, 60, 94, 0.45);
+  --bg-primary: #0b0e13;
+  --surface: #10141b;
+  --surface-raised: #141922;
+  --line: #252d3a;
+  --text: #e6e9ef;
+  --text-dim: #9aa3b2;
+  --accent: #5ad1e6;
+  --accent-strong: #1f7f95;
+  --ok: #4ade80;
+  --warn: #f5b544;
+  --danger: #ef5b5b;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 * {
@@ -19,102 +28,100 @@ body {
   margin: 0;
   padding: 0;
   background-color: var(--bg-primary);
-  color: #e2e8f0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+  color: var(--text);
+  font-family: 'Onest', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  /* Telemetriya raqamlari ustunda tekis turishi uchun */
+  font-variant-numeric: tabular-nums;
   overflow-x: hidden;
   height: 100vh;
   width: 100vw;
-  background-image: 
-    radial-gradient(circle at 50% 0%, rgba(29, 99, 255, 0.08) 0%, transparent 60%),
-    linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
-  background-size: 100% 100%, 24px 24px, 24px 24px;
 }
 
-/* Custom Tactical Scrollbars */
+/* Brauzer bergan qismlar ham palitradan: belgilash, kursor rangi, fokus halqasi, skrollbar */
+::selection {
+  background: rgba(90, 209, 230, 0.28);
+  color: #fff;
+}
+input, textarea {
+  caret-color: var(--accent);
+  user-select: text;
+}
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 ::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: rgba(10, 15, 24, 0.8);
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2b3c5e;
-  border-radius: 2px;
+  background: var(--line);
+  border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3d527d;
+  background: #343e50;
 }
 
-/* Tactical chamfered borders & HUD styling (Optimized for Mobile GPUs: Zero backdrop-filter lag) */
+/* Panel: tekis yuza, bitta 1px chegara, bir xil radius (12px). Kontur va soya birga ishlatilmaydi */
 .hud-panel {
-  background: linear-gradient(135deg, rgba(16, 24, 40, 0.94) 0%, rgba(10, 15, 24, 0.98) 100%);
-  border: 1px solid rgba(43, 60, 94, 0.55);
-  box-shadow: 0 4px 16px -2px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
   position: relative;
-  transform: translateZ(0);
-}
-
-.hud-panel::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 8px;
-  height: 8px;
-  border-top: 2px solid #00e5ff;
-  border-left: 2px solid #00e5ff;
-  pointer-events: none;
-}
-
-.hud-panel::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  right: 0;
-  width: 8px;
-  height: 8px;
-  border-bottom: 2px solid #00e5ff;
-  border-right: 2px solid #00e5ff;
-  pointer-events: none;
 }
 
 .hud-pill {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
-/* Lightweight scanline effect */
-.scanlines {
-  position: relative;
-  overflow: hidden;
-}
-.scanlines::after {
-  content: " ";
-  display: block;
-  position: absolute;
-  top: 0; left: 0; bottom: 0; right: 0;
-  background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.15) 50%);
-  background-size: 100% 4px;
-  pointer-events: none;
+/* Suzuvchi oyna (HUD): shisha emas, qalin yuza. Sudralayotganda soyasi kuchayadi */
+.float-window {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.6);
 }
 
-/* Strobe indicators (Optimized: box-shadow instead of expensive filter: drop-shadow) */
+@keyframes float-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.float-enter {
+  animation: float-in 200ms var(--ease-out) both;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-fade-in {
+  animation: fade-in 200ms var(--ease-out) both;
+}
+
 @keyframes redFlash {
-  0%, 100% { opacity: 0.2; box-shadow: 0 0 0 transparent; }
-  50% { opacity: 1; box-shadow: 0 0 14px rgba(255, 34, 56, 0.85); }
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
 }
 @keyframes blueFlash {
-  0%, 100% { opacity: 0.2; box-shadow: 0 0 0 transparent; }
-  50% { opacity: 1; box-shadow: 0 0 14px rgba(29, 99, 255, 0.85); }
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
 }
-
 .strobe-red-active {
   animation: redFlash 0.35s infinite alternate ease-in-out;
 }
 .strobe-blue-active {
   animation: blueFlash 0.35s infinite alternate ease-in-out;
   animation-delay: 0.17s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .float-enter,
+  .animate-fade-in,
+  .strobe-red-active,
+  .strobe-blue-active {
+    animation: none;
+  }
 }
