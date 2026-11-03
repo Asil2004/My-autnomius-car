@@ -31,7 +31,18 @@ import {
   Plus,
   X,
   CheckCircle2,
-  Ruler
+  Ruler,
+  Maximize2,
+  Minimize2,
+  ZoomIn,
+  ZoomOut,
+  Play,
+  Pause,
+  FastForward,
+  Rewind,
+  Calendar,
+  Radio,
+  Film
 } from 'lucide-react';
 
 type PanelId = 'control' | 'sensors' | 'ai' | 'ptz' | 'log';
@@ -148,6 +159,116 @@ export const HUDView: React.FC = () => {
 
   const stageRef = useRef<HTMLDivElement | null>(null);
   // Asosiy oyna: 'face' = Face ID (planshetning frontal kamerasi). Qolganlari robotning 4 tomonidagi kameralar
+  // =========================================================================
+  // NVR TIZIMI: ZOOM, FULLSCREEN, SANA-VAQT (DIFFERENCE), LIVE / PLAYBACK, 5S AUTO-HIDE
+  // =========================================================================
+  const [nowTime, setNowTime] = useState(() => new Date());
+  useEffect(() => {
+    const t = window.setInterval(() => setNowTime(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const formatNvrTimestamp = (d: Date) => {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  };
+
+  const formatSecToTime = (totalSec: number) => {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const h = Math.floor(totalSec / 3600) % 24;
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = Math.floor(totalSec % 60);
+    return `${pad(h)}:${pad(m)}:${pad(s)}`;
+  };
+
+  // Zoom va Fullscreen holati
+  const [zoomLevel, setZoomLevel] = useState<number>(1);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+
+  // Live vs Playback (Qayta ko'rish) rejimi
+  const [viewMode, setViewMode] = useState<'live' | 'playback'>('live');
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
+  const [playbackDate, setPlaybackDate] = useState<string>(() => {
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  });
+  const [playbackSec, setPlaybackSec] = useState<number>(14400); // 04:00:00
+
+  // Playback timer (sekundma-sekund oldinga siljish)
+  useEffect(() => {
+    if (viewMode !== 'playback' || !isPlaying) return;
+    const intervalTime = Math.max(100, Math.round(1000 / playbackSpeed));
+    const timer = window.setInterval(() => {
+      setPlaybackSec((prev) => (prev >= 86399 ? 0 : prev + 1));
+    }, intervalTime);
+    return () => clearInterval(timer);
+  }, [viewMode, isPlaying, playbackSpeed]);
+
+  // 5 sekundlik Auto-Hide (Mishka harakatida chiqish, 5s qimirlamasa yashirinish, telefonda tap bilan almashtirish)
+  const [showOverlay, setShowOverlay] = useState<boolean>(true);
+  const overlayTimerRef = useRef<number | null>(null);
+
+  const resetOverlayTimer = useCallback(() => {
+    if (overlayTimerRef.current) clearTimeout(overlayTimerRef.current);
+    setShowOverlay(true);
+    overlayTimerRef.current = window.setTimeout(() => {
+      setShowOverlay(false);
+    }, 5000);
+  }, []);
+
+  const handleZoomIn = () => {
+    setZoomLevel((z) => Math.min(3, +(z + 0.25).toFixed(2)));
+    resetOverlayTimer();
+  };
+
+  const handleZoomOut = () => {
+    setZoomLevel((z) => Math.max(1, +(z - 0.25).toFixed(2)));
+    resetOverlayTimer();
+  };
+
+  const handleToggleFullscreen = () => {
+    setIsFullscreen((prev) => !prev);
+    resetOverlayTimer();
+  };
+
+  const handleCameraClick = useCallback(() => {
+    setShowOverlay((prev) => {
+      if (overlayTimerRef.current) clearTimeout(overlayTimerRef.current);
+      if (!prev) {
+        overlayTimerRef.current = window.setTimeout(() => {
+          setShowOverlay(false);
+        }, 5000);
+        return true;
+      } else {
+        return false;
+      }
+    });
+  }, []);
+
+  const handleCameraPointerMove = useCallback(() => {
+    resetOverlayTimer();
+  }, [resetOverlayTimer]);
+
+  useEffect(() => {
+    resetOverlayTimer();
+    return () => {
+      if (overlayTimerRef.current) clearTimeout(overlayTimerRef.current);
+    };
+  }, [resetOverlayTimer]);
+
+  // Esc bosilganda fullscreen rejimdan chiqish
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isFullscreen) {
+        setIsFullscreen(false);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isFullscreen]);
+
   const [activeCam, setActiveCam] = useState<CamId>('face');
   // Old kamera = robotning RPi oqimi. Ulanmagan bo'lsa "Signal yo'q" ko'rsatiladi va vaqti-vaqti bilan qayta uriniladi
   const [rpiOk, setRpiOk] = useState(false);
@@ -1141,12 +1262,14 @@ export const HUDView: React.FC = () => {
         </div>
 
         {/* ========================================================================= */}
-        {/* O'RTA: Katta ekranli kamera - chap tomondagi 4 ta kameraga oxirigacha taqalgan */}
+        {/* O'RTA: Katta ekranli kamera - NVR OSD, ZOOM, FULLSCREEN, LIVE / PLAYBACK, 5S AUTO-HIDE */}
         {/* ========================================================================= */}
-        <div className="relative flex-1 min-h-0 h-full flex flex-col bg-black overflow-hidden">
+        <div className={`relative flex-1 min-h-0 h-full flex flex-col bg-black overflow-hidden ${
+          isFullscreen ? 'fixed inset-0 z-50 w-screen h-screen' : ''
+        }`}>
           <div className={`flex-1 min-h-0 w-full h-full flex flex-col ${activeCam === 'face' ? '' : 'invisible'}`}>
             {/* Viewport: justify-start orqali kadr chapga oxirigacha taqalgan */}
-            <div ref={viewportWrapRef} className="bg-black flex-1 min-h-0 w-full h-full flex items-center justify-start overflow-hidden">
+            <div ref={viewportWrapRef} className="bg-black flex-1 min-h-0 w-full h-full flex items-center justify-start overflow-hidden relative">
               <div
                 className="relative bg-black flex items-center justify-center overflow-hidden"
                 style={{
@@ -1158,7 +1281,10 @@ export const HUDView: React.FC = () => {
               >
                 {/* 1-REJIM: FRONTAL WEBCAM (FACE ID) */}
                 {cameraSource === 'FRONTAL' && (
-                  <div className="absolute inset-0 bg-black">
+                  <div
+                    className="absolute inset-0 bg-black transition-transform duration-200 origin-center"
+                    style={{ transform: `scale(${zoomLevel})` }}
+                  >
                     <video
                       ref={videoRef}
                       autoPlay
@@ -1228,61 +1354,296 @@ export const HUDView: React.FC = () => {
 
           {/* AGAR ASOSIY OYNA FACE ID BO'LMASA */}
           {activeCam !== 'face' && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-tactical-950 text-center px-6">
-              {activeCam === 'front' && rpiOk ? (
-                <img
-                  src={`http://${system.rpiIp}:${system.rpiPort}/stream.mjpg?r=${rpiRetry}`}
-                  alt="Old kamera (RPi)"
-                  className="absolute inset-0 w-full h-full object-contain bg-black"
-                />
-              ) : activeCam === 'ptz' ? (
-                <div className="relative w-full h-full flex flex-col items-center justify-center bg-tactical-950">
-                  {/* PTZ jonli panjara va nishon */}
-                  <div className="absolute inset-4 border border-police-cyan/25 rounded-lg flex items-center justify-center pointer-events-none">
-                    <div className="w-16 h-0.5 bg-police-cyan/40" />
-                    <div className="h-16 w-0.5 bg-police-cyan/40 absolute" />
-                    <div className="w-32 h-32 rounded-full border border-police-cyan/20 absolute" />
-                    <span className="absolute top-3 left-3 text-[11px] font-mono font-bold text-police-cyan flex items-center gap-1.5">
-                      <SlidersHorizontal className="w-3.5 h-3.5" /> 360° PTZ KAMERA (JONLI)
-                    </span>
-                    <span className="absolute top-3 right-3 text-[11px] font-mono text-police-cyan bg-police-blue/20 px-2 py-0.5 rounded border border-police-cyan/30">
-                      PAN: {ptz.pan}° | TILT: {ptz.tilt}°
-                    </span>
-                    <span className="absolute bottom-3 left-3 text-[10px] font-mono text-slate-400">
-                      REJIM: {ptz.mode === 'AUTO_CAMERA' ? 'AVTOMATIK' : "QO'LDA BOSHQARUV"}
-                    </span>
-                    <span className="absolute bottom-3 right-3 text-[10px] font-mono text-slate-400">
-                      ZOOM: {ptz.zoom}x
-                    </span>
-                  </div>
-
-                  <div className="flex flex-col items-center gap-2 z-10">
-                    <div className="p-4 rounded-full bg-police-cyan/10 border border-police-cyan/40 text-police-cyan shadow-lg shadow-police-cyan/20 animate-pulse">
-                      <SlidersHorizontal className="w-10 h-10" />
-                    </div>
-                    <div className="text-base font-bold text-slate-100">PTZ Kamera Boshqaruv Rejimi</div>
-                    <div className="text-xs text-slate-400 max-w-sm">
-                      Chap pastdagi joystik orqali kamerani gorizontal (pan) va vertikal (tilt) 360° burishingiz mumkin.
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <VideoOff className="w-10 h-10 text-slate-500" />
-                  <div className="text-sm font-semibold text-slate-200">{ALL_CAMERAS.find((c) => c.id === activeCam)?.long} ulanmagan</div>
-                  <div className="text-xs text-slate-400 max-w-xs">
-                    Raspberry Pi dan shu tomonning oqimi ulanganda kadr shu yerda ko'rinadi.
-                  </div>
-                </>
-              )}
-              <button
-                onClick={() => setActiveCam('face')}
-                className="absolute left-3 top-3 z-10 px-3 py-1.5 rounded-lg bg-police-blue text-white text-xs font-semibold"
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-tactical-950 text-center px-6 overflow-hidden">
+              <div
+                className="w-full h-full flex items-center justify-center transition-transform duration-200 origin-center"
+                style={{ transform: `scale(${zoomLevel})` }}
               >
-                Face ID ga qaytish
-              </button>
+                {activeCam === 'front' && rpiOk ? (
+                  <img
+                    src={`http://${system.rpiIp}:${system.rpiPort}/stream.mjpg?r=${rpiRetry}`}
+                    alt="Old kamera (RPi)"
+                    className="w-full h-full object-contain bg-black"
+                  />
+                ) : activeCam === 'ptz' ? (
+                  <div className="relative w-full h-full flex flex-col items-center justify-center bg-tactical-950">
+                    <div className="absolute inset-4 border border-police-cyan/25 rounded-lg flex items-center justify-center pointer-events-none">
+                      <div className="w-16 h-0.5 bg-police-cyan/40" />
+                      <div className="h-16 w-0.5 bg-police-cyan/40 absolute" />
+                      <div className="w-32 h-32 rounded-full border border-police-cyan/20 absolute" />
+                      <span className="absolute top-3 left-3 text-[11px] font-mono font-bold text-police-cyan flex items-center gap-1.5">
+                        <SlidersHorizontal className="w-3.5 h-3.5" /> 360° PTZ KAMERA (JONLI)
+                      </span>
+                      <span className="absolute top-3 right-3 text-[11px] font-mono text-police-cyan bg-police-blue/20 px-2 py-0.5 rounded border border-police-cyan/30">
+                        PAN: {ptz.pan}° | TILT: {ptz.tilt}°
+                      </span>
+                      <span className="absolute bottom-3 left-3 text-[10px] font-mono text-slate-400">
+                        REJIM: {ptz.mode === 'AUTO_CAMERA' ? 'AVTOMATIK' : "QO'LDA BOSHQARUV"}
+                      </span>
+                      <span className="absolute bottom-3 right-3 text-[10px] font-mono text-slate-400">
+                        ZOOM: {ptz.zoom}x
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col items-center gap-2 z-10">
+                      <div className="p-4 rounded-full bg-police-cyan/10 border border-police-cyan/40 text-police-cyan shadow-lg shadow-police-cyan/20 animate-pulse">
+                        <SlidersHorizontal className="w-10 h-10" />
+                      </div>
+                      <div className="text-base font-bold text-slate-100">PTZ Kamera Boshqaruv Rejimi</div>
+                      <div className="text-xs text-slate-400 max-w-sm">
+                        Chap pastdagi joystik orqali kamerani gorizontal va vertikal 360° burishingiz mumkin.
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center gap-2">
+                    <VideoOff className="w-10 h-10 text-slate-500" />
+                    <div className="text-sm font-semibold text-slate-200">{ALL_CAMERAS.find((c) => c.id === activeCam)?.long} ulanmagan</div>
+                    <div className="text-xs text-slate-400 max-w-xs">
+                      Raspberry Pi dan shu tomonning oqimi ulanganda kadr shu yerda ko'rinadi.
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
+
+          {/* ========================================================================= */}
+          {/* NVR KAMERA EKRANI ICHIDAGI HUD OVERLAY (5S AUTO-HIDE, TAP/MOVE BILAN BOSHQARILADI) */}
+          {/* ========================================================================= */}
+          <div
+            onPointerMove={handleCameraPointerMove}
+            onClick={handleCameraClick}
+            className="absolute inset-0 z-30 flex flex-col justify-between p-3 pointer-events-auto cursor-pointer"
+          >
+            {/* YUQORI QATOR: NVR SANA-VAQT (DIFFERENCE REJIMI) + REJIMLAR + ZOOM + FULLSCREEN */}
+            <div
+              onClick={(e) => { e.stopPropagation(); resetOverlayTimer(); }}
+              className={`flex flex-wrap items-center justify-between gap-2 transition-all duration-300 ${
+                showOverlay ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 -translate-y-2 pointer-events-none'
+              }`}
+            >
+              {/* NVR SANA VA VAQT: Orqasidagi rangga qarab har bir harf avtomatik oq yoki qoraga o'zgaradi */}
+              <div
+                className="font-mono text-xs sm:text-sm font-black tracking-widest uppercase select-none px-2 py-1 rounded bg-black/30 backdrop-blur-xs border border-white/20"
+                style={{
+                  mixBlendMode: 'difference',
+                  color: '#ffffff',
+                  textShadow: '0 0 2px rgba(0,0,0,0.9)'
+                }}
+              >
+                CAM-{activeCam.toUpperCase()} • {formatNvrTimestamp(nowTime)}
+              </div>
+
+              {/* REJIM TANLASH: LIVE (Jonli) vs QAYTA KO'RISH (Playback) */}
+              <div className="flex items-center gap-1 bg-tactical-900/90 p-0.5 rounded-lg border border-tactical-700 shadow-lg backdrop-blur-md">
+                <button
+                  onClick={() => { setViewMode('live'); setIsPlaying(false); resetOverlayTimer(); }}
+                  className={`px-2.5 py-1 rounded-md text-xs font-bold flex items-center gap-1.5 transition-colors ${
+                    viewMode === 'live'
+                      ? 'bg-police-red text-white shadow-[0_0_12px_rgba(255,42,42,0.4)]'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Radio className="w-3.5 h-3.5 animate-pulse" /> JONLI (LIVE)
+                </button>
+                <button
+                  onClick={() => { setViewMode('playback'); resetOverlayTimer(); }}
+                  className={`px-2.5 py-1 rounded-md text-xs font-bold flex items-center gap-1.5 transition-colors ${
+                    viewMode === 'playback'
+                      ? 'bg-police-blue text-white shadow-[0_0_12px_rgba(0,102,255,0.4)]'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Film className="w-3.5 h-3.5" /> QAYTA KO'RISH
+                </button>
+              </div>
+
+              {/* ZOOM VA FULLSCREEN BUTTONLARI */}
+              <div className="flex items-center gap-1 bg-tactical-900/90 p-1 rounded-lg border border-tactical-700 shadow-lg backdrop-blur-md">
+                {/* Zoom Out */}
+                <button
+                  onClick={handleZoomOut}
+                  title="Kichraytirish (-)"
+                  className="p-1.5 rounded hover:bg-tactical-800 text-slate-300 hover:text-white transition-colors"
+                >
+                  <ZoomOut className="w-4 h-4" />
+                </button>
+                {/* Zoom darajasi */}
+                <span className="font-mono text-xs text-police-cyan px-1 font-bold">
+                  {zoomLevel.toFixed(1)}x
+                </span>
+                {/* Zoom In */}
+                <button
+                  onClick={handleZoomIn}
+                  title="Kattalashtirish (+)"
+                  className="p-1.5 rounded hover:bg-tactical-800 text-slate-300 hover:text-white transition-colors"
+                >
+                  <ZoomIn className="w-4 h-4" />
+                </button>
+                {/* Reset Zoom */}
+                {zoomLevel > 1 && (
+                  <button
+                    onClick={() => { setZoomLevel(1); resetOverlayTimer(); }}
+                    title="1x ga qaytarish"
+                    className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-tactical-800 text-police-cyan hover:bg-tactical-700"
+                  >
+                    1x
+                  </button>
+                )}
+
+                <div className="w-[1px] h-4 bg-tactical-700 mx-1" />
+
+                {/* Butun ekranga kattalashtirish (Fullscreen) */}
+                <button
+                  onClick={handleToggleFullscreen}
+                  title={isFullscreen ? "Fullscreen rejimidan chiqish" : "Butun ekranga kattalashtirish"}
+                  className="p-1.5 rounded bg-police-blue/20 hover:bg-police-blue/40 text-police-cyan transition-colors"
+                >
+                  {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            {/* QAYTA KO'RISH (PLAYBACK) REJIMI: VIDEONI TO'XTATISH, 10S OLDINGA/ORQAGA, TEZLIK, SCROLLBAR, KALENDAR */}
+            {viewMode === 'playback' && (
+              <div
+                onClick={(e) => { e.stopPropagation(); resetOverlayTimer(); }}
+                className={`flex flex-col gap-2 p-2.5 rounded-xl bg-tactical-950/90 border border-tactical-700 shadow-2xl backdrop-blur-md transition-all duration-300 ${
+                  showOverlay ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-2 pointer-events-none'
+                }`}
+              >
+                {/* 1-qator: Kalendar, Vaqt ko'rsatkichi, Tezlik */}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  {/* Kalendar orqali kunni tanlash */}
+                  <div className="flex items-center gap-1.5 bg-tactical-900 px-2.5 py-1 rounded-lg border border-tactical-700 text-xs">
+                    <Calendar className="w-3.5 h-3.5 text-police-cyan" />
+                    <span className="text-[11px] text-slate-400">Kun:</span>
+                    <input
+                      type="date"
+                      value={playbackDate}
+                      onChange={(e) => { setPlaybackDate(e.target.value); resetOverlayTimer(); }}
+                      className="bg-transparent text-white font-mono text-xs focus:outline-none cursor-pointer"
+                    />
+                  </div>
+
+                  {/* Vaqt ko'rsatkichi va NVR holati */}
+                  <div className="text-xs font-mono font-bold text-police-cyan flex items-center gap-1.5">
+                    <Film className="w-3.5 h-3.5" />
+                    ARXIV: <span>{playbackDate} {formatSecToTime(playbackSec)}</span>
+                  </div>
+
+                  {/* Video tezligini tanlash (0.5x, 1x, 2x, 4x, 8x) */}
+                  <div className="flex items-center gap-1 bg-tactical-900 p-1 rounded-lg border border-tactical-700">
+                    <span className="text-[10px] text-slate-400 pl-1">Tezlik:</span>
+                    {([0.5, 1, 2, 4, 8] as const).map((spd) => (
+                      <button
+                        key={spd}
+                        onClick={() => { setPlaybackSpeed(spd); resetOverlayTimer(); }}
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold transition-colors ${
+                          playbackSpeed === spd
+                            ? 'bg-police-blue text-white shadow-xs'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {spd}x
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 2-qator: Scrollbar (Vaqt chizig'i / Timeline scrubber) */}
+                <div className="relative w-full flex flex-col gap-1 py-1">
+                  <div className="relative w-full flex items-center h-4">
+                    {/* Yozib olingan arxiv yashil chizig'i */}
+                    <div className="absolute inset-x-0 h-2 bg-tactical-800 rounded overflow-hidden">
+                      <div className="h-full bg-police-green/35 w-full" title="To'liq 24 soatlik NVR yozuvi saqlangan" />
+                    </div>
+                    {/* Interaktiv scrollbar slider */}
+                    <input
+                      type="range"
+                      min={0}
+                      max={86400}
+                      step={1}
+                      value={playbackSec}
+                      onChange={(e) => { setPlaybackSec(Number(e.target.value)); resetOverlayTimer(); }}
+                      className="relative w-full h-3 bg-transparent appearance-none cursor-pointer accent-police-cyan z-10"
+                    />
+                  </div>
+
+                  {/* 24 soatlik belgilar */}
+                  <div className="flex justify-between text-[9px] font-mono text-slate-500 px-0.5">
+                    <span>00:00</span>
+                    <span>04:00</span>
+                    <span>08:00</span>
+                    <span>12:00 (Tush)</span>
+                    <span>16:00</span>
+                    <span>20:00</span>
+                    <span>23:59</span>
+                  </div>
+                </div>
+
+                {/* 3-qator: Ijro boshqaruvi (Play/Pause, 10s orqaga, 10s oldinga) */}
+                <div className="flex items-center justify-center gap-3 pt-1 border-t border-tactical-800">
+                  {/* 10 soniya orqaga */}
+                  <button
+                    onClick={() => { setPlaybackSec((s) => Math.max(0, s - 10)); resetOverlayTimer(); }}
+                    title="10 soniya orqaga"
+                    className="px-3 py-1.5 rounded-lg bg-tactical-850 hover:bg-tactical-800 border border-tactical-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                  >
+                    <Rewind className="w-4 h-4 text-police-cyan" /> -10s
+                  </button>
+
+                  {/* Videoni to'xtatish / boshlash (Play/Pause) */}
+                  <button
+                    onClick={() => { setIsPlaying((p) => !p); resetOverlayTimer(); }}
+                    title={isPlaying ? "To'xtatish" : "Ijro etish"}
+                    className={`px-5 py-2 rounded-lg font-bold text-xs flex items-center gap-2 transition-all active:scale-95 ${
+                      isPlaying
+                        ? 'bg-police-amber text-tactical-950 shadow-[0_0_15px_rgba(255,170,0,0.3)]'
+                        : 'bg-police-blue text-white shadow-[0_0_15px_rgba(0,102,255,0.4)]'
+                    }`}
+                  >
+                    {isPlaying ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current" />}
+                    {isPlaying ? "TO'XTATISH" : "DAVOM ETTIRISH"}
+                  </button>
+
+                  {/* 10 soniya oldinga */}
+                  <button
+                    onClick={() => { setPlaybackSec((s) => Math.min(86400, s + 10)); resetOverlayTimer(); }}
+                    title="10 soniya oldinga"
+                    className="px-3 py-1.5 rounded-lg bg-tactical-850 hover:bg-tactical-800 border border-tactical-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                  >
+                    +10s <FastForward className="w-4 h-4 text-police-cyan" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* LIVE REJIMDA: PASTKI STATISTIKA */}
+            {viewMode === 'live' && (
+              <div
+                onClick={(e) => { e.stopPropagation(); resetOverlayTimer(); }}
+                className={`flex items-center justify-between text-[11px] font-mono px-3 py-1.5 rounded-lg bg-black/60 backdrop-blur-md border border-white/10 transition-all duration-300 ${
+                  showOverlay ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-2 pointer-events-none'
+                }`}
+              >
+                <div className="flex items-center gap-2 text-police-cyan">
+                  <span className="w-2 h-2 rounded-full bg-police-red animate-ping" />
+                  <span className="font-bold">NVR LOCAL REC: 1080P 30FPS</span>
+                  <span className="text-slate-400">| QALQON DISK: 128GB (94.2GB BO'SH)</span>
+                </div>
+                {activeCam !== 'face' && (
+                  <button
+                    onClick={() => setActiveCam('face')}
+                    className="px-2 py-0.5 rounded bg-police-blue text-white text-[10px] font-bold"
+                  >
+                    Face ID ga qaytish
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* ========================================================================= */}
