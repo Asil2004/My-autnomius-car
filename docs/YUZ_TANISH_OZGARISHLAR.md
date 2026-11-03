@@ -115,6 +115,72 @@ Cheklov: aniqlik kalibrovkaga bog'liq. Kalibrovka yuz kengligini 16 sm deb oladi
 | Pastki qatorlar doim sig'adi | Video qutisi eni taxminiy son bilan emas, `ResizeObserver` orqali panelning haqiqiy bo'sh joyiga hisoblanadi: nisbatni saqlagan holda sig'adigan eng katta o'lcham. Yuqori panel o'ralib ketsa yoki brauzer masshtabi o'zgarsa ham AI qatori, sonar qatori va PTZ ekran ichida qoladi. O'lchov: 1366x768 (video 680x383), 1366x640 (476x268), 1920x1080 (858x483): PTZ hammasida pastki menyudan yuqorida |
 | Markaz nishonidagi GPS yozuvi olib tashlandi | U yuz ustiga tushardi, GPS yuqori panelda bor |
 
+## Birinchi ishga tushish tezligi (2026-11-03)
+
+Muammo: kamera birinchi ochilganda yuz tahlili juda sekin, sahifa "qotib" qoladi.
+
+| Topilma | Qiymat |
+|---|---|
+| Modellarni yuklab olish | ~0.5 s, muammo emas |
+| Asosiy sabab | WebGL shaderlarini birinchi marta kompilyatsiya qilish: detektor ~13 s, landmark ~11 s, tanish ~10 s. Kompilyatsiya asosiy oqimni bloklaydi. Bu GPU/drayverga bog'liq (Intel UHD da ~35 s) |
+| Ikkinchi sabab | Dev rejimida (`npm run dev`) har 800 ms da sensor simulyatsiyasi va har aniqlash siklida butun HUD qayta chiziladi (70-150 ms). Production'da bu yo'q |
+
+Nima qilindi:
+- Isitish jonli rejim bilan bir xil sozlamada o'tkaziladi.
+- HUD yuz holatini haqiqiy tayyorlikdan oladi: dvigatel tayyor bo'lmasa "yuklanmoqda..." (avval noto'g'ri "topilmadi" yozardi). Yuklanish matni birinchi marta 10-40 s kutish kerakligini aytadi.
+- Ramkalar kaliti barqaror, ramkalar va yuz ma'lumoti faqat ko'rinadigan o'zgarishda qayta chiziladi.
+- Yuz modeli va COCO-SSD yuklanish vaqti ilova jurnaliga yoziladi.
+
+Sinab ko'rilib, **rad etilgan** yo'llar:
+- Modellarni login oynasida oldindan yuklash: kompilyatsiya asosiy oqimni bloklaydi (sinovda 14 s + 9 s + 4 s ketma-ket), sahifa qotadi. Qotishni HUD'dan login oynasiga ko'chiradi, yo'qotmaydi.
+- tfjs `ENGINE_COMPILE_ONLY` (parallel kompilyatsiya): face-api bilan ishlamadi, haqiqiy tahlil baribir ~13 s qotdi.
+
+Haqiqiy yechim (qilinmagan): AI'ni (COCO-SSD va face-api) Web Worker'ga ko'chirish (OffscreenCanvas bilan WebGL). Shunda kompilyatsiya va tahlil asosiy oqimni umuman bloklamaydi.
+
+**ISHLATMANG:** `tf.env().set('WEBGL_USE_SHAPES_UNIFORMS', true)`. U birinchi ishga tushishni ~3 baravar tezlashtiradi, lekin face-api tarmoqlarida noto'g'ri natija beradi: yuz detektori hech narsa topmaydi (sinovda yuz: 0, sozlamasiz 1, embedding masofasi 0.095). Bir kun sinab ko'rilib, qaytarilgan.
+
+Tezlik haqida eslatma: demo uchun production rejimi tezroq (`npm run build` va `npm run preview`). Chrome kompilyatsiya qilingan shaderlarni keshlaydi, shuning uchun ikkinchi marta ochilish tezroq bo'ladi.
+
+## Aksessuar taqqan yuzlarni tanish (2026-11-03)
+
+Maqsad: bazadagi shaxs ko'zoynak, bosh kiyim (kepka, toqi), kapyushon, niqob yoki taturovka bilan kameraga qaraganda ham tanilsin.
+
+Usul: **bazadagi rasmga aksessuarlarni sun'iy chizib, har bir variantdan embedding olinadi**, jonli yuz asl rasm va barcha variantlar bilan solishtiriladi.
+
+| Qism | Tavsif |
+|---|---|
+| `services/faceAugment.ts` (yangi) | 68 landmark bo'yicha ko'zoynak (oddiy va quyoshdan), kepka, toqi, kapyushon, 3 xil niqob, taturovka chizadi. 15 ta variant: 8 ta yakka va 7 ta birikma (masalan `sunglasses+mask_blue`, `hood+mask_black`) |
+| Variantlar | Rasm jonli kadrga o'xshash sahnaga (1280x720, yuz ~280 px) joylanadi, variantlar shu yerda chiziladi, embedding jonli quvur bilan olinadi. Yuz topilmagan variantlar tashlanadi (bazada 11-12 tadan qoldi) |
+| Kesh | `descriptors-cache.json` yangi formatda: `{ id: { base, variants } }` (41 KB). Yangi shaxs qo'shilganda variantlar shu yerning o'zida hisoblanadi (~15 ta, bir necha soniya, jurnalda ko'rinadi) va `localStorage`da saqlanadi |
+| Solishtirish | Asl rasm chegarasi **0.50** (o'zgarmagan), aksessuarli shablonlar chegarasi **0.40**. Ikkalasi chegaraga nisbatan normallanadi, eng kichik nisbat tanlanadi |
+| Niqobli yuz topish | Odam ramkasi bor, lekin yuz topilmasa, ramka ichida detektor chegarasi 0.25 ga tushirilib qayta qidiriladi (har 2-kadrda). Bahosi 0.4 dan past yuz ramkasi masofa va kalibrovkada ishlatilmaydi |
+| Izni saqlash | Ovoz berish izi vaqt (1.5 s) bo'yicha emas, 6 kadr bo'yicha eskiradi. Eski usulda tahlil 1.5 s dan sekinlashsa ism hech qachon chiqmasdi |
+
+**Nega chegara 0.40:** sinovda aksessuarli yuzlar HAR XIL odamlar bilan ham o'zaro yaqinlashadi (aksessuarli A va aksessuarli B orasidagi eng kichik masofa 0.45, toza yuzlarda ~0.65+). 833 juftlikdan 8 tasi 0.50 dan, 0 tasi 0.45 dan kichik edi. 0.50 da begonani tanib yuborish xavfi sezilarli bo'lardi.
+
+O'lchov (sun'iy aksessuarlar, 3 kishi, 45 ta sinov kadri, shablonlarda ishlatilmagan boshqa shakl va o'lchamlarda):
+
+| Ko'rsatkich | Natija |
+|---|---|
+| Yuz detektori topdi | 37 / 45 (8 tasi og'ir birikma: niqob + ko'zoynak + bosh kiyim, detektor yuzni umuman topolmaydi) |
+| Faqat asl rasm bilan (0.50) | 31 / 37 to'g'ri, 6 ta o'tkazib yuborildi, 0 xato |
+| Aksessuarli shablonlar bilan (0.40) | **36 / 37** to'g'ri, 1 ta o'tkazib yuborildi, 0 xato |
+| Begona xavfi (aksessuarli yuz boshqa odam shablonlariga, 74 juft) | 0.50 da 7 ta, 0.45 da 1 ta, **0.40 da 0 ta** yaqinlashdi |
+| Aksessuarsiz yuz boshqa odamning aksessuarli shabloniga | eng yaqin 0.59 |
+
+**Cheklovlar (muhim):**
+- Aksessuarlarni men kod bilan chizganman (oddiy shakllar), haqiqiy rasmdagi ko'zoynak, niqob va kapyushondan farq qiladi. Haqiqiy natija bundan YOMONROQ bo'lishi mumkin. Haqiqiy aksessuarli rasmlar bilan sinab ko'rish kerak.
+- Bazada faqat 3 kishi: begona xavfi shu uchtasi orasida o'lchandi. Katta, xilma-xil odamlar orasida aksessuarli yuzlarning o'zaro yaqinligi yuqoriroq bo'lishi mumkin. Shuning uchun chegara 0.40, ovoz berish (5 kadrdan 3 tasi) saqlangan.
+- Niqob + ko'zoynak + bosh kiyim bir vaqtda bo'lsa (og'ir birikma), yuz topilmaydi yoki masofa katta chiqadi: dastur "Piyoda" deydi. Bu xavfsiz tomonga xato.
+
+### Muhammadali Ravshanov bazaga qo'shildi (2026-11-03)
+
+- Rasm: `test_4.jpg` dan Exif/GPS'siz nusxa `frontend/src/assets/faces/muhammadali_ravshanov.jpg` (asl faylda GPS joylashuv bor edi, repoga tushmasligi uchun olib tashlandi). Asl `test_4.jpg` repo ildizida qoldi, **commit qilinmaydi**.
+- Bazada: id `ravshanov-muhammadali`, lavozim "Ruxsat berilgan shaxs" (aytilmagan), belgi `VERIFIED`. Asl rasm + 11 aksessuar varianti keshda.
+- Bevosita tekshiruv (sun'iy aksessuarlar, boshqa shakl/o'lcham): o'ziga eng yaqin masofa toza 0.05, ko'zoynak 0.30, niqob 0.28, kepka+ko'zoynak 0.25, kapyushon 0.10. Hammasida eng yaqin shaxs to'g'ri.
+- **O'xshashlik xavfi:** Muhammadali va Asilbek (familiyalari bir xil) toza yuzlari orasida masofa **0.478**, qabul chegarasi (0.50) dan kichik. Ikkalasi bazada bo'lganda adashmaydi (o'z shaxsiga masofa ancha kichik va ikkinchisidan farqi chegaraning 12% idan katta bo'lishi shart: `MIN_RATIO_MARGIN`). Lekin **bazada bo'lmagan qarindosh yoki juda o'xshash odam** Asilbek yoki Muhammadali deb tanilishi mumkin (masalan, Muhammadali bazadan olib tashlansa, uning yuzi Asilbek deb tanilar edi: 0.47 < 0.50). Bu face-api embeddingining chegarasi. Chegarani (0.50) kamaytirish bu xavfni kamaytiradi, lekin haqiqiy kamerada o'z yuzini tanimay qolish ham ortadi. Aniq tanlash uchun har bir odamning haqiqiy kamera kadrlarini yig'ib o'lchash kerak.
+- HUD'da Muhammadali bilan oxirigacha avtomatik sinov to'liq o'tkazilmadi (sinov vositam va oyna holati sabab to'xtadi). 3 shaxs bilan HUD sinovi to'liq o'tgan (bazada 9/9, begona 4/4).
+
 ## Tekshirilgan
 
 | Sinov | Natija |

@@ -3,8 +3,8 @@ import { useRobot } from '../context/RobotContext';
 import type { SpeedLevel, DetectedObject } from '../types/robot';
 import { faceRecognitionService, type KnownPerson } from '../services/faceRecognitionService';
 import { distanceEstimator } from '../services/distanceService';
-import * as cocoSsd from '@tensorflow-models/coco-ssd';
-import '@tensorflow/tfjs';
+import type * as cocoSsd from '@tensorflow-models/coco-ssd';
+import { loadCocoModel } from '../services/aiPreload';
 import {
   ArrowUp,
   ArrowDown,
@@ -33,21 +33,6 @@ import {
   CheckCircle2,
   Ruler
 } from 'lucide-react';
-
-// COCO-SSD loyiha ichidan (public/models/coco-ssd) yuklanadi: internetsiz ham ishlaydi, APK ichida ham.
-// Promise keshlanadi, shunda effekt qayta ishga tushsa (StrictMode) model ikki marta yuklanmaydi.
-let cocoModelPromise: Promise<cocoSsd.ObjectDetection> | null = null;
-const loadCocoModel = () => {
-  if (!cocoModelPromise) {
-    cocoModelPromise = cocoSsd
-      .load({ base: 'lite_mobilenet_v2', modelUrl: `${import.meta.env.BASE_URL}models/coco-ssd/model.json` })
-      .catch((err) => {
-        cocoModelPromise = null;
-        throw err;
-      });
-  }
-  return cocoModelPromise;
-};
 
 // Kalibrovka kamera turi bo'yicha alohida saqlanadi (hozir faqat frontal kamera aniqlanadi)
 const CAMERA_KEY = 'FRONTAL';
@@ -192,6 +177,7 @@ export const HUDView: React.FC = () => {
   }>({ count: 0, widthPx: 0, cycleMs: 0, calibCount: 0, calibStable: true, eyePx: 0, faceDistM: 0, eyeDistM: 0 });
   const cocoModelRef = useRef<cocoSsd.ObjectDetection | null>(null);
   const isDetectingRef = useRef<boolean>(false);
+  const lastObjectsSigRef = useRef('');
 
   // =========================================================================
   // 1. TENSORFLOW COCO-SSD VA YUZ BAZASINI YUKLASH
@@ -214,8 +200,20 @@ export const HUDView: React.FC = () => {
           addLog('AI', 'error', `Yuz tanish modeli yuklanmadi, barcha odamlar "Piyoda": ${msg}`);
         });
 
-        // COCO-SSD va yuz modeli parallel yuklanadi
-        const [model] = await Promise.all([loadCocoModel(), faceInit]);
+        // COCO-SSD va yuz modeli parallel yuklanadi. Har birining vaqti jurnalga yoziladi (sekinlikni topish uchun)
+        const tStart = performance.now();
+        const ms = () => Math.round(performance.now() - tStart);
+        const cocoLoad = loadCocoModel().then((m) => {
+          addLog('AI', 'info', `COCO-SSD tayyor: ${ms()} ms`);
+          return m;
+        });
+        faceInit.then(() => {
+          if (faceReady) {
+            const t = faceRecognitionService.timings;
+            addLog('AI', 'info', `Yuz modeli tayyor: ${ms()} ms (modellar ${t.modellar} ms, isitish ${t.isitish} ms)`);
+          }
+        });
+        const [model] = await Promise.all([cocoLoad, faceInit]);
         if (isMounted) {
           cocoModelRef.current = model;
           setAiModelLoaded(true);
@@ -349,6 +347,9 @@ export const HUDView: React.FC = () => {
           personPreds.map((p) => ({ x: p.bbox[0], y: p.bbox[1], width: p.bbox[2], height: p.bbox[3] }))
         );
 
+        // Yuz dvigateli hali tayyor bo'lmasa (qayta yuklanmoqda), "topilmadi" emas, "yuklanmoqda" ko'rsatiladi
+        setFaceStatus((prev) => (prev === 'error' ? prev : faceRecognitionService.isReady() ? 'ready' : 'loading'));
+
         // Eng katta (eng yaqin) yuz: kalibrovka ma'lumoti va ko'z masofasini ko'rsatish uchun
         const withFace = identities.filter((i) => i.faceBox);
         const closest = withFace.length
@@ -368,16 +369,20 @@ export const HUDView: React.FC = () => {
         faceSamplesRef.current = faceSamplesRef.current.filter((s) => now - s.t < CALIB_WINDOW_MS);
         const calib = evaluateCalibSamples(faceSamplesRef.current);
 
-        setFaceInfo({
+        // Har kadrda emas, faqat ko'rinadigan qiymat o'zgarganda qayta chizamiz (butun HUD qayta chizilishi qimmat)
+        const nextFaceInfo = {
           count: withFace.length,
-          widthPx: closest?.faceBox ? Math.round(closest.faceBox.width) : 0,
-          cycleMs: Math.round(performance.now() - cycleStart),
+          widthPx: closest?.faceBox ? Math.round(closest.faceBox.width / 4) * 4 : 0,
+          cycleMs: Math.round((performance.now() - cycleStart) / 50) * 50,
           calibCount: calib.count,
           calibStable: calib.stable,
           eyePx: Math.round(eyePx),
-          faceDistM: closest?.faceBox ? distanceEstimator.rawFaceDistance(CAMERA_KEY, closest.faceBox.width, vH) : 0,
-          eyeDistM: eyePx > 0 ? distanceEstimator.rawEyeDistance(CAMERA_KEY, eyePx, vH) : 0
-        });
+          faceDistM: closest?.faceBox
+            ? Math.round(distanceEstimator.rawFaceDistance(CAMERA_KEY, closest.faceBox.width, vH) * 100) / 100
+            : 0,
+          eyeDistM: eyePx > 0 ? Math.round(distanceEstimator.rawEyeDistance(CAMERA_KEY, eyePx, vH) * 100) / 100 : 0
+        };
+        setFaceInfo((prev) => (JSON.stringify(prev) === JSON.stringify(nextFaceInfo) ? prev : nextFaceInfo));
 
         const items = [
           ...identities.map((identity, i) => ({
@@ -462,7 +467,8 @@ export const HUDView: React.FC = () => {
             });
 
             return {
-              id: `real-obj-${idx}-${Date.now().toString().slice(-4)}`,
+              // Barqaror kalit: React har kadrda ramkalarni o'chirib-qayta yaratmasin
+              id: `real-obj-${idx}`,
               label,
               confidence,
               distance: dist.meters,
@@ -482,12 +488,22 @@ export const HUDView: React.FC = () => {
             };
           });
 
-        setDetectedObjects(newObjects);
-        setDetectedCounts({
-          people: personCount,
-          cars: carCount,
-          total: newObjects.length
-        });
+        // Ramkalar ~0.6% (bir necha piksel) dan kam siljisa, qayta chizmaymiz: kamera shovqini tufayli har kadrda o'zgarmasin
+        const sig = newObjects
+          .map((o) => {
+            const q = (v: number) => Math.round(v / 0.6);
+            return `${o.label}|${o.isIdentifiedPerson ? 1 : 0}|${q(o.box.x)}|${q(o.box.y)}|${q(o.box.width)}|${q(o.box.height)}|${o.distance}|${o.distanceApprox ? 1 : 0}${o.distanceUpperBound ? 1 : 0}`;
+          })
+          .join(';');
+        if (sig !== lastObjectsSigRef.current) {
+          lastObjectsSigRef.current = sig;
+          setDetectedObjects(newObjects);
+          setDetectedCounts({
+            people: personCount,
+            cars: carCount,
+            total: newObjects.length
+          });
+        }
       } catch {
         // AI detection pass
       } finally {
@@ -528,7 +544,10 @@ export const HUDView: React.FC = () => {
     };
 
     try {
-      await faceRecognitionService.addPerson(newPerson);
+      addLog('AI', 'info', `${newPerson.fullName}: aksessuar variantlari hisoblanmoqda (ko'zoynak, bosh kiyim, niqob...), bir necha soniya...`);
+      await faceRecognitionService.addPerson(newPerson, (done, total) => {
+        if (done === total || done % 5 === 0) addLog('AI', 'info', `${newPerson.fullName}: variantlar ${done}/${total}`);
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       addLog('AI', 'error', `${newPerson.fullName} bazaga qo'shilmadi: ${msg}`);
@@ -947,7 +966,9 @@ export const HUDView: React.FC = () => {
               <span
                 className={`w-1.5 h-1.5 rounded-full ${aiModelLoaded ? 'bg-emerald-400' : 'bg-amber-400 animate-ping'}`}
               />
-              <span>AI: {aiModelLoaded ? 'COCO-SSD + YUZ' : aiModelLoading ? 'YUKLANMOQDA...' : 'DETEKTOR'}</span>
+              <span>
+                AI: {aiModelLoaded ? 'COCO-SSD + YUZ' : aiModelLoading ? 'YUKLANMOQDA (birinchi marta 10-40 s, sahifa sekinlashishi mumkin)...' : 'DETEKTOR'}
+              </span>
             </span>
             <span className="text-slate-300">OBYEKT: {detectedCounts.total}</span>
             <span className={faceStatus === 'error' ? 'text-rose-400' : faceInfo.count > 0 ? 'text-emerald-300' : 'text-amber-300'}>
