@@ -1,0 +1,10 @@
+Windows Registry Editor Version 5.00
+
+; =============================================================================
+; QALQON ROBOT — FIX WINDOWS SERIAL MOUSE JUMPING BUG FOR LIDAR STL-19P
+; Ushbu sozlama Windows'ning qadimgi "Serial Mouse" (sermouse) drayverini o'chiradi.
+; Natijada LiDAR yuborayotgan ma'lumotlar sichqoncha harakati deb qabul qilinmaydi!
+; =============================================================================
+
+[HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\sermouse]
+"Start"=dword:00000004
