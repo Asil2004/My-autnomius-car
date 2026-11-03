@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useRobot } from '../context/RobotContext';
-import type { SpeedLevel, DetectedObject, MecanumCommand } from '../types/robot';
+import type { SpeedLevel, DetectedObject } from '../types/robot';
 import { faceRecognitionService, type KnownPerson } from '../services/faceRecognitionService';
 import { distanceEstimator } from '../services/distanceService';
 import type * as cocoSsd from '@tensorflow-models/coco-ssd';
@@ -12,8 +12,6 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowRight,
-  RotateCcw,
-  RotateCw,
   Square,
   Compass,
   Gauge,
@@ -38,28 +36,17 @@ import {
 } from 'lucide-react';
 
 type PanelId = 'control' | 'sensors' | 'ai' | 'ptz' | 'log';
-type CamId = 'front' | 'rear' | 'left' | 'right';
+type CamId = 'face' | 'ptz' | 'front' | 'rear' | 'right';
 
-// Robotning 4 tomonidagi kameralar. Hozir faqat old kamera haqiqiy (frontal/RPi/simulyatsiya), qolganlari ulanishni kutadi
-const CAMERAS: { id: CamId; short: string; long: string }[] = [
-  { id: 'front', short: 'Old', long: 'Old' },
-  { id: 'rear', short: 'Orqa', long: 'Orqa' },
-  { id: 'left', short: 'Chap', long: 'Chap' },
-  { id: 'right', short: "O'ng", long: "O'ng" }
+// Robotdagi jami 5 ta kamera (1 tasi 360° PTZ). Qaysi biri kattalashtirilsa, qolgan 4 tasi chap tomonda kichik ko'rinadi
+const ALL_CAMERAS: { id: CamId; short: string; long: string }[] = [
+  { id: 'face', short: 'Face ID', long: 'Face ID (Planshet)' },
+  { id: 'ptz', short: 'PTZ', long: 'PTZ 360° kamera' },
+  { id: 'front', short: 'Old', long: 'Old kamera (RPi)' },
+  { id: 'rear', short: 'Orqa', long: 'Orqa kamera' },
+  { id: 'right', short: "O'ng", long: "O'ng kamera" }
 ];
 
-// 3x3 yo'nalish tugmalari (null = bo'sh katak)
-const KEYPAD: ({ key: string; cmd: MecanumCommand; label: string; title: string; icon: React.ElementType } | null)[] = [
-  { key: 'q', cmd: 'Q', label: 'Chapga siljish', title: 'Chapga yonlama (Q)', icon: RotateCcw },
-  { key: 'f', cmd: 'F', label: 'Oldinga', title: 'Oldinga (F)', icon: ArrowUp },
-  { key: 'e', cmd: 'E', label: "O'ngga siljish", title: "O'ngga yonlama (E)", icon: RotateCw },
-  { key: 'l', cmd: 'L', label: 'Chapga burilish', title: 'Chapga burilish (L)', icon: ArrowLeft },
-  { key: 's', cmd: 'S', label: "To'xtatish", title: "To'xtatish (S)", icon: Square },
-  { key: 'r', cmd: 'R', label: "O'ngga burilish", title: "O'ngga burilish (R)", icon: ArrowRight },
-  null,
-  { key: 'b', cmd: 'B', label: 'Orqaga', title: 'Orqaga (B)', icon: ArrowDown },
-  null
-];
 const OPEN_KEY = 'qalqon.hud.open.v1';
 
 // COCO-SSD klasslari uchun o'zbekcha nomlar. Odam va transport alohida ishlanadi, qolgan hamma jism robot uchun "to'siq"
@@ -164,7 +151,7 @@ export const HUDView: React.FC = () => {
 
   const stageRef = useRef<HTMLDivElement | null>(null);
   // Asosiy oyna: 'face' = Face ID (planshetning frontal kamerasi). Qolganlari robotning 4 tomonidagi kameralar
-  const [activeCam, setActiveCam] = useState<'face' | CamId>('face');
+  const [activeCam, setActiveCam] = useState<CamId>('face');
   // Old kamera = robotning RPi oqimi. Ulanmagan bo'lsa "Signal yo'q" ko'rsatiladi va vaqti-vaqti bilan qayta uriniladi
   const [rpiOk, setRpiOk] = useState(false);
   const [rpiRetry, setRpiRetry] = useState(0);
@@ -858,12 +845,131 @@ export const HUDView: React.FC = () => {
     : "Yo'l ochiq";
 
   const DOCK: { id: PanelId; label: string; icon: React.ReactNode }[] = [
-    { id: 'control', label: 'Boshqaruv', icon: <Gauge className="w-4 h-4" /> },
     { id: 'sensors', label: 'Sensorlar', icon: <Activity className="w-4 h-4" /> },
     { id: 'ai', label: 'AI', icon: <Eye className="w-4 h-4" /> },
-    { id: 'ptz', label: 'PTZ', icon: <SlidersHorizontal className="w-4 h-4" /> },
     { id: 'log', label: 'Jurnal', icon: <ScrollText className="w-4 h-4" /> }
   ];
+
+  // =========================================================================
+  // VIRTUAL JOYSTIKLAR (O'ngda robot harakati, chapda PTZ kamera)
+  // =========================================================================
+  // 1. Robot Harakat Joystigi
+  const [driveKnob, setDriveKnob] = useState({ x: 0, y: 0 });
+  const [isDriving, setIsDriving] = useState(false);
+  const driveBaseRef = useRef<HTMLDivElement | null>(null);
+
+  const updateDrive = (e: React.PointerEvent<HTMLDivElement>) => {
+    const base = driveBaseRef.current;
+    if (!base) return;
+    const rect = base.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const dx = e.clientX - cx;
+    const dy = e.clientY - cy;
+    const dist = Math.hypot(dx, dy);
+    const maxR = 46;
+    const clampedDist = Math.min(dist, maxR);
+    const angle = Math.atan2(dy, dx);
+    const clampedX = Math.cos(angle) * clampedDist;
+    const clampedY = Math.sin(angle) * clampedDist;
+    setDriveKnob({ x: clampedX, y: clampedY });
+
+    if (clampedDist < 12) {
+      sendMecanumCommand('S');
+      return;
+    }
+
+    const deg = (angle * 180) / Math.PI;
+    if (deg >= -120 && deg <= -60) {
+      sendMecanumCommand('F'); // Oldinga
+    } else if (deg > -160 && deg < -120) {
+      sendMecanumCommand('Q'); // Chap-oldinga yonlama
+    } else if (deg > -60 && deg < -20) {
+      sendMecanumCommand('E'); // O'ng-oldinga yonlama
+    } else if (deg >= -20 && deg <= 35) {
+      sendMecanumCommand('R'); // O'ngga burilish
+    } else if (deg >= 45 && deg <= 135) {
+      sendMecanumCommand('B'); // Orqaga
+    } else if (deg > 135 || deg < -160) {
+      sendMecanumCommand('L'); // Chapga burilish
+    }
+  };
+
+  const handleDriveDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setIsDriving(true);
+    updateDrive(e);
+  };
+  const handleDriveMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (isDriving) updateDrive(e);
+  };
+  const handleDriveUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
+    setIsDriving(false);
+    setDriveKnob({ x: 0, y: 0 });
+    sendMecanumCommand('S');
+  };
+
+  // 2. PTZ Kamera Joystigi (faqat PTZ kamera kattalashtirilganda chiqadi)
+  const [ptzKnob, setPtzKnob] = useState({ x: 0, y: 0 });
+  const [isPtzDragging, setIsPtzDragging] = useState(false);
+  const ptzBaseRef = useRef<HTMLDivElement | null>(null);
+  const ptzIntervalRef = useRef<number | null>(null);
+  const ptzVecRef = useRef({ dx: 0, dy: 0 });
+
+  const updatePtzVec = (e: React.PointerEvent<HTMLDivElement>) => {
+    const base = ptzBaseRef.current;
+    if (!base) return;
+    const rect = base.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const dx = e.clientX - cx;
+    const dy = e.clientY - cy;
+    const dist = Math.hypot(dx, dy);
+    const maxR = 34;
+    const clampedDist = Math.min(dist, maxR);
+    const angle = Math.atan2(dy, dx);
+    const clampedX = Math.cos(angle) * clampedDist;
+    const clampedY = Math.sin(angle) * clampedDist;
+    setPtzKnob({ x: clampedX, y: clampedY });
+    ptzVecRef.current = { dx: clampedX, dy: clampedY };
+  };
+
+  const handlePtzDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setIsPtzDragging(true);
+    updatePtzVec(e);
+    if (ptzIntervalRef.current) clearInterval(ptzIntervalRef.current);
+    ptzIntervalRef.current = window.setInterval(() => {
+      const { dx, dy } = ptzVecRef.current;
+      if (Math.hypot(dx, dy) > 6) {
+        const dPan = Math.round((dx / 34) * 6);
+        const dTilt = Math.round((-dy / 34) * 4);
+        if (dPan !== 0 || dTilt !== 0) adjustPTZ(dPan, dTilt);
+      }
+    }, 90);
+  };
+  const handlePtzMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (isPtzDragging) updatePtzVec(e);
+  };
+  const handlePtzUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
+    setIsPtzDragging(false);
+    setPtzKnob({ x: 0, y: 0 });
+    ptzVecRef.current = { dx: 0, dy: 0 };
+    if (ptzIntervalRef.current) {
+      clearInterval(ptzIntervalRef.current);
+      ptzIntervalRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (ptzIntervalRef.current) clearInterval(ptzIntervalRef.current);
+    };
+  }, []);
+
+  const smallCameras = ALL_CAMERAS.filter((c) => c.id !== activeCam);
 
   return (
     <div className="flex-1 min-h-0 flex flex-col relative">
@@ -920,69 +1026,126 @@ export const HUDView: React.FC = () => {
         </div>
       </div>
 
-      {/* ===== Sahna: chap tomonda 4 ta kichik kamera (vertikal) + o'ngda to'liq kengaytirilgan asosiy kamera ===== */}
-      <div ref={stageRef} className="relative flex-1 min-h-0 flex flex-row bg-black overflow-hidden">
-        {/* 4 ta kichik kamera: ekranning chap tomoniga vertikal qilib terilgan */}
+      {/* ===== Sahna: Chap (4 ta kamera + PTZ joystik) | O'rta (Katta kamera chapga taqalgan) | O'ng (Virtual Joystik) ===== */}
+      <div ref={stageRef} className="relative flex-1 min-h-0 flex flex-row bg-black overflow-hidden select-none">
+        
+        {/* ========================================================================= */}
+        {/* CHAP TOMON: 4 ta kichik kamera (1.5x kattalashtirilgan).                 */}
+        {/* PTZ tanlanganda 4 ta kamera tepaga (top) suriladi va pastda PTZ joystik chiqadi */}
+        {/* ========================================================================= */}
         <div
-          className="flex flex-col justify-center gap-2.5 p-2 bg-tactical-900/95 border-r border-tactical-700 z-10 shrink-0 overflow-y-auto"
+          className={`flex flex-col ${
+            activeCam === 'ptz' ? 'justify-start' : 'justify-center'
+          } gap-2.5 p-2 bg-tactical-900/95 border-r border-tactical-700 z-10 shrink-0 overflow-y-auto transition-all`}
           role="group"
-          aria-label="Kameralar"
+          aria-label="Kichik kameralar"
+          style={{ width: 'clamp(126px, 18vw, 210px)' }}
         >
-          {CAMERAS.map((cam) => {
-            const active = activeCam === cam.id;
-            return (
-              <button
-                key={cam.id}
-                onClick={() => setActiveCam(active ? 'face' : cam.id)}
-                aria-pressed={active}
-                title={`${cam.long} kamera (bosing - ${active ? "Face ID ga qaytish" : "kattalashtirish"})`}
-                className={`relative flex-none rounded-lg overflow-hidden bg-tactical-950 border-2 transition-all ${
-                  active
-                    ? 'border-police-cyan ring-2 ring-police-cyan/40 shadow-md shadow-police-cyan/30'
-                    : 'border-tactical-700 hover:border-tactical-500'
-                }`}
-                style={{ aspectRatio: '16 / 9', width: 'clamp(76px, 11vw, 130px)' }}
-              >
-                {cam.id === 'front' ? (
-                  <>
-                    <img
-                      src={`http://${system.rpiIp}:${system.rpiPort}/stream.mjpg?r=${rpiRetry}`}
-                      alt=""
-                      onLoad={() => setRpiOk(true)}
-                      onError={() => setRpiOk(false)}
-                      className={`absolute inset-0 w-full h-full object-cover ${rpiOk ? '' : 'hidden'}`}
-                    />
-                    {!rpiOk && (
-                      <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-slate-500">
-                        <VideoOff className="w-3.5 h-3.5" />
-                        <span className="text-[9px]">Signal yo'q</span>
-                      </span>
-                    )}
-                  </>
-                ) : (
-                  <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-slate-500">
-                    <VideoOff className="w-3.5 h-3.5" />
-                    <span className="text-[9px]">Signal yo'q</span>
-                  </span>
-                )}
-                <span className="absolute left-1.5 top-1 px-1.5 py-0.5 rounded bg-black/80 text-[10px] font-semibold text-white">
-                  {cam.short}
+          {smallCameras.map((cam) => (
+            <button
+              key={cam.id}
+              onClick={() => setActiveCam(cam.id)}
+              title={`${cam.long} (kattalashtirish uchun bosing)`}
+              className="relative flex-none rounded-lg overflow-hidden bg-tactical-950 border-2 border-tactical-700 hover:border-police-cyan transition-all shadow-md group"
+              style={{
+                aspectRatio: '16 / 9',
+                width: '100%'
+              }}
+            >
+              {cam.id === 'front' ? (
+                <>
+                  <img
+                    src={`http://${system.rpiIp}:${system.rpiPort}/stream.mjpg?r=${rpiRetry}`}
+                    alt=""
+                    onLoad={() => setRpiOk(true)}
+                    onError={() => setRpiOk(false)}
+                    className={`absolute inset-0 w-full h-full object-cover ${rpiOk ? '' : 'hidden'}`}
+                  />
+                  {!rpiOk && (
+                    <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-slate-500">
+                      <VideoOff className="w-4 h-4" />
+                      <span className="text-[10px]">Signal yo'q</span>
+                    </span>
+                  )}
+                </>
+              ) : cam.id === 'ptz' ? (
+                <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-tactical-900 text-police-cyan group-hover:bg-tactical-850">
+                  <SlidersHorizontal className="w-5 h-5 animate-pulse text-police-cyan" />
+                  <span className="text-[10px] font-mono text-slate-300 font-bold">{ptz.pan}° / {ptz.tilt}°</span>
                 </span>
-                {active && (
-                  <span className="absolute right-1 bottom-1 px-1 py-0.5 rounded bg-police-cyan text-tactical-950 text-[8px] font-bold leading-none">
-                    FAOL
-                  </span>
-                )}
+              ) : cam.id === 'face' ? (
+                <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-police-blue/15 text-police-blue">
+                  <Camera className="w-5 h-5 text-police-cyan" />
+                  <span className="text-[10px] font-semibold text-slate-200">Face ID</span>
+                </span>
+              ) : (
+                <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-slate-500">
+                  <VideoOff className="w-4 h-4" />
+                  <span className="text-[10px]">Signal yo'q</span>
+                </span>
+              )}
+              <span className="absolute left-1.5 top-1 px-1.5 py-0.5 rounded bg-black/80 text-[10px] font-semibold text-white group-hover:bg-police-blue">
+                {cam.short}
+              </span>
+            </button>
+          ))}
+
+          {/* PTZ KAMERA JOYSTIGI: Faqat PTZ kamera kattalashtirilganda chap tomon pastki qismida paydo bo'ladi */}
+          {activeCam === 'ptz' && (
+            <div className="mt-auto pt-2 border-t border-tactical-700/80 flex flex-col items-center gap-1.5 animate-in fade-in zoom-in-95 duration-200">
+              <div className="w-full flex items-center justify-between text-[10px] font-mono text-police-cyan px-1">
+                <span className="font-bold flex items-center gap-1">
+                  <SlidersHorizontal className="w-3 h-3" /> PTZ JOYSTIK
+                </span>
+                <span>{ptz.pan}° / {ptz.tilt}°</span>
+              </div>
+
+              {/* Aylana PTZ Joystigi */}
+              <div
+                ref={ptzBaseRef}
+                onPointerDown={handlePtzDown}
+                onPointerMove={handlePtzMove}
+                onPointerUp={handlePtzUp}
+                onPointerCancel={handlePtzUp}
+                className="relative w-24 h-24 rounded-full bg-tactical-950 border-2 border-police-cyan/40 shadow-[0_0_15px_rgba(0,229,255,0.15)] flex items-center justify-center cursor-grab active:cursor-grabbing touch-none select-none"
+              >
+                {/* O'qlar ko'rsatkichi */}
+                <ArrowUp className="w-3 h-3 text-slate-500 absolute top-1" />
+                <ArrowDown className="w-3 h-3 text-slate-500 absolute bottom-1" />
+                <ArrowLeft className="w-3 h-3 text-slate-500 absolute left-1" />
+                <ArrowRight className="w-3 h-3 text-slate-500 absolute right-1" />
+                <div className="w-12 h-12 rounded-full border border-police-cyan/20 absolute" />
+
+                {/* Joystik boshi (Knob) */}
+                <div
+                  className="w-10 h-10 rounded-full bg-police-blue/80 border-2 border-police-cyan shadow-md shadow-police-cyan/40 flex items-center justify-center pointer-events-none transition-transform duration-75"
+                  style={{
+                    transform: `translate3d(${ptzKnob.x}px, ${ptzKnob.y}px, 0)`
+                  }}
+                >
+                  <div className="w-2.5 h-2.5 rounded-full bg-police-cyan" />
+                </div>
+              </div>
+
+              {/* Markazga qaytarish tugmasi */}
+              <button
+                onClick={() => setPTZ((p) => ({ ...p, pan: 0, tilt: 15 }))}
+                className="w-full py-1 rounded bg-tactical-800 hover:bg-tactical-700 text-police-cyan text-[10px] font-mono font-semibold border border-tactical-600 transition-colors"
+                title="PTZ kamerani 0°, 15° markazga qaytarish"
+              >
+                Markazga (0°)
               </button>
-            );
-          })}
+            </div>
+          )}
         </div>
 
-        {/* Katta ekranli kamera: pastdagi ochilgan joygacha to'liq cho'zilgan va kengaygan */}
+        {/* ========================================================================= */}
+        {/* O'RTA: Katta ekranli kamera - chap tomondagi 4 ta kameraga oxirigacha taqalgan */}
+        {/* ========================================================================= */}
         <div className="relative flex-1 min-h-0 h-full flex flex-col bg-black overflow-hidden">
           <div className={`flex-1 min-h-0 w-full h-full flex flex-col ${activeCam === 'face' ? '' : 'invisible'}`}>
-            {/* Video Stream & Viewport: kadr to'liq (kesilmaydi), kadr ustida faqat aniqlangan ramkalar bor */}
-            <div ref={viewportWrapRef} className="bg-black flex-1 min-h-0 w-full h-full flex items-center justify-center overflow-hidden">
+            {/* Viewport: justify-start orqali kadr chapga oxirigacha taqalgan */}
+            <div ref={viewportWrapRef} className="bg-black flex-1 min-h-0 w-full h-full flex items-center justify-start overflow-hidden">
               <div
                 className="relative bg-black flex items-center justify-center overflow-hidden"
                 style={{
@@ -992,81 +1155,77 @@ export const HUDView: React.FC = () => {
                   maxHeight: '100%'
                 }}
               >
+                {/* 1-REJIM: FRONTAL WEBCAM (FACE ID) */}
+                {cameraSource === 'FRONTAL' && (
+                  <div className="absolute inset-0 bg-black">
+                    <video
+                      ref={videoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className={`w-full h-full object-contain transition-transform ${mirrorVideo ? 'scale-x-[-1]' : ''}`}
+                    />
 
-            {/* 1-REJIM: FRONTAL WEBCAM */}
-            {cameraSource === 'FRONTAL' && (
-              <div className="absolute inset-0 bg-black">
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className={`w-full h-full object-contain transition-transform ${mirrorVideo ? 'scale-x-[-1]' : ''}`}
-                />
+                    {cameraLoading && (
+                      <div className="absolute inset-0 bg-tactical-950/80 flex flex-col items-center justify-center space-y-2 z-10">
+                        <RefreshCw className="w-8 h-8 text-police-cyan animate-spin" />
+                        <span className="font-mono text-xs text-white">Frontal kamera ochilmoqda...</span>
+                      </div>
+                    )}
 
-                {cameraLoading && (
-                  <div className="absolute inset-0 bg-tactical-950/80 flex flex-col items-center justify-center space-y-2 z-10">
-                    <RefreshCw className="w-8 h-8 text-police-cyan animate-spin" />
-                    <span className="font-mono text-xs text-white">Frontal kamera ochilmoqda...</span>
+                    {cameraError && (
+                      <div className="absolute inset-0 bg-tactical-950/90 flex flex-col items-center justify-center p-4 text-center z-10">
+                        <AlertTriangle className="w-10 h-10 text-police-red mb-2" />
+                        <span className="font-mono text-sm font-bold text-white">Frontal kameraga ulanib bo'lmadi</span>
+                        <span className="font-mono text-xs text-slate-400 mt-1 max-w-sm">{cameraError}</span>
+                        <button
+                          onClick={startFrontalCamera}
+                          className="mt-3 px-3 py-1.5 bg-police-blue text-white rounded font-mono text-xs hover:bg-police-blue/80"
+                        >
+                          Kamerani qayta yuklash
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {cameraError && (
-                  <div className="absolute inset-0 bg-tactical-950/90 flex flex-col items-center justify-center p-4 text-center z-10">
-                    <AlertTriangle className="w-10 h-10 text-police-red mb-2" />
-                    <span className="font-mono text-sm font-bold text-white">Frontal kameraga ulanib bo'lmadi</span>
-                    <span className="font-mono text-xs text-slate-400 mt-1 max-w-sm">{cameraError}</span>
-                    <button
-                      onClick={startFrontalCamera}
-                      className="mt-3 px-3 py-1.5 bg-police-blue text-white rounded font-mono text-xs hover:bg-police-blue/80"
-                    >
-                      Kamerani qayta yuklash
-                    </button>
-                  </div>
-                )}
+                {/* AI DETECTED OBJECTS OVERLAY */}
+                {aiEnabled &&
+                  detectedObjects
+                    .filter((obj) => obj.category === 'person')
+                    .map((obj) => (
+                      <div
+                        key={obj.id}
+                        className="absolute border-2 rounded-sm transition-all duration-150 pointer-events-none z-20"
+                        style={{
+                          borderColor: obj.color,
+                          left: `${obj.box.x}%`,
+                          top: `${obj.box.y}%`,
+                          width: `${obj.box.width}%`,
+                          height: `${obj.box.height}%`
+                        }}
+                      >
+                        <div
+                          className={`absolute -left-0.5 flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold text-tactical-950 whitespace-nowrap max-w-[90%] ${
+                            obj.box.y < 8 ? 'top-0 rounded-br-md' : '-top-6 rounded-t-md'
+                          }`}
+                          style={{ backgroundColor: obj.color }}
+                        >
+                          {obj.isIdentifiedPerson ? <CheckCircle2 className="w-3 h-3 shrink-0" /> : <User className="w-3 h-3 shrink-0" />}
+                          <span className="truncate">{obj.label}</span>
+                          {obj.isIdentifiedPerson && <span className="opacity-70 text-[10px]">{(obj.confidence * 100).toFixed(0)}%</span>}
+                        </div>
+                        <div className="absolute right-1 bottom-1 px-1.5 py-0.5 rounded-md bg-black/70 text-[10px] font-semibold text-white">
+                          {obj.distanceUpperBound ? '<' : obj.distanceApprox ? '~' : ''}
+                          {obj.distance} m
+                        </div>
+                      </div>
+                    ))}
               </div>
-            )}
-
-            {/* ========================================================================= */}
-            {/* AI DETECTED OBJECTS: RAMKA CHETIDA ISM-FAMILIYA BILAN VIZUALLASHTIRISH   */}
-            {/* ========================================================================= */}
-            {aiEnabled &&
-              detectedObjects
-                .filter((obj) => obj.category === 'person')
-                .map((obj) => (
-                  <div
-                    key={obj.id}
-                    className="absolute border-2 rounded-sm transition-all duration-150 pointer-events-none z-20"
-                    style={{
-                      borderColor: obj.color,
-                      left: `${obj.box.x}%`,
-                      top: `${obj.box.y}%`,
-                      width: `${obj.box.width}%`,
-                      height: `${obj.box.height}%`
-                    }}
-                  >
-                    {/* Ism yorlig'i ramka ustida (kadrni yopmaydi). Ramka kadr tepasiga tegib tursa, ichkariga tushadi */}
-                    <div
-                      className={`absolute -left-0.5 flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold text-tactical-950 whitespace-nowrap max-w-[90%] ${
-                        obj.box.y < 8 ? 'top-0 rounded-br-md' : '-top-6 rounded-t-md'
-                      }`}
-                      style={{ backgroundColor: obj.color }}
-                    >
-                      {obj.isIdentifiedPerson ? <CheckCircle2 className="w-3 h-3 shrink-0" /> : <User className="w-3 h-3 shrink-0" />}
-                      <span className="truncate">{obj.label}</span>
-                      {obj.isIdentifiedPerson && <span className="opacity-70 text-[10px]">{(obj.confidence * 100).toFixed(0)}%</span>}
-                    </div>
-                    <div className="absolute right-1 bottom-1 px-1.5 py-0.5 rounded-md bg-black/70 text-[10px] font-semibold text-white">
-                      {obj.distanceUpperBound ? '<' : obj.distanceApprox ? '~' : ''}
-                      {obj.distance} m
-                    </div>
-                  </div>
-                ))}
-
-          </div>
-          </div>
+            </div>
           </div>
 
+          {/* AGAR ASOSIY OYNA FACE ID BO'LMASA */}
           {activeCam !== 'face' && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-tactical-950 text-center px-6">
               {activeCam === 'front' && rpiOk ? (
@@ -1075,10 +1234,41 @@ export const HUDView: React.FC = () => {
                   alt="Old kamera (RPi)"
                   className="absolute inset-0 w-full h-full object-contain bg-black"
                 />
+              ) : activeCam === 'ptz' ? (
+                <div className="relative w-full h-full flex flex-col items-center justify-center bg-tactical-950">
+                  {/* PTZ jonli panjara va nishon */}
+                  <div className="absolute inset-4 border border-police-cyan/25 rounded-lg flex items-center justify-center pointer-events-none">
+                    <div className="w-16 h-0.5 bg-police-cyan/40" />
+                    <div className="h-16 w-0.5 bg-police-cyan/40 absolute" />
+                    <div className="w-32 h-32 rounded-full border border-police-cyan/20 absolute" />
+                    <span className="absolute top-3 left-3 text-[11px] font-mono font-bold text-police-cyan flex items-center gap-1.5">
+                      <SlidersHorizontal className="w-3.5 h-3.5" /> 360° PTZ KAMERA (JONLI)
+                    </span>
+                    <span className="absolute top-3 right-3 text-[11px] font-mono text-police-cyan bg-police-blue/20 px-2 py-0.5 rounded border border-police-cyan/30">
+                      PAN: {ptz.pan}° | TILT: {ptz.tilt}°
+                    </span>
+                    <span className="absolute bottom-3 left-3 text-[10px] font-mono text-slate-400">
+                      REJIM: {ptz.mode === 'AUTO_CAMERA' ? 'AVTOMATIK' : "QO'LDA BOSHQARUV"}
+                    </span>
+                    <span className="absolute bottom-3 right-3 text-[10px] font-mono text-slate-400">
+                      ZOOM: {ptz.zoom}x
+                    </span>
+                  </div>
+
+                  <div className="flex flex-col items-center gap-2 z-10">
+                    <div className="p-4 rounded-full bg-police-cyan/10 border border-police-cyan/40 text-police-cyan shadow-lg shadow-police-cyan/20 animate-pulse">
+                      <SlidersHorizontal className="w-10 h-10" />
+                    </div>
+                    <div className="text-base font-bold text-slate-100">PTZ Kamera Boshqaruv Rejimi</div>
+                    <div className="text-xs text-slate-400 max-w-sm">
+                      Chap pastdagi joystik orqali kamerani gorizontal (pan) va vertikal (tilt) 360° burishingiz mumkin.
+                    </div>
+                  </div>
+                </div>
               ) : (
                 <>
                   <VideoOff className="w-10 h-10 text-slate-500" />
-                  <div className="text-sm font-semibold text-slate-200">{CAMERAS.find((c) => c.id === activeCam)?.long} kamerasi ulanmagan</div>
+                  <div className="text-sm font-semibold text-slate-200">{ALL_CAMERAS.find((c) => c.id === activeCam)?.long} ulanmagan</div>
                   <div className="text-xs text-slate-400 max-w-xs">
                     Raspberry Pi dan shu tomonning oqimi ulanganda kadr shu yerda ko'rinadi.
                   </div>
@@ -1094,82 +1284,129 @@ export const HUDView: React.FC = () => {
           )}
         </div>
 
+        {/* ========================================================================= */}
+        {/* O'NG TOMON: Asosiy kameraning o'ng tomonidagi bo'sh joyga VIRTUAL JOYSTIK   */}
+        {/* ========================================================================= */}
+        <div className="flex-none w-52 sm:w-60 md:w-64 h-full flex flex-col items-center justify-between p-3 bg-tactical-900/95 border-l border-tactical-700 z-10 shrink-0 select-none overflow-y-auto">
+          {/* Sarlavha va oxirgi komanda holati */}
+          <div className="w-full flex items-center justify-between">
+            <span className="text-xs font-bold text-white flex items-center gap-1.5">
+              <Gauge className="w-3.5 h-3.5 text-police-cyan" /> Robot Boshqaruvi
+            </span>
+            <span
+              className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold border transition-colors ${
+                lastCommand === 'S'
+                  ? 'bg-police-red/15 border-police-red/50 text-police-red'
+                  : 'bg-police-blue/30 border-police-cyan/60 text-police-cyan animate-pulse'
+              }`}
+            >
+              {lastCommand === 'S' ? 'STOP' : `CMD: ${lastCommand}`}
+            </span>
+          </div>
+
+          {/* Tezlik (PWM) tanlash chips */}
+          <div className="w-full flex items-center justify-between rounded-lg bg-tactical-850 p-1.5 border border-tactical-700/80 my-1">
+            <span className="text-[11px] text-slate-300 pl-1">Tezlik</span>
+            <div className="flex gap-1">
+              {([1, 2, 3] as SpeedLevel[]).map((lvl) => {
+                const pwmLabel = lvl === 1 ? '130' : lvl === 2 ? '190' : '250';
+                return (
+                  <button
+                    key={lvl}
+                    onClick={() => setSpeedLevel(lvl)}
+                    className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
+                      speedLevel === lvl ? 'bg-police-blue text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-tactical-800'
+                    }`}
+                  >
+                    {lvl} <span className="text-[9px] opacity-70">({pwmLabel})</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Virtual Joystik Aylana maydoni */}
+          <div className="relative my-auto flex flex-col items-center">
+            <div
+              ref={driveBaseRef}
+              onPointerDown={handleDriveDown}
+              onPointerMove={handleDriveMove}
+              onPointerUp={handleDriveUp}
+              onPointerCancel={handleDriveUp}
+              className="relative w-36 h-36 rounded-full bg-tactical-950 border-2 border-police-cyan/50 shadow-[0_0_25px_rgba(0,229,255,0.2)] flex items-center justify-center cursor-grab active:cursor-grabbing touch-none select-none"
+            >
+              {/* Yo'nalish belgilari */}
+              <div className="absolute top-1 text-[10px] font-bold text-slate-400 flex flex-col items-center">
+                <ArrowUp className="w-3.5 h-3.5 text-police-cyan" />
+                <span className="text-[9px]">F</span>
+              </div>
+              <div className="absolute bottom-1 text-[10px] font-bold text-slate-400 flex flex-col items-center">
+                <span className="text-[9px]">B</span>
+                <ArrowDown className="w-3.5 h-3.5 text-slate-400" />
+              </div>
+              <div className="absolute left-1 text-[10px] font-bold text-slate-400 flex items-center gap-0.5">
+                <ArrowLeft className="w-3.5 h-3.5 text-slate-400" />
+                <span className="text-[9px]">L</span>
+              </div>
+              <div className="absolute right-1 text-[10px] font-bold text-slate-400 flex items-center gap-0.5">
+                <span className="text-[9px]">R</span>
+                <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+              </div>
+              
+              {/* Diagonal ko'rsatkichlar */}
+              <span className="absolute top-3 left-4 text-[9px] text-slate-500 font-mono">Q</span>
+              <span className="absolute top-3 right-4 text-[9px] text-slate-500 font-mono">E</span>
+
+              {/* Ichki markaz halqalari */}
+              <div className="w-20 h-20 rounded-full border border-police-cyan/20 absolute" />
+              <div className="w-8 h-8 rounded-full border border-dashed border-police-cyan/30 absolute" />
+
+              {/* Joystik tutqichi (Knob) */}
+              <div
+                className="w-14 h-14 rounded-full bg-gradient-to-br from-police-blue to-police-blue/80 border-2 border-police-cyan shadow-lg shadow-police-cyan/50 flex items-center justify-center pointer-events-none transition-transform duration-75"
+                style={{
+                  transform: `translate3d(${driveKnob.x}px, ${driveKnob.y}px, 0)`
+                }}
+              >
+                <div className="w-4 h-4 rounded-full bg-police-cyan shadow-[0_0_8px_#00e5ff]" />
+              </div>
+            </div>
+
+            <p className="text-[10px] text-slate-400 mt-2 text-center font-mono">
+              Surib boshqaring yoki klaviatura: <span className="text-police-cyan">W A S D Q E</span>
+            </p>
+          </div>
+
+          {/* Minora ko'tarish/tushirish va favqulodda to'xtatish */}
+          <div className="w-full flex flex-col gap-1.5 mt-auto">
+            <div className="grid grid-cols-2 gap-1.5">
+              <button
+                onClick={() => sendMecanumCommand('U')}
+                title="Teleskopik minorani ko'tarish (U)"
+                className="py-1.5 px-2 rounded-lg border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 text-slate-200 text-[11px] font-semibold flex items-center justify-center gap-1 transition-colors"
+              >
+                <ChevronsUp className="w-3.5 h-3.5 text-police-cyan" /> Minora (U)
+              </button>
+              <button
+                onClick={() => sendMecanumCommand('D')}
+                title="Teleskopik minorani tushirish (D)"
+                className="py-1.5 px-2 rounded-lg border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 text-slate-200 text-[11px] font-semibold flex items-center justify-center gap-1 transition-colors"
+              >
+                <ChevronsDown className="w-3.5 h-3.5 text-police-cyan" /> Minora (D)
+              </button>
+            </div>
+
+            <button
+              onClick={() => sendMecanumCommand('S')}
+              className="w-full py-2 rounded-lg bg-police-red/20 border-2 border-police-red/60 text-police-red font-bold text-xs hover:bg-police-red/30 flex items-center justify-center gap-1.5 transition-all active:scale-95"
+            >
+              <Square className="w-3.5 h-3.5 fill-current" /> TO'XTATISH (STOP)
+            </button>
+          </div>
+        </div>
+
         {/* ===== Suzuvchi panellar (video ustida, sudrab surish mumkin) ===== */}
         <div className="absolute inset-0 pointer-events-none">
-          <FloatingPanel id="control" title="Boshqaruv" icon={<Gauge className="w-4 h-4" />} open={isOpen('control')} onClose={() => closePanel('control')} anchor="br" width={300}>
-            <div className="flex flex-col gap-3 items-stretch">
-              <div className="flex items-center justify-between rounded-lg bg-tactical-850 p-1.5">
-                <span className="text-[11px] text-slate-300 pl-1">Tezlik (PWM)</span>
-                <div className="flex gap-1">
-                  {([1, 2, 3] as SpeedLevel[]).map((lvl) => {
-                    const pwmLabel = lvl === 1 ? '130' : lvl === 2 ? '190' : '250';
-                    return (
-                      <button
-                        key={lvl}
-                        onClick={() => setSpeedLevel(lvl)}
-                        aria-pressed={speedLevel === lvl}
-                        className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
-                          speedLevel === lvl ? 'bg-police-blue text-white' : 'text-slate-300 hover:bg-tactical-800'
-                        }`}
-                      >
-                        {lvl} <span className="text-[9px] opacity-70">({pwmLabel})</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2">
-                {KEYPAD.map((k, i) => {
-                  if (!k) return <span key={i} />;
-                  const blocked = k.cmd === 'F' && isFrontBlocked;
-                  const Icon = k.icon;
-                  const active = lastCommand === k.cmd && k.cmd !== 'S';
-                  return (
-                    <button
-                      key={k.key}
-                      onClick={() => sendMecanumCommand(k.cmd)}
-                      disabled={blocked}
-                      title={k.title}
-                      className={`py-3 rounded-lg border flex flex-col items-center justify-center gap-1 text-[11px] font-medium transition-transform active:scale-95 ${
-                        k.cmd === 'S'
-                          ? 'bg-police-red/15 border-police-red/60 text-police-red'
-                          : blocked
-                          ? 'opacity-40 cursor-not-allowed bg-tactical-950 border-tactical-700 text-slate-500'
-                          : active
-                          ? 'bg-police-blue border-police-blue text-white'
-                          : 'bg-tactical-850 border-tactical-700 text-slate-200 hover:bg-tactical-800'
-                      }`}
-                    >
-                      <Icon className="w-5 h-5" />
-                      <span>{k.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => sendMecanumCommand('U')}
-                  title="Teleskopik minorani ko'tarish (U)"
-                  className="py-2 rounded-lg border border-tactical-700 bg-tactical-850 text-slate-200 hover:bg-tactical-800 text-xs font-medium flex items-center justify-center gap-1.5"
-                >
-                  <ChevronsUp className="w-4 h-4" /> Minora (U)
-                </button>
-                <button
-                  onClick={() => sendMecanumCommand('D')}
-                  title="Teleskopik minorani tushirish (D)"
-                  className="py-2 rounded-lg border border-tactical-700 bg-tactical-850 text-slate-200 hover:bg-tactical-800 text-xs font-medium flex items-center justify-center gap-1.5"
-                >
-                  <ChevronsDown className="w-4 h-4" /> Minora (D)
-                </button>
-              </div>
-
-              <p className="text-[11px] text-slate-400 text-center">
-                Klaviatura: <span className="text-police-cyan">W A S D Q E, Space (to'xtatish), 1-3 (tezlik)</span>
-              </p>
-            </div>
-          </FloatingPanel>
           <FloatingPanel id="sensors" title="Sensorlar" icon={<Activity className="w-4 h-4" />} open={isOpen('sensors')} onClose={() => closePanel('sensors')} anchor="bl" width={320}>
             <div className="flex flex-col gap-3">
               <div className="grid grid-cols-2 gap-2">
@@ -1306,40 +1543,6 @@ export const HUDView: React.FC = () => {
                   {calibrated ? 'Kalibrovka tayyor' : 'Kalibrovka'}
                 </button>
               </div>
-            </div>
-          </FloatingPanel>
-          <FloatingPanel id="ptz" title="PTZ burilish" icon={<SlidersHorizontal className="w-4 h-4" />} open={isOpen('ptz')} onClose={() => closePanel('ptz')} anchor="tr" width={260}>
-            <div className="flex flex-col gap-3 text-xs">
-              <div className="grid grid-cols-3 gap-2">
-                <span />
-                <button onClick={() => adjustPTZ(0, 10)} className="py-2 rounded-lg border border-tactical-700 bg-tactical-850 text-slate-200 hover:bg-tactical-800 flex justify-center" title="Yuqoriga">
-                  <ArrowUp className="w-4 h-4" />
-                </button>
-                <span />
-                <button onClick={() => adjustPTZ(-15, 0)} className="py-2 rounded-lg border border-tactical-700 bg-tactical-850 text-slate-200 hover:bg-tactical-800 flex justify-center" title="Chapga">
-                  <ArrowLeft className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => setPTZ((p) => ({ ...p, pan: 0, tilt: 15, zoom: 1, mode: p.mode === 'AUTO_CAMERA' ? 'MANUAL' : 'AUTO_CAMERA' }))}
-                  className="py-2 rounded-lg border border-police-blue bg-police-blue/20 text-police-cyan font-semibold"
-                  title="Markazga qaytarish va rejimni almashtirish"
-                >
-                  {ptz.mode === 'AUTO_CAMERA' ? 'Avto' : "Qo'lda"}
-                </button>
-                <button onClick={() => adjustPTZ(15, 0)} className="py-2 rounded-lg border border-tactical-700 bg-tactical-850 text-slate-200 hover:bg-tactical-800 flex justify-center" title="O'ngga">
-                  <ArrowRight className="w-4 h-4" />
-                </button>
-                <span />
-                <button onClick={() => adjustPTZ(0, -10)} className="py-2 rounded-lg border border-tactical-700 bg-tactical-850 text-slate-200 hover:bg-tactical-800 flex justify-center" title="Pastga">
-                  <ArrowDown className="w-4 h-4" />
-                </button>
-                <span />
-              </div>
-              <dl className="grid grid-cols-3 gap-2 text-center">
-                <div className="rounded-lg bg-tactical-850 py-1.5"><dt className="text-[10px] text-slate-400">Pan</dt><dd className="text-slate-100">{ptz.pan}°</dd></div>
-                <div className="rounded-lg bg-tactical-850 py-1.5"><dt className="text-[10px] text-slate-400">Tilt</dt><dd className="text-slate-100">{ptz.tilt}°</dd></div>
-                <div className="rounded-lg bg-tactical-850 py-1.5"><dt className="text-[10px] text-slate-400">Zoom</dt><dd className="text-slate-100">{ptz.zoom}x</dd></div>
-              </dl>
             </div>
           </FloatingPanel>
           <FloatingPanel id="log" title="Serial jurnal" icon={<ScrollText className="w-4 h-4" />} open={isOpen('log')} onClose={() => closePanel('log')} anchor="tr" width={380}>
