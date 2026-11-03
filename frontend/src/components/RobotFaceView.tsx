@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Lock, Unlock, Camera, CameraOff, Volume2 } from 'lucide-react';
 import { faceRecognitionService } from '../services/faceRecognitionService';
 import { tacticalAudio } from '../services/audioService';
+import { edgeTtsService } from '../services/edgeTtsService';
 import { RobotAvatar, type EyeInput } from './RobotAvatar';
 
 interface RobotFaceViewProps {
@@ -44,50 +45,20 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
     setSpeechSubtitle(phraseText);
     tacticalAudio.playCommandBeep();
 
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(phraseText);
-      utterance.lang = 'uz-UZ';
-      utterance.rate = 1.0;
-      utterance.pitch = 1.0;
+    let speakTick = 0;
+    const speechTimer = window.setInterval(() => {
+      speakTick++;
+      eyeInputRef.current.speech = 0.5 + Math.sin(speakTick * 0.8) * 0.4 + Math.random() * 0.2;
+    }, 50);
 
-      // "uz-UZ-SardorNeural" / "Microsoft Sardor Online (Natural)" ovozini tanlash
-      const allVoices = window.speechSynthesis.getVoices();
-      const sardorVoice = allVoices.find(v =>
-        v.name.toLowerCase().includes('sardor') ||
-        v.voiceURI.toLowerCase().includes('sardor') ||
-        v.name.includes('uz-UZ-SardorNeural')
-      ) || allVoices.find(v =>
-        v.lang === 'uz-UZ' || v.lang === 'uz' || v.lang.startsWith('uz')
-      ) || allVoices.find(v =>
-        v.name.toLowerCase().includes('natural') && (v.lang.includes('uz') || v.lang.includes('ru'))
-      );
-      if (sardorVoice) utterance.voice = sardorVoice;
+    const finish = () => {
+      clearInterval(speechTimer);
+      eyeInputRef.current.speech = 0;
+      setIsSpeaking(false);
+      setSpeechSubtitle('');
+    };
 
-      let speakTick = 0;
-      const speechTimer = window.setInterval(() => {
-        speakTick++;
-        eyeInputRef.current.speech = 0.5 + Math.sin(speakTick * 0.8) * 0.4 + Math.random() * 0.2;
-      }, 50);
-
-      const finish = () => {
-        clearInterval(speechTimer);
-        eyeInputRef.current.speech = 0;
-        setIsSpeaking(false);
-        setSpeechSubtitle('');
-      };
-      utterance.onend = finish;
-      utterance.onerror = finish;
-      window.speechSynthesis.speak(utterance);
-    } else {
-      // TTS o'rnatilmagan bo'lsa ham ko'zlar bir necha soniya gapirayotgandek javob beradi
-      eyeInputRef.current.speech = 0.6;
-      setTimeout(() => {
-        eyeInputRef.current.speech = 0;
-        setIsSpeaking(false);
-        setSpeechSubtitle('');
-      }, 3000);
-    }
+    edgeTtsService.speak(phraseText, { voice: 'uz-UZ-SardorNeural', rate: 1.0 }, undefined, finish);
   }, [isSpeaking]);
 
   const speakRef = useRef(speakDemoPhrase);

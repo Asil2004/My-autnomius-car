@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useRobot } from '../context/RobotContext';
-import type { SpeedLevel, DetectedObject } from '../types/robot';
+import type { DetectedObject } from '../types/robot';
 import { faceRecognitionService, type KnownPerson } from '../services/faceRecognitionService';
 import { distanceEstimator } from '../services/distanceService';
 import type * as cocoSsd from '@tensorflow-models/coco-ssd';
@@ -12,7 +12,6 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowRight,
-  Square,
   Compass,
   Gauge,
   SlidersHorizontal,
@@ -130,9 +129,7 @@ const evaluateCalibSamples = (samples: FaceSample[]) => {
 export const HUDView: React.FC = () => {
   const {
     lastCommand,
-    speedLevel,
     sendMecanumCommand,
-    setSpeedLevel,
     sonars,
     isFrontBlocked,
     cameraObstacle,
@@ -867,14 +864,14 @@ export const HUDView: React.FC = () => {
     const dx = e.clientX - cx;
     const dy = e.clientY - cy;
     const dist = Math.hypot(dx, dy);
-    const maxR = 60;
+    const maxR = 48;
     const clampedDist = Math.min(dist, maxR);
     const angle = Math.atan2(dy, dx);
     const clampedX = Math.cos(angle) * clampedDist;
     const clampedY = Math.sin(angle) * clampedDist;
     setDriveKnob({ x: clampedX, y: clampedY });
 
-    if (clampedDist < 14) {
+    if (clampedDist < 12) {
       sendMecanumCommand('S');
       return;
     }
@@ -1289,19 +1286,19 @@ export const HUDView: React.FC = () => {
         </div>
 
         {/* ========================================================================= */}
-        {/* O'NG TOMON: PTZ aktiv bo'lganda 2 ta kamera tepada + KATTA HARAKAT JOYSTIGI */}
+        {/* O'NG TOMON: PTZ aktiv bo'lganda 2 ta kamera vertikal + ROBOT HARAKAT JOYSTIGI */}
         {/* ========================================================================= */}
         <div className="flex-none w-64 sm:w-72 md:w-80 h-full flex flex-col items-center justify-between p-3 bg-tactical-900/95 border-l border-tactical-700 z-10 shrink-0 select-none overflow-y-auto">
           
-          {/* PTZ KAMERA ISHGA TUSHGANDA: 2 ta kamera o'ng tomonga o'tib, joystik tepasida joylashadi */}
+          {/* PTZ KAMERA ISHGA TUSHGANDA: 2 ta kamera kengaytirilib vertikal qilib qo'yildi */}
           {rightCameras.length > 0 && (
-            <div className="w-full mb-2 pb-2 border-b border-tactical-700/80 animate-in fade-in zoom-in-95 duration-200">
-              <div className="text-[10px] font-mono text-slate-400 mb-1.5 flex items-center justify-between px-0.5">
+            <div className="w-full flex flex-col gap-2 mb-2 pb-2 border-b border-tactical-700/80 animate-in fade-in zoom-in-95 duration-200">
+              <div className="text-[10px] font-mono text-slate-400 flex items-center justify-between px-0.5">
                 <span className="font-semibold text-police-cyan">QO'SHIMCHA KAMERALAR</span>
-                <span className="text-[9px] bg-tactical-800 px-1.5 py-0.2 rounded text-slate-300">2 ta</span>
+                <span className="text-[9px] bg-tactical-800 px-1.5 py-0.5 rounded text-slate-300">2 ta</span>
               </div>
-              <div className="grid grid-cols-2 gap-1.5 w-full">
-                {rightCameras.map((cam) => renderCameraTile(cam, 'w-full'))}
+              <div className="flex flex-col gap-2 w-full">
+                {rightCameras.map((cam) => renderCameraTile(cam, 'w-full shadow-md'))}
               </div>
             </div>
           )}
@@ -1322,28 +1319,7 @@ export const HUDView: React.FC = () => {
             </span>
           </div>
 
-          {/* Tezlik (PWM) tanlash chips */}
-          <div className="w-full flex items-center justify-between rounded-lg bg-tactical-850 p-1.5 border border-tactical-700/80 my-1">
-            <span className="text-[11px] text-slate-300 pl-1 font-medium">Tezlik</span>
-            <div className="flex gap-1">
-              {([1, 2, 3] as SpeedLevel[]).map((lvl) => {
-                const pwmLabel = lvl === 1 ? '130' : lvl === 2 ? '190' : '250';
-                return (
-                  <button
-                    key={lvl}
-                    onClick={() => setSpeedLevel(lvl)}
-                    className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
-                      speedLevel === lvl ? 'bg-police-blue text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-tactical-800'
-                    }`}
-                  >
-                    {lvl} <span className="text-[9px] opacity-70">({pwmLabel})</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* KATTA VIRTUAL HARAKAT JOYSTIGI (Iloji boricha katta, yuqori sezgirlik) */}
+          {/* VIRTUAL HARAKAT JOYSTIGI (Kameralarga joy ochish uchun ozgina ixchamlashtirilgan) */}
           <div className="relative my-auto flex flex-col items-center">
             <div
               ref={driveBaseRef}
@@ -1351,42 +1327,42 @@ export const HUDView: React.FC = () => {
               onPointerMove={handleDriveMove}
               onPointerUp={handleDriveUp}
               onPointerCancel={handleDriveUp}
-              className="relative w-44 h-44 sm:w-52 sm:h-52 md:w-56 md:h-56 rounded-full bg-tactical-950 border-2 border-police-cyan/50 shadow-[0_0_35px_rgba(0,229,255,0.25)] flex items-center justify-center cursor-grab active:cursor-grabbing touch-none select-none my-1"
+              className="relative w-36 h-36 sm:w-40 sm:h-40 rounded-full bg-tactical-950 border-2 border-police-cyan/50 shadow-[0_0_25px_rgba(0,229,255,0.2)] flex items-center justify-center cursor-grab active:cursor-grabbing touch-none select-none my-1"
             >
               {/* Yo'nalish belgilari */}
-              <div className="absolute top-2 text-[11px] font-bold text-slate-400 flex flex-col items-center">
-                <ArrowUp className="w-4 h-4 text-police-cyan" />
-                <span className="text-[9px] font-mono">F</span>
+              <div className="absolute top-1.5 text-[10px] font-bold text-slate-400 flex flex-col items-center">
+                <ArrowUp className="w-3.5 h-3.5 text-police-cyan" />
+                <span className="text-[8px] font-mono">F</span>
               </div>
-              <div className="absolute bottom-2 text-[11px] font-bold text-slate-400 flex flex-col items-center">
-                <span className="text-[9px] font-mono">B</span>
-                <ArrowDown className="w-4 h-4 text-slate-400" />
+              <div className="absolute bottom-1.5 text-[10px] font-bold text-slate-400 flex flex-col items-center">
+                <span className="text-[8px] font-mono">B</span>
+                <ArrowDown className="w-3.5 h-3.5 text-slate-400" />
               </div>
-              <div className="absolute left-2 text-[11px] font-bold text-slate-400 flex items-center gap-0.5">
-                <ArrowLeft className="w-4 h-4 text-slate-400" />
-                <span className="text-[9px] font-mono">L</span>
+              <div className="absolute left-1.5 text-[10px] font-bold text-slate-400 flex items-center gap-0.5">
+                <ArrowLeft className="w-3.5 h-3.5 text-slate-400" />
+                <span className="text-[8px] font-mono">L</span>
               </div>
-              <div className="absolute right-2 text-[11px] font-bold text-slate-400 flex items-center gap-0.5">
-                <span className="text-[9px] font-mono">R</span>
-                <ArrowRight className="w-4 h-4 text-slate-400" />
+              <div className="absolute right-1.5 text-[10px] font-bold text-slate-400 flex items-center gap-0.5">
+                <span className="text-[8px] font-mono">R</span>
+                <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
               </div>
               
               {/* Diagonal ko'rsatkichlar */}
-              <span className="absolute top-4 left-5 text-[10px] text-slate-500 font-mono font-bold">Q</span>
-              <span className="absolute top-4 right-5 text-[10px] text-slate-500 font-mono font-bold">E</span>
+              <span className="absolute top-3 left-3 text-[9px] text-slate-500 font-mono font-bold">Q</span>
+              <span className="absolute top-3 right-3 text-[9px] text-slate-500 font-mono font-bold">E</span>
 
               {/* Ichki markaz halqalari */}
-              <div className="w-28 h-28 sm:w-32 sm:h-32 rounded-full border border-police-cyan/20 absolute" />
-              <div className="w-12 h-12 rounded-full border border-dashed border-police-cyan/35 absolute" />
+              <div className="w-22 h-22 rounded-full border border-police-cyan/20 absolute" />
+              <div className="w-8 h-8 rounded-full border border-dashed border-police-cyan/35 absolute" />
 
-              {/* Katta Joystik tutqichi (Knob) */}
+              {/* Joystik tutqichi (Knob) */}
               <div
-                className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-gradient-to-br from-police-blue to-police-blue/80 border-2 border-police-cyan shadow-xl shadow-police-cyan/50 flex items-center justify-center pointer-events-none transition-transform duration-75"
+                className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-gradient-to-br from-police-blue to-police-blue/80 border-2 border-police-cyan shadow-lg shadow-police-cyan/50 flex items-center justify-center pointer-events-none transition-transform duration-75"
                 style={{
                   transform: `translate3d(${driveKnob.x}px, ${driveKnob.y}px, 0)`
                 }}
               >
-                <div className="w-5 h-5 rounded-full bg-police-cyan shadow-[0_0_12px_#00e5ff]" />
+                <div className="w-3.5 h-3.5 rounded-full bg-police-cyan shadow-[0_0_8px_#00e5ff]" />
               </div>
             </div>
 
@@ -1395,7 +1371,7 @@ export const HUDView: React.FC = () => {
             </p>
           </div>
 
-          {/* Minora ko'tarish/tushirish va favqulodda to'xtatish */}
+          {/* Minora ko'tarish/tushirish */}
           <div className="w-full flex flex-col gap-1.5 mt-auto">
             <div className="grid grid-cols-2 gap-1.5">
               <button
@@ -1413,13 +1389,6 @@ export const HUDView: React.FC = () => {
                 <ChevronsDown className="w-4 h-4 text-police-cyan" /> Minora (D)
               </button>
             </div>
-
-            <button
-              onClick={() => sendMecanumCommand('S')}
-              className="w-full py-2.5 rounded-lg bg-police-red/20 border-2 border-police-red/60 text-police-red font-bold text-xs hover:bg-police-red/30 flex items-center justify-center gap-1.5 transition-all active:scale-95"
-            >
-              <Square className="w-4 h-4 fill-current" /> TO'XTATISH (STOP)
-            </button>
           </div>
         </div>
 
