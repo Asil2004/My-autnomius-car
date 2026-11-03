@@ -3,7 +3,6 @@ import { RobotProvider, useRobot } from './context/RobotContext';
 import { Navbar } from './components/Navbar';
 import { TabNavigation } from './components/TabNavigation';
 import { HUDView } from './components/HUDView';
-import { SOSView } from './components/SOSView';
 import { AIAutonomousView } from './components/AIAutonomousView';
 import { LidarRadarView } from './components/LidarRadarView';
 import { GoogleMapsPatrolView } from './components/GoogleMapsPatrolView';
@@ -18,7 +17,6 @@ const MainContent: React.FC = () => {
     <main className="flex-1 flex flex-col overflow-hidden relative">
       {activeTab === 'hud' && <HUDView />}
       {activeTab === 'maps' && <GoogleMapsPatrolView />}
-      {activeTab === 'sos' && <SOSView />}
       {activeTab === 'ai' && <AIAutonomousView />}
       {activeTab === 'telemetry' && <LidarRadarView />}
       {activeTab === 'settings' && <SettingsView />}
@@ -29,17 +27,6 @@ const MainContent: React.FC = () => {
 const AppShell: React.FC = () => {
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
-  const { sos } = useRobot();
-
-  // If public SOS is triggered, show SOS View directly
-  if (sos.active && !isUnlocked) {
-    return (
-      <div className="flex flex-col h-screen w-screen bg-tactical-950 text-slate-100 overflow-hidden font-sans select-none">
-        <Navbar onLockScreen={() => setIsUnlocked(false)} />
-        <SOSView />
-      </div>
-    );
-  }
 
   // DEFAULT VIEW: Robot yuzi (2D ko'zlar, kamera yoqilgach odamni kuzatadi)
   if (!isUnlocked) {

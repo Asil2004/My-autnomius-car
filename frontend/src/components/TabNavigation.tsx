@@ -2,7 +2,6 @@ import React from 'react';
 import { useRobot } from '../context/RobotContext';
 import {
   Gamepad2,
-  PhoneCall,
   BrainCircuit,
   Radar,
   Map as MapIcon,
@@ -11,19 +10,18 @@ import {
 import type { LucideIcon } from 'lucide-react';
 
 interface TabItem {
-  id: 'hud' | 'sos' | 'ai' | 'telemetry' | 'maps' | 'settings';
+  id: 'hud' | 'ai' | 'telemetry' | 'maps' | 'settings';
   label: string;
   icon: LucideIcon;
   alert?: boolean;
 }
 
 export const TabNavigation: React.FC = () => {
-  const { activeTab, setActiveTab, sos } = useRobot();
+  const { activeTab, setActiveTab } = useRobot();
 
   const tabs: TabItem[] = [
     { id: 'hud', label: 'Boshqaruv HUD', icon: Gamepad2 },
     { id: 'maps', label: 'Google Xarita', icon: MapIcon },
-    { id: 'sos', label: 'SOS 102', icon: PhoneCall, alert: sos.active },
     { id: 'ai', label: 'AI & Avtonom', icon: BrainCircuit },
     { id: 'telemetry', label: 'LiDAR Radar', icon: Radar },
     { id: 'settings', label: 'Sozlamalar', icon: Sliders },

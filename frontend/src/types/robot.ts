@@ -94,11 +94,3 @@ export interface SystemStatus {
   uptimeSeconds: number;
   serialWarning: string | null;
 }
-
-export interface SOSState {
-  active: boolean;
-  callDuration: number;
-  callerLocation: string;
-  channel: '102_IIV_DISPETCHER' | '103_MEDIC' | '101_FIRE';
-  operatorName: string;
-}

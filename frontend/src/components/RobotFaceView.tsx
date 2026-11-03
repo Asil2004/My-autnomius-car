@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Lock, Unlock, Camera, CameraOff, Volume2 } from 'lucide-react';
 import { faceRecognitionService } from '../services/faceRecognitionService';
 import { tacticalAudio } from '../services/audioService';
-import { RobotEyes, type EyeInput } from './RobotEyes';
+import { RobotAvatar, type EyeInput } from './RobotAvatar';
 
 interface RobotFaceViewProps {
   onUnlockRequest: () => void;
@@ -217,7 +217,7 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
 
   return (
     <div className="relative w-full h-full bg-tactical-950 overflow-hidden select-none">
-      <RobotEyes inputRef={eyeInputRef} />
+      <RobotAvatar inputRef={eyeInputRef} />
 
       {/* Yuzni aniqlash uchun ko'rinmas kamera oqimi */}
       <video
