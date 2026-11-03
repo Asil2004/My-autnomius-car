@@ -1,7 +1,7 @@
 # ⚙️ QALQON v1.0 — Mexatronika va Apparat Konstruksiyasi Bo'yicha Yagona Rasmiy Hisobot va Ish Rejasi
 
 > 👤 **Mas'ul muhandis (Kim):** Asilbek — Mexatronika va apparat konstruksiyasi bo'yicha bosh muhandis (Mechatronics & Hardware Lead)  
-> 📅 **Oxirgi yangilanish (Qachon):** 02-Noyabr, 2026-yil | 01:10 (Toshkent vaqti, UTC+5)  
+> 📅 **Oxirgi yangilanish (Qachon):** 03-Noyabr, 2026-yil | 10:30 (Toshkent vaqti, UTC+5)  
 > 🔗 **Loyiha repozitoriysi:** [https://github.com/Asil2004/My-autnomius-car](https://github.com/Asil2004/My-autnomius-car)  
 > 📌 **Eslatma:** Ushbu fayl loyihadagi **yagona rasmiy hisobot hujjati** hisoblanadi. Loyihada boshqa ortiqcha hisobot fayllari yuritilmaydi, barcha yangilanishlar faqat shu faylga kiritib boriladi.
 
@@ -31,6 +31,10 @@ Quyidagi jadvalda loyiha davomida amalga oshirilgan har bir muhandislik yangilan
 | **16** | 2026-11-01 \| 23:35 | **Asilbek** (Mexatronika & Tizim) | **Frontend UI ildiz katalogiga (`/index.html`, `/assets/`, `.nojekyll`) integratsiya qilindi:** GitHub Pages `main` yoki `gh-pages` sozlamasidan qat'i nazar, to'g'ridan-to'g'ri 3D kiber-HUD interfeysini ochadigan qilindi | `Bajarildi` |
 | **17** | 2026-11-01 \| 23:54 | **Asilbek** (Mexatronika & Jamoa) | **Jamoa a'zolari (Sarvar va Boburjon)ga shaxsiy Telegram orqali yo'riqnoma yuborildi:** QALQON loyihasini o'z GitHub profillarida bosh sahifaga qadab («Pin») qo'yish, «Fork» qilish va jonli GitHub Pages havolasi yetkazildi | `Bajarildi` |
 | **18** | 2026-11-02 \| 01:10 | **Asilbek** (Mexatronika & AI) | **Jonli Yuz Kuzatish (Look-At Angle Tracking) va AI Ovoz Mimikasi joriy etildi:** Planshet/qurilma old kamerasi orqali inson yuzini va turgan rakursini aniqlab unga to'g'ri qarash (Yaw, Pitch, Roll kinematikasi), AI gapirganda ovoz amplitudasiga mos og'iz/jag' elastikasi va bosh tebranishi (Voice energy sync), zumrad kiber-pulsatsiya qo'shildi. Web UI va Android APK uchun to'liq yangilandi | `Bajarildi` |
+| **19** | 2026-11-02 \| 14:45 | **Asilbek & Sarvar** (AI & Ovoz) | **Microsoft Edge TTS Sardor Neural (1x) O'zbek Ovozli Sintezi Integratsiyasi:** `uz-UZ-SardorNeural` modeli tabiiy 1x tezlikda Web UI (`RobotFaceView`), Android va Raspberry Pi kokpitlariga to'liq joriy qilindi | `Bajarildi` |
+| **20** | 2026-11-02 \| 17:30 | **Boburjon & Asilbek** (AI & Vision) | **Mustaqil Native Android Face ID Tizimi (MobileFaceNet + ML Kit + Room SQLite):** 192-d Float32 vektorli TFLite modeli (18-24ms mobil CPU), Liveness & Anti-Spoofing (ko'z pirpirashi va $\Delta \ge 2.5^\circ$ bosh dinamikasi) tekshiruvi, xodimlar bazasi (Sarvar, Asilbek, Boburjon), 6 ta Material 3 ekrani yaratilib, smartfonga o'rnatildi (`uz.iiv.faceid.debug`) | `Bajarildi` |
+| **21** | 2026-11-03 \| 09:40 | **Asilbek & Boburjon** (Apparat & LiDAR) | **Haqiqiy 360° DToF Lazer Rangefinder — LDROBOT STL-19P Integratsiyasi:** 230400 bod UART, 4500 nuqta/sek, 10 Hz skaner apparat drayveri loyihaning `LidarRadarView.tsx` taktik HUD radariga, `RobotContext.tsx` va `run_lidar_stl19p.py` ga to'liq ulandi | `Bajarildi` |
+| **22** | 2026-11-03 \| 10:25 | **Asilbek** (Tizim & Dasturiy ta'minot) | **Windows Serial Mouse (`silabenm.sys` / `sermouse.sys`) va 5s Tizim Qotishini Bartaraf Etish:** 23 040 bayt/sek LiDAR oqimi tufayli Windows Raw Input navbati to'lib ketishi va kursor sakrashi aniqlandi. 1-klikli UAC avto-admin skripti (`fix_lidar_mouse.bat`) orqali `silabenm`, `sermouse`, `serenum` drayverlari to'liq o'chirilib, kursor va tizim barqarorlashtirildi | `Bajarildi` |
 
 ---
 
