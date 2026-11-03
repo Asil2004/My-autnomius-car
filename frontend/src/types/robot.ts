@@ -54,6 +54,29 @@ export interface LidarPoint {
   intensity: number;
 }
 
+export interface LidarInfo {
+  model: string;            // 'LDROBOT STL-19P'
+  type: string;             // '360° DToF Laser Scanner'
+  mode: 'HARDWARE' | 'SIMULATION';
+  isHardware: boolean;
+  port: string;             // e.g. 'COM4' or '/dev/ttyUSB0'
+  baudrate: number;         // 230400
+  rateHz: number;           // 10.0 Hz
+  sampleRate: number;       // 4500 pts/s
+  rangeMin: number;         // 0.05m
+  rangeMax: number;         // 12.0m
+  accuracyMm: number;       // 15 mm
+  pointsCount: number;
+  sectors: {
+    front: number;
+    rear: number;
+    left: number;
+    right: number;
+  };
+  isBlocked: boolean;
+  status: 'ONLINE' | 'SCANNING' | 'STANDBY' | 'ERROR';
+}
+
 export type PatrolMode = 'AUTONOMOUS' | 'MANUAL' | 'GAP_FOLLOW' | 'SENTRY_STATIONARY';
 
 export interface SystemStatus {

@@ -7,6 +7,7 @@ import type {
   PTZState,
   DetectedObject,
   LidarPoint,
+  LidarInfo,
   PatrolMode,
   SystemStatus,
   SOSState,
@@ -39,6 +40,8 @@ interface RobotContextType {
   isFrontBlocked: boolean;
   battery: BatteryState;
   lidarPoints: LidarPoint[];
+  lidarInfo: LidarInfo;
+  setLidarMode: (mode: 'HARDWARE' | 'SIMULATION') => void;
   
   // Camera as Primary Eye / Obstacle Sensor
   cameraObstacle: {
@@ -175,6 +178,39 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [strobeActive, setStrobeActive] = useState<boolean>(false);
   const [sirenActive, setSirenActive] = useState<boolean>(false);
   const [patrolMode, setPatrolMode] = useState<PatrolMode>('MANUAL');
+
+  // LDROBOT STL-19P Real Lidar State
+  const [lidarInfo, setLidarInfo] = useState<LidarInfo>({
+    model: 'LDROBOT STL-19P',
+    type: '360° DToF Laser Scanner',
+    mode: 'HARDWARE',
+    isHardware: true,
+    port: 'COM (CP2102) /dev/ttyUSB0',
+    baudrate: 230400,
+    rateHz: 10.0,
+    sampleRate: 4500,
+    rangeMin: 0.05,
+    rangeMax: 12.0,
+    accuracyMm: 15,
+    pointsCount: 360,
+    sectors: {
+      front: 2.8,
+      rear: 3.5,
+      left: 2.1,
+      right: 2.4
+    },
+    isBlocked: false,
+    status: 'ONLINE'
+  });
+
+  const setLidarMode = useCallback((mode: 'HARDWARE' | 'SIMULATION') => {
+    setLidarInfo((prev) => ({
+      ...prev,
+      mode,
+      isHardware: mode === 'HARDWARE',
+      status: mode === 'HARDWARE' ? 'ONLINE' : 'STANDBY'
+    }));
+  }, []);
 
   const [aiProcessingFps] = useState<number>(24);
   const [detectedObjects, setDetectedObjects] = useState<DetectedObject[]>([
@@ -520,8 +556,22 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 isCharging: d.battery.isCharging ?? prev.isCharging
               }));
             }
-            if (d.lidar && d.lidar.points) {
-              lidarPointsRef.current = d.lidar.points;
+            if (d.lidar) {
+              if (d.lidar.points) {
+                lidarPointsRef.current = d.lidar.points;
+              }
+              setLidarInfo((prev) => ({
+                ...prev,
+                model: d.lidar.model || 'LDROBOT STL-19P',
+                mode: d.lidar.mode || prev.mode,
+                isHardware: d.lidar.is_hardware ?? (d.lidar.mode === 'HARDWARE'),
+                port: d.lidar.port || prev.port,
+                rateHz: d.lidar.rate_hz || prev.rateHz,
+                sectors: d.lidar.sectors || prev.sectors,
+                pointsCount: d.lidar.points_count || (d.lidar.points ? d.lidar.points.length : prev.pointsCount),
+                isBlocked: d.lidar.sectors ? d.lidar.sectors.front <= 0.45 : prev.isBlocked,
+                status: 'ONLINE'
+              }));
             }
             if (d.gps && d.gps.has_fix) {
               setGps((prev) => ({
@@ -635,6 +685,8 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         updateCameraObstacle,
         battery,
         lidarPoints: lidarPointsRef.current,
+        lidarInfo,
+        setLidarMode,
         ptz,
         setPTZ,
         strobeActive,

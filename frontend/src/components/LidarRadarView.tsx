@@ -3,11 +3,16 @@ import { useRobot } from '../context/RobotContext';
 import {
   Radar,
   Zap,
-  Battery
+  Battery,
+  ShieldCheck,
+  AlertTriangle,
+  Cpu,
+  RefreshCw,
+  Usb
 } from 'lucide-react';
 
 export const LidarRadarView: React.FC = () => {
-  const { lidarPoints, battery, isMoving } = useRobot();
+  const { lidarPoints, lidarInfo, setLidarMode, battery, isMoving } = useRobot();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const pointsRef = useRef(lidarPoints);
 
@@ -15,7 +20,7 @@ export const LidarRadarView: React.FC = () => {
     pointsRef.current = lidarPoints;
   }, [lidarPoints]);
 
-  // Render High-tech LiDAR Radar sweep on HTML5 Canvas (Optimized 30 FPS, zero shadowBlur)
+  // Render High-tech LiDAR Radar sweep on HTML5 Canvas (Optimized 30 FPS)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -117,13 +122,13 @@ export const LidarRadarView: React.FC = () => {
         const py = cy + Math.sin(rad) * (distRatio * maxRadius);
 
         ctx.beginPath();
-        if (pt.distance < 1.0) {
-          ctx.fillStyle = '#ff2238';
-          ctx.arc(px, py, 3.5, 0, 2 * Math.PI);
+        if (pt.distance < 0.45) {
+          ctx.fillStyle = '#ff2238'; // Favqulodda to'siq zonasi (<0.45m)
+          ctx.arc(px, py, 4, 0, 2 * Math.PI);
           ctx.fill();
-        } else if (pt.distance < 2.5) {
+        } else if (pt.distance < 1.2) {
           ctx.fillStyle = '#ffb300';
-          ctx.arc(px, py, 2.5, 0, 2 * Math.PI);
+          ctx.arc(px, py, 3, 0, 2 * Math.PI);
           ctx.fill();
         } else {
           ctx.fillStyle = '#00e676';
@@ -152,20 +157,50 @@ export const LidarRadarView: React.FC = () => {
     return () => cancelAnimationFrame(animationId);
   }, []);
 
+  const isHardware = lidarInfo.mode === 'HARDWARE';
+  const isDangerBlocked = (lidarInfo.sectors?.front ?? 2.0) <= 0.45;
+
   return (
     <div className="flex-1 flex flex-col lg:flex-row gap-4 p-3 sm:p-5 overflow-y-auto max-w-6xl mx-auto w-full select-none">
-      {/* LEFT: 360° LD19 LiDAR Skaner Radar Canvas */}
+      {/* LEFT: 360° LDROBOT STL-19P LiDAR Skaner Radar Canvas */}
       <div className="hud-panel rounded-xl p-4 flex-1 flex flex-col items-center justify-between">
-        <div className="w-full flex items-center justify-between pb-2 mb-2 border-b border-tactical-700/60 font-mono text-xs">
+        <div className="w-full flex flex-wrap items-center justify-between gap-2 pb-2 mb-2 border-b border-tactical-700/60 font-mono text-xs">
           <div className="flex items-center space-x-2">
             <Radar className="w-4 h-4 text-police-cyan animate-spin" />
             <span className="font-bold text-white tracking-wider">
-              360° LD19 / RPLIDAR SKANER
+              360° LDROBOT STL-19P LAZER SKANER
             </span>
           </div>
-          <span className="text-[10px] text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-700 font-bold">
-            4500 nuqta/sek • SLAM TAYYOR
-          </span>
+
+          <div className="flex items-center gap-2">
+            <span
+              className={`text-[10px] px-2 py-0.5 rounded border font-bold flex items-center gap-1 ${
+                isHardware
+                  ? 'text-emerald-400 bg-emerald-950/60 border-emerald-700'
+                  : 'text-amber-400 bg-amber-950/60 border-amber-700'
+              }`}
+            >
+              {isHardware ? (
+                <>
+                  <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                  HAQIQIY APPARAT (ONLINE)
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="w-3 h-3 text-amber-400 animate-spin" />
+                  SIMULYATOR REJIMI
+                </>
+              )}
+            </span>
+
+            <button
+              onClick={() => setLidarMode(isHardware ? 'SIMULATION' : 'HARDWARE')}
+              className="text-[10px] px-2 py-0.5 rounded bg-tactical-800 hover:bg-tactical-700 text-slate-300 border border-tactical-600 transition-all active:scale-95"
+              title="Rejimni almashtirish"
+            >
+              Rejim: {isHardware ? 'Apparat' : 'Simulyator'}
+            </button>
+          </div>
         </div>
 
         {/* High-res Radar Canvas */}
@@ -176,17 +211,106 @@ export const LidarRadarView: React.FC = () => {
             height={400}
             className="w-full h-full rounded-full"
           />
+
+          {isDangerBlocked && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-rose-950/90 text-rose-300 border border-rose-600 px-3 py-1 rounded-full font-mono text-[10px] font-bold flex items-center gap-1.5 shadow-lg animate-pulse">
+              <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+              <span>XAVF: OLD TO'SIQ &lt; 0.45m (AVTOTORMOZ)</span>
+            </div>
+          )}
+        </div>
+
+        {/* 4 Sector Real Distance Cards */}
+        <div className="w-full grid grid-cols-4 gap-2 my-2 font-mono text-center">
+          <div className={`p-1.5 rounded border ${
+            (lidarInfo.sectors?.front ?? 2.0) <= 0.45
+              ? 'bg-rose-950/80 border-rose-600 text-rose-300 animate-pulse'
+              : 'bg-tactical-950/80 border-tactical-800 text-police-cyan'
+          }`}>
+            <div className="text-[9px] text-slate-400 font-bold">OLD (0°)</div>
+            <div className="text-xs font-bold mt-0.5">{(lidarInfo.sectors?.front ?? 2.80).toFixed(2)} m</div>
+          </div>
+
+          <div className="p-1.5 rounded bg-tactical-950/80 border border-tactical-800 text-police-cyan">
+            <div className="text-[9px] text-slate-400 font-bold">O'NG (90°)</div>
+            <div className="text-xs font-bold mt-0.5">{(lidarInfo.sectors?.right ?? 2.40).toFixed(2)} m</div>
+          </div>
+
+          <div className="p-1.5 rounded bg-tactical-950/80 border border-tactical-800 text-police-cyan">
+            <div className="text-[9px] text-slate-400 font-bold">ORQA (180°)</div>
+            <div className="text-xs font-bold mt-0.5">{(lidarInfo.sectors?.rear ?? 3.50).toFixed(2)} m</div>
+          </div>
+
+          <div className="p-1.5 rounded bg-tactical-950/80 border border-tactical-800 text-police-cyan">
+            <div className="text-[9px] text-slate-400 font-bold">CHAP (270°)</div>
+            <div className="text-xs font-bold mt-0.5">{(lidarInfo.sectors?.left ?? 2.10).toFixed(2)} m</div>
+          </div>
         </div>
 
         <div className="w-full flex items-center justify-between text-[11px] font-mono text-slate-400 pt-2 border-t border-tactical-700/60">
-          <span>RADIUS: 5.0 METR</span>
+          <span>RADIUS: 5.0 METR (Maks: 12m)</span>
           <span className="text-police-cyan">FOV: 360° TO'LIQ DOIRA</span>
-          <span>Burchak Aniqligi: 0.8°</span>
+          <span>Aniqlik: ±15 mm (DToF)</span>
         </div>
       </div>
 
-      {/* RIGHT: Telemetry, Battery & Motor Drives */}
+      {/* RIGHT: LDROBOT STL-19P Hardware Specs & Telemetry */}
       <div className="w-full lg:w-96 flex flex-col gap-4">
+        {/* LDROBOT STL-19P Apparat Spetsifikatsiyasi */}
+        <div className="hud-panel rounded-xl p-4">
+          <div className="flex items-center justify-between pb-2 mb-3 border-b border-tactical-700/60 font-mono text-xs">
+            <span className="font-bold text-white flex items-center space-x-2">
+              <Cpu className="w-4 h-4 text-police-cyan" />
+              <span>LDROBOT STL-19P PARAMETRLARI</span>
+            </span>
+            <span className="text-[10px] text-emerald-400">Class 1 Eye-Safe</span>
+          </div>
+
+          <div className="space-y-2 font-mono text-xs">
+            <div className="flex justify-between p-2 rounded bg-tactical-950 border border-tactical-800">
+              <span className="text-slate-400">Sensor Modeli:</span>
+              <span className="text-white font-bold">LDROBOT STL-19P (LD19)</span>
+            </div>
+
+            <div className="flex justify-between p-2 rounded bg-tactical-950 border border-tactical-800">
+              <span className="text-slate-400">O'lchash Texnologiyasi:</span>
+              <span className="text-police-cyan font-bold">DToF (Time-of-Flight)</span>
+            </div>
+
+            <div className="flex justify-between p-2 rounded bg-tactical-950 border border-tactical-800">
+              <span className="text-slate-400">Aloqa Porti &amp; Baud:</span>
+              <span className="text-amber-400 font-bold">UART @ 230400 bps</span>
+            </div>
+
+            <div className="flex justify-between p-2 rounded bg-tactical-950 border border-tactical-800">
+              <span className="text-slate-400">Aylanish Chastotasi:</span>
+              <span className="text-emerald-400 font-bold">{lidarInfo.rateHz.toFixed(1)} Hz (600 RPM)</span>
+            </div>
+
+            <div className="flex justify-between p-2 rounded bg-tactical-950 border border-tactical-800">
+              <span className="text-slate-400">Namuna Olish Tezligi:</span>
+              <span className="text-white font-bold">4500 nuqta/sek (4.5 kHz)</span>
+            </div>
+
+            <div className="flex justify-between p-2 rounded bg-tactical-950 border border-tactical-800">
+              <span className="text-slate-400">Masofa Diapazoni:</span>
+              <span className="text-slate-300 font-bold">0.05 m — 12.00 m</span>
+            </div>
+
+            <div className="flex justify-between p-2 rounded bg-tactical-950 border border-tactical-800">
+              <span className="text-slate-400">Ko'rish Burchagi (FOV):</span>
+              <span className="text-police-cyan font-bold">360° Gorizontal</span>
+            </div>
+          </div>
+
+          <div className="mt-3 p-2.5 rounded bg-blue-950/40 border border-blue-800/60 font-mono text-[11px] text-blue-200 flex items-start gap-2">
+            <Usb className="w-4 h-4 text-police-cyan shrink-0 mt-0.5" />
+            <div>
+              <b className="text-police-cyan">Ulanish:</b> STL-19P LiDAR CP2102 USB-to-UART drayveri orqali 230400 baudda avtomatik ochiladi.
+            </div>
+          </div>
+        </div>
+
         {/* LiFePO4 12V Battery Station */}
         <div className="hud-panel rounded-xl p-4">
           <div className="flex items-center justify-between pb-2 mb-3 border-b border-tactical-700/60 font-mono text-xs">
@@ -221,14 +345,6 @@ export const LidarRadarView: React.FC = () => {
                 <div className="text-[10px] text-slate-400">Tok Sarfi</div>
                 <div className="text-sm font-bold text-emerald-400">{battery.current.toFixed(1)} A</div>
               </div>
-              <div className="p-2 rounded bg-tactical-950 border border-tactical-800">
-                <div className="text-[10px] text-slate-400">Harorat</div>
-                <div className="text-sm font-bold text-amber-400">{battery.temp} °C</div>
-              </div>
-              <div className="p-2 rounded bg-tactical-950 border border-tactical-800">
-                <div className="text-[10px] text-slate-400">Holat</div>
-                <div className="text-sm font-bold text-slate-300">Ishchi Rejim</div>
-              </div>
             </div>
           </div>
         </div>
@@ -247,30 +363,22 @@ export const LidarRadarView: React.FC = () => {
             <div className="p-2.5 rounded bg-tactical-950 border border-tactical-800">
               <div className="text-[10px] text-slate-400 font-bold">M1: OLD CHAP (FL)</div>
               <div className="text-white font-bold mt-1">{isMoving ? 'FAOL (PWM)' : 'KUTISH'}</div>
-              <div className="text-[9px] text-police-cyan">L293D Pin 1 & 2</div>
             </div>
 
             <div className="p-2.5 rounded bg-tactical-950 border border-tactical-800">
               <div className="text-[10px] text-slate-400 font-bold">M2: OLD O'NG (FR)</div>
               <div className="text-white font-bold mt-1">{isMoving ? 'FAOL (PWM)' : 'KUTISH'}</div>
-              <div className="text-[9px] text-police-cyan">L293D Pin 3 & 4</div>
             </div>
 
             <div className="p-2.5 rounded bg-tactical-950 border border-tactical-800">
               <div className="text-[10px] text-slate-400 font-bold">M3: ORQA CHAP (RL)</div>
               <div className="text-white font-bold mt-1">{isMoving ? 'FAOL (PWM)' : 'KUTISH'}</div>
-              <div className="text-[9px] text-police-cyan">L293D Pin 5 & 6</div>
             </div>
 
             <div className="p-2.5 rounded bg-tactical-950 border border-tactical-800">
               <div className="text-[10px] text-slate-400 font-bold">M4: ORQA O'NG (RR)</div>
               <div className="text-white font-bold mt-1">{isMoving ? 'FAOL (PWM)' : 'KUTISH'}</div>
-              <div className="text-[9px] text-police-cyan">L293D Pin 7 & 8</div>
             </div>
-          </div>
-
-          <div className="mt-3 p-2 rounded bg-tactical-900 border border-tactical-800 font-mono text-[10px] text-slate-400">
-            <b className="text-amber-400">Eslatma (PDF):</b> L293D ustidagi sariq PWR jumperi sug'urib olingan (Arduino va motor quvvati ajratilgan).
           </div>
         </div>
       </div>
