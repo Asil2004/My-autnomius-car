@@ -1,8 +1,21 @@
+import * as tf from '@tensorflow/tfjs';
 import * as faceapi from '@vladmandic/face-api';
 import sarvarPhotoUrl from '../assets/faces/koldoshev_sarvar.jpg';
 import asilbekPhotoUrl from '../assets/faces/asilbek_ravshanov.png';
 import boburjonPhotoUrl from '../assets/faces/boburjon_bozorov.jpg';
-import descriptorsData from '../assets/faces/descriptors.json';
+import muhammadaliPhotoUrl from '../assets/faces/muhammadali_ravshanov.jpg';
+// Bazadagi 3 kishining oldindan hisoblangan embeddinglari. Rasm yoki modelni almashtirsangiz, faylni qayta hisoblang
+// (yoki o'chiring: shunda ilova ishga tushganda rasmlardan o'zi hisoblaydi, lekin sekinroq).
+import descriptorsJson from '../assets/faces/descriptors-cache.json';
+import { TRAIN_VARIANTS, renderVariant, type Pt } from './faceAugment';
+
+// Format: { id: { base: number[128], variants: { "sunglasses+mask_blue": number[128], ... } } }.
+// Eski format (faqat number[128]) ham o'qiladi.
+type CachedPerson = number[] | { base: number[]; variants?: Record<string, number[]> };
+const BUILTIN_DESCRIPTORS = descriptorsJson as unknown as Record<string, CachedPerson>;
+
+// DIQQAT: tf.env().set('WEBGL_USE_SHAPES_UNIFORMS', true) ISHLATMANG. Birinchi ishga tushishni ~3 baravar tezlashtiradi,
+// lekin bu face-api tarmoqlarida noto'g'ri natija beradi: yuz detektori hech narsa topmaydi (sinovda yuz: 0, sozlamasiz 1).
 
 export interface KnownPerson {
   id: string;
@@ -11,8 +24,28 @@ export interface KnownPerson {
   photoUrl: string;
   color: string;
   badge: string;
+  /** 128 o'lchamli yuz embeddingi (face-api FaceRecognitionNet) */
   descriptor?: number[];
+  /**
+   * Aksessuar taqqan sun'iy variantlar (ko'zoynak, bosh kiyim, kapyushon, niqob, taturovka va ularning birikmalari).
+   * Asl rasmga aksessuar chizilib, har biridan embedding olingan. Jonli yuz shularga ham solishtiriladi.
+   */
+  templates?: FaceTemplate[];
 }
+
+export interface FaceTemplate {
+  /** Variant nomi, masalan "sunglasses+mask_blue" */
+  v: string;
+  d: number[];
+}
+
+export interface PersonBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 
 export interface FaceMatchResult {
   person: KnownPerson | null;
@@ -32,11 +65,21 @@ export interface DetectedFace {
   descriptor: Float32Array;
 }
 
-// Zulfiddin Frontend arxitekturasi bo'yicha qat'iy parametrlar
-export const MATCH_DISTANCE = 0.58; // Qat'iy Euclid masofasi chegarasi (standart 0.60 dan qat'iyroq)
-export const VOTE_WINDOW = 4;       // Oxirgi 5 ta kadr kuzatuv oynasi
-export const VOTE_NEEDED = 2;       // Kamida 3 kadrda bir xil shaxs tasdiqlansa ism chiqadi (anti-flicker)
-export const LOCALSTORAGE_KEY = 'qalqon.faceDb.v1';
+export interface PersonIdentity {
+  box: PersonBox;
+  /** Bazadagi shaxs. null bo'lsa — "Piyoda" (begona yoki yuzi ko'rinmagan odam) */
+  person: KnownPerson | null;
+  /** Taniganda 0..1 (1 - yuz masofasi). Tanilmasa null */
+  confidence: number | null;
+  faceFound: boolean;
+  /** Topilgan yuz ramkasi (video piksellarida). Masofani yuz kengligidan hisoblash uchun */
+  faceBox: PersonBox | null;
+  /** Ko'zlarning tashqi burchaklari (landmark 36 va 45), video piksellarida */
+  eyes: { x1: number; y1: number; x2: number; y2: number } | null;
+  /** Odam ramkasi detektordan emas, aynan yuzdan olingan (COCO odamni topmagan) */
+  fromFaceOnly: boolean;
+  faceScore: number | null;
+}
 
 export const INITIAL_FACE_DATABASE: KnownPerson[] = [
   {
@@ -62,378 +105,599 @@ export const INITIAL_FACE_DATABASE: KnownPerson[] = [
     photoUrl: boburjonPhotoUrl,
     color: '#f59e0b', // Sariq / Oltin neon
     badge: 'IIV VERIFIED'
+  },
+  {
+    id: 'ravshanov-muhammadali',
+    fullName: 'Muhammadali Ravshanov',
+    role: 'Ruxsat berilgan shaxs',
+    photoUrl: muhammadaliPhotoUrl,
+    color: '#a78bfa', // Binafsha neon
+    badge: 'VERIFIED'
   }
 ];
 
+const MODEL_URL = `${import.meta.env.BASE_URL}models/face`;
+const STORAGE_KEY = 'qalqon.faceDb.v1';
+
+// Yuz embeddinglari orasidagi Euclid masofasi. face-api standarti 0.6, 0.5 — qat'iyroq (begonani tanib yubormaslik uchun)
+const MATCH_DISTANCE = 0.5;
+// Aksessuarli (sun'iy) shablonlar uchun chegara qat'iyroq: sinovda aksessuar taqqan HAR XIL odamlar o'zaro 0.45 gacha
+// yaqinlashadi (toza yuzlarda ~0.65+), shuning uchun 0.5 da begonani tanib yuborish xavfi sezilarli (833 juftdan 8 tasi <0.5, 0 tasi <0.45).
+const OCC_MATCH_DISTANCE = 0.4;
+// Eng yaqin va ikkinchi eng yaqin shaxs orasidagi minimal farq (chegaraga nisbatan, 0.12 ~ 0.06 masofa)
+const MIN_RATIO_MARGIN = 0.12;
+// Bazadagi rasm jonli kadrga o'xshash sahnaga joylanganda yuz kengligi (piksel). Aksessuar variantlari shu sahnada chiziladi
+const SCENE_FACE_PX = 280;
+
+// Ism ko'rsatilishi uchun oxirgi VOTE_WINDOW ta yuz kadridan kamida VOTE_NEEDED tasi bir xil shaxsni ko'rsatishi shart
+const VOTE_WINDOW = 5;
+const VOTE_NEEDED = 3;
+// Iz (track) vaqt bo'yicha emas, kadrlar soni bo'yicha eskiradi: sekin qurilmada bitta tahlil 2-3 s olishi mumkin va
+// 1.5 s lik vaqt chegarasi ovozlarni har kadrda o'chirib yuborar edi (ism hech qachon chiqmasdi). Vaqt chegarasi faqat to'xtab qolgan holat uchun.
+const TRACK_TTL_CYCLES = 6;
+const TRACK_MAX_IDLE_MS = 15000;
+const TRACK_MIN_IOU = 0.25;
+
+const LIVE_OPTIONS = { inputSize: 416, scoreThreshold: 0.5 };
+// Niqob/ko'zoynak/kapyushon taqqan yuzlarning detektor bahosi past (0.25-0.5). Faqat odam ramkasi ichida, yuz topilmasa qidiriladi
+const LOW_OPTIONS = { inputSize: 416, scoreThreshold: 0.25 };
+// Past baholi yuz ramkasi masofa hisobiga ishlatilmaydi (soxta yuz bo'lishi mumkin)
+const MIN_SCORE_FOR_BOX = 0.4;
+const PHOTO_OPTIONS = { inputSize: 608, scoreThreshold: 0.3 };
+
+// Odam ramkasi kadr kengligi yoki balandligining shu ulushidan katta bo'lsa, odam kameraga yaqin deb hisoblanadi
+const CLOSE_BOX_RATIO = 0.5;
+// Yaqin yuzni topish uchun kadr shuncha marta kichraytiriladi
+const PAD_SCALE = 0.5;
+
+interface LiveFace {
+  box: PersonBox;
+  score: number;
+  descriptor: Float32Array;
+  eyes: { x1: number; y1: number; x2: number; y2: number };
+}
+
+function centerInside(inner: PersonBox, outer: PersonBox): boolean {
+  const cx = inner.x + inner.width / 2;
+  const cy = inner.y + inner.height / 2;
+  return cx >= outer.x && cx <= outer.x + outer.width && cy >= outer.y && cy <= outer.y + outer.height;
+}
+
+interface Track {
+  box: PersonBox;
+  votes: (string | null)[];
+  lastSeen: number;
+  lastCycle: number;
+  lastDistance: number;
+}
+
+function iou(a: PersonBox, b: PersonBox): number {
+  const x1 = Math.max(a.x, b.x);
+  const y1 = Math.max(a.y, b.y);
+  const x2 = Math.min(a.x + a.width, b.x + b.width);
+  const y2 = Math.min(a.y + a.height, b.y + b.height);
+  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+  const union = a.width * a.height + b.width * b.height - inter;
+  return union > 0 ? inter / union : 0;
+}
+
+function euclidean(a: ArrayLike<number>, b: ArrayLike<number>): number {
+  let sum = 0;
+  const len = Math.min(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    const d = a[i] - b[i];
+    sum += d * d;
+  }
+  return Math.sqrt(sum);
+}
+
+function loadImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Rasmni yuklab bo\'lmadi'));
+    img.src = url;
+  });
+}
+
 class FaceRecognitionEngine {
-  private database: KnownPerson[] = [...INITIAL_FACE_DATABASE];
-  private isModelLoaded = false;
-  private modelLoadPromise: Promise<void> | null = null;
-  private isInitialized = false;
+  private database: KnownPerson[] = INITIAL_FACE_DATABASE.map((p) => ({ ...p }));
+  private builtinIds = new Set(INITIAL_FACE_DATABASE.map((p) => p.id));
   private initPromise: Promise<void> | null = null;
-  private voteHistory: Map<string, string[]> = new Map();
-  private detectorOptions = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.20 });
+  private ready = false;
+  private tracks: Track[] = [];
+  private cycle = 0;
+  private padCanvas: HTMLCanvasElement | null = null;
 
-  constructor() {
-    // Fon rejimida bazani tayyorlash
-    this.initDatabase().catch(err => {
-      console.warn('[FaceID] Initsializatsiya fon ogohlantirishi:', err);
-    });
+  public isReady(): boolean {
+    return this.ready;
   }
 
-  // =========================================================================
-  // 1. MODELLARNI YUKLASH (Lokal public/models/face yoki public/models)
-  // =========================================================================
-  public async loadModels(): Promise<void> {
-    if (this.isModelLoaded) return;
-    if (this.modelLoadPromise) return this.modelLoadPromise;
-
-    this.modelLoadPromise = (async () => {
-      const baseUrl = import.meta.env.BASE_URL || './';
-      const cleanBase = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
-      const primaryPath = `${cleanBase}models/face`;
-      const fallbackPath = `${cleanBase}models`;
-
-      try {
-        await Promise.all([
-          faceapi.nets.tinyFaceDetector.loadFromUri(primaryPath),
-          faceapi.nets.faceLandmark68Net.loadFromUri(primaryPath),
-          faceapi.nets.faceRecognitionNet.loadFromUri(primaryPath)
-        ]);
-        this.isModelLoaded = true;
-        console.log('[FaceID] face-api modellari muvaffaqiyatli yuklandi:', primaryPath);
-      } catch (err) {
-        console.warn(`[FaceID] ${primaryPath} dan yuklab bo'lmadi, ${fallbackPath} sinab ko'riladi:`, err);
-        try {
-          await Promise.all([
-            faceapi.nets.tinyFaceDetector.loadFromUri(fallbackPath),
-            faceapi.nets.faceLandmark68Net.loadFromUri(fallbackPath),
-            faceapi.nets.faceRecognitionNet.loadFromUri(fallbackPath)
-          ]);
-          this.isModelLoaded = true;
-          console.log('[FaceID] face-api modellari muvaffaqiyatli yuklandi:', fallbackPath);
-        } catch (fbErr) {
-          console.error('[FaceID] face-api modellarini yuklashda xatolik:', fbErr);
-          throw fbErr;
-        }
-      }
-    })();
-
-    return this.modelLoadPromise;
-  }
-
-  // =========================================================================
-  // 2. YUZLAR BAZASINI VA DESKRIPTORLARNI INITSIALIZATSIYA QILISH
-  // =========================================================================
-  public async initDatabase(): Promise<void> {
-    if (this.isInitialized) return;
-    if (this.initPromise) return this.initPromise;
-
-    this.initPromise = (async () => {
-      // Modellar yuklashga urinib ko'rish
-      try {
-        await this.loadModels();
-      } catch (err) {
-        console.warn('[FaceID] Yuz modellari yuklanmadi, COCO-SSD barcha odamlarni Piyoda deb belgilaydi:', err);
-      }
-
-      // Oldindan hisoblangan descriptors.json dan embeddinglarni biriktirish
-      const precalc = descriptorsData as unknown as Record<string, { descriptor: number[] }>;
-      for (const person of this.database) {
-        if (precalc && precalc[person.id]?.descriptor) {
-          person.descriptor = precalc[person.id].descriptor;
-        } else if (this.isModelLoaded) {
-          try {
-            const desc = await this.extractDescriptorFromUrl(person.photoUrl);
-            if (desc) person.descriptor = desc;
-          } catch (e) {
-            console.warn(`[FaceID] ${person.fullName} deskriptorini hisoblashda ogohlantirish:`, e);
-          }
-        }
-      }
-
-      // localStorage (qalqon.faceDb.v1) dagi qo'shilgan yangi shaxslarni yuklash
-      try {
-        const raw = localStorage.getItem(LOCALSTORAGE_KEY);
-        if (raw) {
-          const saved = JSON.parse(raw) as KnownPerson[];
-          if (Array.isArray(saved)) {
-            for (const sp of saved) {
-              if (!this.database.some(p => p.id === sp.id)) {
-                this.database.push(sp);
-              }
-            }
-          }
-        }
-      } catch (err) {
-        console.warn('[FaceID] localStorage dagi yuzlar bazasini o\'qishda xatolik:', err);
-      }
-
-      this.isInitialized = true;
-    })();
-
+  public initDatabase(): Promise<void> {
+    if (!this.initPromise) {
+      this.initPromise = this.loadEverything().catch((err) => {
+        this.initPromise = null;
+        throw err;
+      });
+    }
     return this.initPromise;
   }
 
-  // =========================================================================
-  // 3. RASMDAN YUZNI DETEKSIYA QILISH VA 128D EMBEDDING OLISH
-  // =========================================================================
-  public async extractDescriptorFromImage(
-    img: HTMLImageElement | HTMLCanvasElement
-  ): Promise<number[] | null> {
-    if (!this.isModelLoaded) {
-      await this.loadModels();
-    }
+  private async loadEverything(): Promise<void> {
+    let t = performance.now();
+    const lap = (name: string) => {
+      const now = performance.now();
+      this.timings[name] = Math.round(now - t);
+      t = now;
+    };
+    await ((tf as any).ready ? (tf as any).ready() : Promise.resolve());
+    lap('tf');
+    await Promise.all([
+      faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+      faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+      faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+    ]);
+    lap('modellar');
 
-    const opt416 = new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.30 });
-    let detection = await faceapi
-      .detectSingleFace(img, opt416)
-      .withFaceLandmarks()
-      .withFaceDescriptor();
-
-    // SARVAR RASMI CHETI MUAMMOSI (yuz butun kadrni egallagan) UCHUN BO'SH JOY (PADDING) QO'SHISH
-    if (!detection) {
-      const w = (img as HTMLImageElement).naturalWidth || img.width || 300;
-      const h = (img as HTMLImageElement).naturalHeight || img.height || 300;
-      const padRatio = 0.35;
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.round(w * (1 + padRatio * 2));
-      canvas.height = Math.round(h * (1 + padRatio * 2));
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.fillStyle = '#808080';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(img, Math.round(w * padRatio), Math.round(h * padRatio));
-        detection = await faceapi
-          .detectSingleFace(canvas, opt416)
-          .withFaceLandmarks()
-          .withFaceDescriptor();
+    for (const person of this.database) {
+      const cached = BUILTIN_DESCRIPTORS[person.id];
+      const base = Array.isArray(cached) ? cached : cached?.base;
+      if (base?.length === 128) {
+        person.descriptor = base;
+        if (!Array.isArray(cached) && cached.variants) {
+          person.templates = Object.entries(cached.variants)
+            .filter(([, d]) => d.length === 128)
+            .map(([v, d]) => ({ v, d }));
+        }
+        continue;
+      }
+      try {
+        person.descriptor = await this.descriptorFromUrl(person.photoUrl);
+      } catch (err) {
+        console.warn(`[FaceID] ${person.fullName} rasmidan yuz olinmadi:`, err);
       }
     }
 
-    // Agar topilmasa, pastroq o'lcham va sezgirlik bilan yana 1 bor urinish
-    if (!detection) {
-      const opt320 = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.20 });
-      detection = await faceapi
-        .detectSingleFace(img, opt320)
-        .withFaceLandmarks()
-        .withFaceDescriptor();
+    // WebGL shaderlarini birinchi jonli kadrdan oldin kompilyatsiya qilib qo'yish (aks holda 1-kadr bir necha soniya qotadi)
+    lap('baza');
+    try {
+      await this.warmUp();
+    } catch {
+      // isitish muvaffaqiyatsiz bo'lsa ham jonli ishlashga halaqit bermaydi
     }
-
-    if (!detection) return null;
-    return Array.from(detection.descriptor);
+    lap('isitish');
+    this.loadCustomPersons();
+    this.ready = true;
+    console.info('[FaceID] tayyor (ms):', this.timings);
   }
 
-  public async extractDescriptorFromUrl(url: string): Promise<number[] | null> {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = async () => {
-        try {
-          const desc = await this.extractDescriptorFromImage(img);
-          resolve(desc);
-        } catch {
-          resolve(null);
-        }
-      };
-      img.onerror = () => resolve(null);
-      img.src = url;
-    });
+  // Uchala tarmoqni (detektor, landmark, tanish) jonli rejimdagi sozlama bilan bir marta ishlatib, shaderlarni kompilyatsiya qiladi.
+  // Birinchi jonli kadr shunda qotib qolmaydi. Yuzi aniq topiladigan rasm (bazadagi ikkinchi shaxs) kadr o'lchamiga joylanadi.
+  private async warmUp(): Promise<void> {
+    const person = this.database.find((p) => p.id === 'ravshanov-asilbek') ?? this.database[0];
+    const img = await loadImage(person.photoUrl);
+    const canvas = document.createElement('canvas');
+    canvas.width = 640;
+    canvas.height = 360;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = '#808080';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const h = 260;
+    const w = (img.naturalWidth / img.naturalHeight) * h;
+    ctx.drawImage(img, (canvas.width - w) / 2, 50, w, h);
+    await this.detectLive(canvas, 1, 0, 0);
   }
 
-  // =========================================================================
-  // 4. YANGI SHAXSNI BAZAGA QO'SHISH (Faqat yuzi aniq ko'ringan bo'lsa)
-  // =========================================================================
-  public async addPerson(personData: {
-    fullName: string;
-    role: string;
-    photoDataUrl: string;
-    color?: string;
-  }): Promise<KnownPerson> {
-    await this.initDatabase();
-
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = async () => {
-        try {
-          const descriptor = await this.extractDescriptorFromImage(img);
-          if (!descriptor) {
-            return reject(new Error("Rasmda yuz topilmadi! Iltimos, yuzingiz aniq va to'g'ri ko'ringan rasm yuklang."));
-          }
-
-          // 96x96 px ixcham thumbnail yaratish
-          const thumbCanvas = document.createElement('canvas');
-          thumbCanvas.width = 96;
-          thumbCanvas.height = 96;
-          const tCtx = thumbCanvas.getContext('2d');
-          if (tCtx) {
-            const w = img.naturalWidth || img.width;
-            const h = img.naturalHeight || img.height;
-            const minDim = Math.min(w, h);
-            const sx = (w - minDim) / 2;
-            const sy = (h - minDim) / 2;
-            tCtx.drawImage(img, sx, sy, minDim, minDim, 0, 0, 96, 96);
-          }
-          const thumbnailDataUrl = thumbCanvas.toDataURL('image/jpeg', 0.85);
-
-          const newPerson: KnownPerson = {
-            id: `person-${Date.now()}`,
-            fullName: personData.fullName.trim(),
-            role: personData.role.trim() || 'Ruxsat berilgan shaxs',
-            photoUrl: thumbnailDataUrl,
-            color: personData.color || '#38bdf8',
-            badge: 'IIV VERIFIED',
-            descriptor
-          };
-
-          this.database.push(newPerson);
-
-          // localStorage ga saqlash
-          try {
-            const customPersons = this.database.filter(
-              p => !INITIAL_FACE_DATABASE.some(init => init.id === p.id)
-            );
-            localStorage.setItem(LOCALSTORAGE_KEY, JSON.stringify(customPersons));
-          } catch (lsErr) {
-            console.warn('[FaceID] localStorage ga saqlashda xato:', lsErr);
-          }
-
-          resolve(newPerson);
-        } catch (err) {
-          reject(err);
-        }
-      };
-      img.onerror = () => reject(new Error("Rasmni o'qib bo'lmadi."));
-      img.src = personData.photoDataUrl;
-    });
-  }
+  /** Bosqichlar vaqti (ms): ishga tushish va oxirgi jonli kadr. Sekinlikni topish uchun */
+  public timings: Record<string, number> = {};
 
   public getPersons(): KnownPerson[] {
     return this.database;
   }
 
-  // =========================================================================
-  // 5. JONLI VIDEO KADRIDAGI YUZLARNI ANIQLASH (TinyFaceDetector + landmarks)
-  // =========================================================================
-  public async detectFacesInVideo(video: HTMLVideoElement): Promise<DetectedFace[]> {
-    if (!this.isModelLoaded) return [];
+  /**
+   * Yangi shaxsni bazaga qo'shadi. Asl rasmdan tashqari, rasmga aksessuarlar chizilgan variantlardan ham embedding oladi
+   * (~15 ta, bir necha soniya). onProgress(i, n) — jarayonni ko'rsatish uchun.
+   */
+  public async addPerson(person: KnownPerson, onProgress?: (done: number, total: number) => void): Promise<void> {
+    await this.initDatabase();
+    if (!person.photoUrl) throw new Error('Rasm yuklanmagan');
 
+    const img = await loadImage(person.photoUrl);
+    const descriptor = await this.descriptorFromImage(img);
+    person.descriptor = descriptor;
     try {
-      const detections = await faceapi
-        .detectAllFaces(video, this.detectorOptions)
+      const { variants } = await this.buildVariantDescriptors(img, onProgress);
+      person.templates = Object.entries(variants).map(([v, d]) => ({ v, d }));
+    } catch (err) {
+      // Variantlarsiz ham shaxs qo'shiladi (faqat aksessuarsiz tanish ishlaydi)
+      console.warn('[FaceID] Aksessuar variantlarini hisoblab bo\'lmadi:', err);
+    }
+    person.photoUrl = this.makeThumbnail(img);
+    this.database.push(person);
+    this.saveCustomPersons();
+  }
+
+  /**
+   * Rasmni jonli kadrga o'xshash sahnaga (1280x720, yuz ~280 px) joylab, 68 landmark bo'yicha har bir aksessuar variantini
+   * chizadi va jonli tanish quvuri bilan embedding oladi. Yuz topilmagan variantlar tashlab ketiladi.
+   * Natija bazadagi built-in shaxslar uchun `descriptors-cache.json` ga yoziladi.
+   */
+  public async buildVariantDescriptors(
+    img: HTMLImageElement,
+    onProgress?: (done: number, total: number) => void
+  ): Promise<{ base: number[]; variants: Record<string, number[]> }> {
+    await this.initDatabase();
+    const pad = this.padImage(img);
+    const found = await faceapi
+      .detectAllFaces(pad, new faceapi.TinyFaceDetectorOptions(PHOTO_OPTIONS))
+      .withFaceLandmarks();
+    if (found.length === 0) throw new Error('Rasmda yuz topilmadi');
+    const main = found.reduce((a: any, b: any) => (a.detection.box.area >= b.detection.box.area ? a : b));
+
+    const s = SCENE_FACE_PX / main.detection.box.width;
+    const scene = document.createElement('canvas');
+    scene.width = 1280;
+    scene.height = 720;
+    const sctx = scene.getContext('2d')!;
+    sctx.fillStyle = '#889';
+    sctx.fillRect(0, 0, scene.width, scene.height);
+    const cx = main.detection.box.x + main.detection.box.width / 2;
+    const cy = main.detection.box.y + main.detection.box.height / 2;
+    sctx.drawImage(pad, 640 - cx * s, 360 - cy * s, pad.width * s, pad.height * s);
+
+    const detectOne = async (canvas: HTMLCanvasElement) => {
+      let r = await faceapi
+        .detectSingleFace(canvas, new faceapi.TinyFaceDetectorOptions(LIVE_OPTIONS))
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+      if (!r) {
+        r = await faceapi
+          .detectSingleFace(canvas, new faceapi.TinyFaceDetectorOptions(LOW_OPTIONS))
+          .withFaceLandmarks()
+          .withFaceDescriptor();
+      }
+      return r;
+    };
+
+    const base = await detectOne(scene);
+    if (!base) throw new Error('Sahnada yuz topilmadi');
+    const landmarks: Pt[] = base.landmarks.positions.map((p: any) => ({ x: p.x, y: p.y }));
+
+    const variants: Record<string, number[]> = {};
+    for (let i = 0; i < TRAIN_VARIANTS.length; i++) {
+      const name = TRAIN_VARIANTS[i];
+      const seed = [...name].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7);
+      const r = await detectOne(renderVariant(scene, landmarks, name, { seed, k: 1 }));
+      if (r) variants[name] = Array.from(r.descriptor);
+      onProgress?.(i + 1, TRAIN_VARIANTS.length);
+      // Asosiy oqimga nafas berish (sahifa qotib qolmasin)
+      await new Promise((res) => setTimeout(res, 0));
+    }
+    return { base: Array.from(base.descriptor), variants };
+  }
+
+  // Rasmdagi eng katta yuzning embeddingini olish
+  private async descriptorFromImage(img: HTMLImageElement): Promise<number[]> {
+    const detect = (input: HTMLImageElement | HTMLCanvasElement) =>
+      faceapi
+        .detectAllFaces(input, new faceapi.TinyFaceDetectorOptions(PHOTO_OPTIONS))
         .withFaceLandmarks()
         .withFaceDescriptors();
 
-      return detections.map(d => ({
-        box: {
-          x: d.detection.box.x,
-          y: d.detection.box.y,
-          width: d.detection.box.width,
-          height: d.detection.box.height
-        },
-        score: d.detection.score,
-        descriptor: d.descriptor
-      }));
+    let results = await detect(img);
+    if (results.length === 0) {
+      // Yuz butun kadrni egallagan (pasport uslubidagi) rasmlarni detektor topmaydi: atrofiga bo'sh joy qo'shib qayta urinamiz
+      results = await detect(this.padImage(img));
+    }
+    if (results.length === 0) throw new Error('Rasmda yuz topilmadi');
+
+    const largest = results.reduce((a: any, b: any) =>
+      a.detection.box.area >= b.detection.box.area ? a : b
+    );
+    return Array.from(largest.descriptor);
+  }
+
+  private padImage(img: HTMLImageElement): HTMLCanvasElement {
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth * 2;
+    canvas.height = img.naturalHeight * 2;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = '#808080';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, img.naturalWidth / 2, img.naturalHeight / 2);
+    return canvas;
+  }
+
+  private async descriptorFromUrl(url: string): Promise<number[]> {
+    return this.descriptorFromImage(await loadImage(url));
+  }
+
+  private makeThumbnail(img: HTMLImageElement): string {
+    const size = 96;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return img.src;
+    const side = Math.min(img.naturalWidth, img.naturalHeight);
+    const sx = (img.naturalWidth - side) / 2;
+    const sy = (img.naturalHeight - side) / 4;
+    ctx.drawImage(img, sx, sy, side, side, 0, 0, size, size);
+    return canvas.toDataURL('image/jpeg', 0.7);
+  }
+
+  private loadCustomPersons(): void {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as KnownPerson[];
+      for (const p of saved) {
+        if (p.descriptor?.length === 128 && !this.builtinIds.has(p.id)) {
+          this.database.push(p);
+        }
+      }
     } catch (err) {
-      console.warn('[FaceID] Video kadrida yuzlarni aniqlash xatosi:', err);
-      return [];
+      console.warn('[FaceID] Saqlangan bazani o\'qib bo\'lmadi:', err);
     }
   }
 
-  // =========================================================================
-  // 6. EUCLID MASOFASI VA SOLISHTIRISH (Chegara: 0.50)
-  // =========================================================================
-  public euclideanDistance(v1: number[] | Float32Array, v2: number[] | Float32Array): number {
-    let sum = 0;
-    const len = Math.min(v1.length, v2.length);
-    for (let i = 0; i < len; i++) {
-      const diff = v1[i] - v2[i];
-      sum += diff * diff;
+  private saveCustomPersons(): void {
+    try {
+      const custom = this.database.filter((p) => !this.builtinIds.has(p.id));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(custom));
+    } catch (err) {
+      console.warn('[FaceID] Bazani saqlab bo\'lmadi:', err);
     }
-    return Math.sqrt(sum);
+  }
+
+  // Eng yaqin shaxs. Asl rasm 0.5 chegara bilan, aksessuarli shablonlar 0.4 chegara bilan solishtiriladi:
+  // har ikkisi chegaraga nisbatan normallanadi (<=1 = qabul), shaxs eng kichik nisbat bo'yicha tanlanadi.
+  private nearest(descriptor: ArrayLike<number>): { person: KnownPerson | null; distance: number; accepted: boolean } {
+    let best: KnownPerson | null = null;
+    let bestRatio = Infinity;
+    let secondRatio = Infinity;
+    let bestDist = Infinity;
+    for (const p of this.database) {
+      let baseD = Infinity;
+      let occD = Infinity;
+      if (p.descriptor) baseD = euclidean(descriptor, p.descriptor);
+      if (p.templates) {
+        for (const t of p.templates) {
+          const d = euclidean(descriptor, t.d);
+          if (d < occD) occD = d;
+        }
+      }
+      const ratio = Math.min(baseD / MATCH_DISTANCE, occD / OCC_MATCH_DISTANCE);
+      if (ratio < bestRatio) {
+        secondRatio = bestRatio;
+        bestRatio = ratio;
+        best = p;
+        bestDist = baseD / MATCH_DISTANCE <= occD / OCC_MATCH_DISTANCE ? baseD : occD;
+      } else if (ratio < secondRatio) {
+        secondRatio = ratio;
+      }
+    }
+    // Ikki o'xshash shaxs (masalan qarindoshlar: toza yuzlari orasida masofa 0.478 < 0.5) adashmasligi uchun:
+    // eng yaqin shaxs ikkinchisidan yetarlicha ajralib turmasa, bu kadrda ism berilmaydi (noaniq)
+    const ambiguous = secondRatio - bestRatio < MIN_RATIO_MARGIN;
+    return { person: best, distance: bestDist, accepted: best !== null && bestRatio <= 1 && !ambiguous };
+  }
+
+  // Kadrlar orasida bir odamni kuzatib, ovoz berish orqali barqaror ism chiqarish
+  private matchTrack(box: PersonBox, now: number): Track {
+    let best: Track | null = null;
+    let bestIou = TRACK_MIN_IOU;
+    for (const t of this.tracks) {
+      const v = iou(t.box, box);
+      if (v > bestIou) {
+        bestIou = v;
+        best = t;
+      }
+    }
+    if (!best) {
+      best = { box, votes: [], lastSeen: now, lastCycle: this.cycle, lastDistance: 1 };
+      this.tracks.push(best);
+    }
+    best.box = box;
+    best.lastSeen = now;
+    best.lastCycle = this.cycle;
+    return best;
+  }
+
+  private resolveTrack(track: Track): string | null {
+    const counts = new Map<string, number>();
+    for (const v of track.votes) {
+      if (v) counts.set(v, (counts.get(v) ?? 0) + 1);
+    }
+    let winner: string | null = null;
+    let max = 0;
+    for (const [id, c] of counts) {
+      if (c > max) {
+        max = c;
+        winner = id;
+      }
+    }
+    return max >= VOTE_NEEDED ? winner : null;
+  }
+
+  /**
+   * Kadrdagi barcha odamlarni aniqlaydi.
+   * personBoxes — COCO-SSD topgan odam ramkalari (video piksellarida).
+   * Natija: har bir ramka uchun shaxs yoki null ("Piyoda"). COCO topmagan, lekin yuzi
+   * ko'ringan odamlar ham oxirida qo'shiladi.
+   */
+  public async identifyPeople(
+    video: HTMLVideoElement,
+    personBoxes: PersonBox[]
+  ): Promise<PersonIdentity[]> {
+    const asPiyoda = (box: PersonBox): PersonIdentity => ({
+      box, person: null, confidence: null, faceFound: false, faceBox: null, eyes: null, fromFaceOnly: false, faceScore: null
+    });
+    if (!this.ready) return personBoxes.map(asPiyoda);
+
+    const now = performance.now();
+    this.cycle++;
+    this.tracks = this.tracks.filter(
+      (t) => this.cycle - t.lastCycle <= TRACK_TTL_CYCLES && now - t.lastSeen < TRACK_MAX_IDLE_MS
+    );
+
+    const tDetect = performance.now();
+    let faces = await this.detectLive(video, 1, 0, 0);
+    this.timings.kadr = Math.round(performance.now() - tDetect);
+    this.timings.pad = 0;
+
+    // Yuz kadrni to'ldirib, kameraga yaqin turganda detektor uni topolmaydi (yuz juda katta).
+    // Yaqin odam ramkasida yuz topilmagan bo'lsa, kadrni kichraytirib (atrofiga bo'sh joy qo'shib) qayta urinamiz.
+    const vw = video.videoWidth || video.width;
+    const vh = video.videoHeight || video.height;
+    const closeWithoutFace = personBoxes.some(
+      (pb) =>
+        (pb.width >= vw * CLOSE_BOX_RATIO || pb.height >= vh * CLOSE_BOX_RATIO) &&
+        !faces.some((f) => centerInside(f.box, pb))
+    );
+    if (closeWithoutFace && vw > 0 && vh > 0) {
+      const tPad = performance.now();
+      const found = await this.detectLive(
+        this.padFrame(video, vw, vh),
+        PAD_SCALE,
+        (vw * (1 - PAD_SCALE)) / 2,
+        (vh * (1 - PAD_SCALE)) / 2
+      );
+      this.timings.pad = Math.round(performance.now() - tPad);
+      // Allaqachon topilgan yuzlarni takrorlamaymiz
+      faces = faces.concat(found.filter((pf) => !faces.some((f) => centerInside(pf.box, f.box))));
+    }
+
+    // Niqob, ko'zoynak, kapyushon taqqan yuzning detektor bahosi past (0.25-0.5), shuning uchun oddiy chegarada topilmaydi.
+    // Odam ramkasi bor, lekin yuz topilmagan bo'lsa, past chegara bilan faqat shu ramka ichida qidiramiz (har 2-kadrda, tejash uchun).
+    const needLow = personBoxes.filter((pb) => pb.height >= vh * 0.2 && !faces.some((f) => centerInside(f.box, pb)));
+    if (needLow.length > 0 && this.cycle % 2 === 0) {
+      const low = await this.detectLive(video, 1, 0, 0, LOW_OPTIONS);
+      faces = faces.concat(
+        low.filter((lf) => needLow.some((pb) => centerInside(lf.box, pb)) && !faces.some((f) => centerInside(lf.box, f.box)))
+      );
+    }
+
+    // Har bir yuzni o'zini o'z ichiga olgan eng kichik odam ramkasiga biriktirish
+    const facePerBox = new Map<number, LiveFace>();
+    const orphans: LiveFace[] = [];
+    for (const face of faces) {
+      const fb = face.box;
+      let ownerIdx = -1;
+      let ownerArea = Infinity;
+      personBoxes.forEach((pb, i) => {
+        const area = pb.width * pb.height;
+        if (centerInside(fb, pb) && area < ownerArea) {
+          ownerIdx = i;
+          ownerArea = area;
+        }
+      });
+      if (ownerIdx < 0) {
+        orphans.push(face);
+      } else {
+        const prev = facePerBox.get(ownerIdx);
+        if (!prev || fb.width * fb.height > prev.box.width * prev.box.height) facePerBox.set(ownerIdx, face);
+      }
+    }
+
+    const identify = (box: PersonBox, face: LiveFace | undefined, fromFaceOnly: boolean): PersonIdentity => {
+      const track = this.matchTrack(box, now);
+      let faceScore: number | null = null;
+      if (face) {
+        faceScore = face.score;
+        const { person, distance, accepted } = this.nearest(face.descriptor);
+        track.votes.push(person && accepted ? person.id : null);
+        if (track.votes.length > VOTE_WINDOW) track.votes.shift();
+        if (person && accepted) track.lastDistance = distance;
+      }
+      const id = this.resolveTrack(track);
+      const person = id ? this.database.find((p) => p.id === id) ?? null : null;
+      return {
+        box,
+        person,
+        confidence: person ? Math.max(0, 1 - track.lastDistance) : null,
+        faceFound: !!face,
+        // Past baholi yuz ramkasi soxta bo'lishi mumkin: masofa va kalibrovka uchun ishlatilmaydi (tanish baribir ishlaydi)
+        faceBox: face && face.score >= MIN_SCORE_FOR_BOX ? face.box : null,
+        eyes: face && face.score >= MIN_SCORE_FOR_BOX ? face.eyes : null,
+        fromFaceOnly,
+        faceScore
+      };
+    };
+
+    const results = personBoxes.map((box, i) => identify(box, facePerBox.get(i), false));
+    for (const face of orphans) {
+      results.push(identify({ ...face.box }, face, true));
+    }
+    return results;
+  }
+
+  public async detectFacesInVideo(video: HTMLVideoElement): Promise<DetectedFace[]> {
+    if (!this.ready) {
+      await this.initDatabase();
+    }
+    const faces = await this.detectLive(video, 1, 0, 0);
+    return faces.map((f: any) => ({
+      box: f.box,
+      score: f.score,
+      descriptor: f.descriptor as unknown as Float32Array
+    }));
   }
 
   public matchFace(descriptor: Float32Array | number[]): FaceMatchResult {
-    let bestPerson: KnownPerson | null = null;
-    let minDistance = Infinity;
+    const arr = Array.from(descriptor);
+    const { person, distance, accepted } = this.nearest(arr);
+    return {
+      person: accepted ? person : null,
+      isIdentified: accepted && !!person,
+      confidence: person ? Math.max(0, 1 - distance) : 0,
+      distance
+    };
+  }
 
-    for (const person of this.database) {
-      if (!person.descriptor || person.descriptor.length === 0) continue;
-      const dist = this.euclideanDistance(descriptor, person.descriptor);
-      if (dist < minDistance) {
-        minDistance = dist;
-        bestPerson = person;
-      }
-    }
 
-    // Qat'iy chegara: 0.58 (Real veb-kamera va mobil optika uchun sozlangan)
-    if (bestPerson) {
-      console.log(`[FaceID Match] Eng yaqin: ${bestPerson.fullName}, masofa: ${minDistance.toFixed(3)}, chegara: ${MATCH_DISTANCE}`);
-    }
-    if (bestPerson && minDistance <= MATCH_DISTANCE) {
-      // Ishonchlilik foizi (0.80 - 0.98 oralig'ida)
-      const confidence = Math.min(0.98, Math.max(0.80, +(1.0 - minDistance * 0.35).toFixed(2)));
+  // Yuzlarni topadi va koordinatalarni asl video piksellariga qaytaradi (kichraytirilgan kadr uchun scale va offset)
+  private async detectLive(
+    input: HTMLVideoElement | HTMLCanvasElement,
+    scale: number,
+    offX: number,
+    offY: number,
+    options: { inputSize: number; scoreThreshold: number } = LIVE_OPTIONS
+  ): Promise<LiveFace[]> {
+    const results = await faceapi
+      .detectAllFaces(input, new faceapi.TinyFaceDetectorOptions(options))
+      .withFaceLandmarks()
+      .withFaceDescriptors();
+    const mx = (x: number) => (x - offX) / scale;
+    const my = (y: number) => (y - offY) / scale;
+    return results.map((r: any) => {
+      const b = r.detection.box;
+      const p = r.landmarks.positions;
       return {
-        person: bestPerson,
-        isIdentified: true,
-        confidence,
-        distance: +minDistance.toFixed(3)
+        box: { x: mx(b.x), y: my(b.y), width: b.width / scale, height: b.height / scale },
+        score: r.detection.score,
+        descriptor: r.descriptor,
+        // 36 va 45 — ko'zlarning tashqi burchaklari
+        eyes: { x1: mx(p[36].x), y1: my(p[36].y), x2: mx(p[45].x), y2: my(p[45].y) }
       };
-    }
-
-    return {
-      person: null,
-      isIdentified: false,
-      confidence: 0,
-      distance: minDistance === Infinity ? 1.0 : +minDistance.toFixed(3)
-    };
+    });
   }
 
-  // =========================================================================
-  // 7. OVOZ BERISH VA ISMNI MILTILLASHIDAN HIMOYA (5 kadr / 3 ovoz)
-  // =========================================================================
-  public votePerson(trackKey: string, matchedPersonId: string | null): string | null {
-    if (!this.voteHistory.has(trackKey)) {
-      this.voteHistory.set(trackKey, []);
+  // Kadrni PAD_SCALE marta kichraytirib, kulrang fon ustiga markazga qo'yadi
+  private padFrame(video: HTMLVideoElement, w: number, h: number): HTMLCanvasElement {
+    if (!this.padCanvas) this.padCanvas = document.createElement('canvas');
+    const canvas = this.padCanvas;
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
     }
-    const history = this.voteHistory.get(trackKey)!;
-    history.push(matchedPersonId || '__PEDESTRIAN__');
-    if (history.length > VOTE_WINDOW) {
-      history.shift();
-    }
-
-    if (matchedPersonId) {
-      const count = history.filter(id => id === matchedPersonId).length;
-      if (count >= VOTE_NEEDED) {
-        return matchedPersonId;
-      }
-    }
-    return null;
-  }
-
-  public pruneVoteHistory(activeKeys: Set<string>) {
-    for (const key of this.voteHistory.keys()) {
-      if (!activeKeys.has(key)) {
-        this.voteHistory.delete(key);
-      }
-    }
-  }
-
-  // Eskirgan Canvas identifyFace interfeysi (qaytish uchun moslik)
-  public identifyFace(_faceCanvas: HTMLCanvasElement): {
-    person: KnownPerson | null;
-    isIdentified: boolean;
-    confidence: number;
-    matchScore: number;
-  } {
-    // Agar kutilmaganda eski identifyFace chaqirilsa
-    return {
-      person: null,
-      isIdentified: false,
-      confidence: 0,
-      matchScore: 0
-    };
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = '#808080';
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(video, (w * (1 - PAD_SCALE)) / 2, (h * (1 - PAD_SCALE)) / 2, w * PAD_SCALE, h * PAD_SCALE);
+    return canvas;
   }
 }
 
