@@ -4,6 +4,7 @@ import sarvarPhotoUrl from '../assets/faces/koldoshev_sarvar.jpg';
 import asilbekPhotoUrl from '../assets/faces/asilbek_ravshanov.png';
 import boburjonPhotoUrl from '../assets/faces/boburjon_bozorov.jpg';
 import muhammadaliPhotoUrl from '../assets/faces/muhammadali_ravshanov.jpg';
+import zulfiddinPhotoUrl from '../assets/faces/odilov_zulfiddin.jpg';
 // Bazadagi 3 kishining oldindan hisoblangan embeddinglari. Rasm yoki modelni almashtirsangiz, faylni qayta hisoblang
 // (yoki o'chiring: shunda ilova ishga tushganda rasmlardan o'zi hisoblaydi, lekin sekinroq).
 import descriptorsJson from '../assets/faces/descriptors-cache.json';
@@ -94,6 +95,14 @@ export const INITIAL_FACE_DATABASE: KnownPerson[] = [
     role: 'Ruxsat berilgan shaxs',
     photoUrl: muhammadaliPhotoUrl,
     color: '#a78bfa', // Binafsha neon
+    badge: 'VERIFIED'
+  },
+  {
+    id: 'odilov-zulfiddin',
+    fullName: 'Zulfiddin Odilov',
+    role: 'Ruxsat berilgan shaxs',
+    photoUrl: zulfiddinPhotoUrl,
+    color: '#f472b6', // Pushti
     badge: 'VERIFIED'
   }
 ];
