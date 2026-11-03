@@ -94,9 +94,22 @@ class ArduinoBridge:
                     with self.lock:
                         self.last_rx_msg = line
                         self._add_log(f"Arduino: {line}")
-                        if "WARN:OBSTACLE" in line:
+                        if line.startswith("SONAR:"):
+                            for part in line[6:].split(','):
+                                if '=' in part:
+                                    k, v = part.split('=', 1)
+                                    try:
+                                        if k == 'F': self.sonars["front"] = int(v)
+                                        elif k == 'B': self.sonars["rear"] = int(v)
+                                        elif k == 'L': self.sonars["left"] = int(v)
+                                        elif k == 'R': self.sonars["right"] = int(v)
+                                        elif k == 'BAT': self.battery["voltage"] = float(v)
+                                    except ValueError:
+                                        pass
+                        elif "WARN:OBSTACLE" in line:
                             self.obstacle_warning = True
-                            self.sonars["front"] = 18
+                            if "FRONT" in line: self.sonars["front"] = 18
+                            elif "REAR" in line: self.sonars["rear"] = 18
                         elif "ACK:" in line:
                             self.obstacle_warning = False
             except Exception:
