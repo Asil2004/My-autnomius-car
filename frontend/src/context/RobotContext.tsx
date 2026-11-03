@@ -10,7 +10,6 @@ import type {
   LidarInfo,
   PatrolMode,
   SystemStatus,
-  SOSState,
   GPSState
 } from '../types/robot';
 import { tacticalAudio } from '../services/audioService';
@@ -24,8 +23,8 @@ export interface LogMessage {
 }
 
 interface RobotContextType {
-  activeTab: 'hud' | 'sos' | 'ai' | 'telemetry' | 'maps' | 'settings';
-  setActiveTab: (tab: 'hud' | 'sos' | 'ai' | 'telemetry' | 'maps' | 'settings') => void;
+  activeTab: 'hud' | 'ai' | 'telemetry' | 'maps' | 'settings';
+  setActiveTab: (tab: 'hud' | 'ai' | 'telemetry' | 'maps' | 'settings') => void;
   
   // Motion & Mecanum
   lastCommand: MecanumCommand;
@@ -76,11 +75,6 @@ interface RobotContextType {
   setDetectedObjects: React.Dispatch<React.SetStateAction<DetectedObject[]>>;
   aiProcessingFps: number;
   
-  // SOS 102
-  sos: SOSState;
-  triggerSOS: () => void;
-  cancelSOS: () => void;
-  
   // System & Connection
   system: SystemStatus;
   setRpiConfig: (ip: string, port: number) => void;
@@ -102,7 +96,7 @@ interface RobotContextType {
 const RobotContext = createContext<RobotContextType | null>(null);
 
 export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [activeTab, setActiveTab] = useState<'hud' | 'sos' | 'ai' | 'telemetry' | 'maps' | 'settings'>('hud');
+  const [activeTab, setActiveTab] = useState<'hud' | 'ai' | 'telemetry' | 'maps' | 'settings'>('hud');
   
   const [lastCommand, setLastCommand] = useState<MecanumCommand>('S');
   const [speedLevel, setSpeedLevelState] = useState<SpeedLevel>(2);
@@ -245,14 +239,6 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     timestamp: Date.now(),
     isReal: false,
     status: 'SEARCHING'
-  });
-
-  const [sos, setSos] = useState<SOSState>({
-    active: false,
-    callDuration: 0,
-    callerLocation: 'Toshkent sh., Amir Temur xiyoboni (Sektor 4)',
-    channel: '102_IIV_DISPETCHER',
-    operatorName: 'Katta leytenant Sh. Rahimov'
   });
 
   const [system, setSystem] = useState<SystemStatus>({
@@ -497,34 +483,6 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [sendMecanumCommand]);
 
-  // SOS handler
-  const triggerSOS = () => {
-    setSos((prev) => ({ ...prev, active: true, callDuration: 0 }));
-    setStrobeActive(true);
-    tacticalAudio.startSiren();
-    setSirenActive(true);
-    addLog('SYSTEM', 'error', 'FAVQULODDA CHAQIRUV! SOS 102 DISPETCHER KANALI ULANDI.');
-  };
-
-  const cancelSOS = () => {
-    setSos((prev) => ({ ...prev, active: false, callDuration: 0 }));
-    tacticalAudio.stopSiren();
-    setSirenActive(false);
-    tacticalAudio.playClick();
-    addLog('SYSTEM', 'info', 'SOS 102 chaqiruvi yakunlandi.');
-  };
-
-  // SOS call timer
-  useEffect(() => {
-    let timer: ReturnType<typeof setInterval>;
-    if (sos.active) {
-      timer = setInterval(() => {
-        setSos((prev) => ({ ...prev, callDuration: prev.callDuration + 1 }));
-      }, 1000);
-    }
-    return () => clearInterval(timer);
-  }, [sos.active]);
-
   // WebSocket ulanishi (Haqiqiy robot rejimida jonli telemetriya)
   useEffect(() => {
     if (isSimulationMode) return;
@@ -698,9 +656,6 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         detectedObjects,
         setDetectedObjects,
         aiProcessingFps,
-        sos,
-        triggerSOS,
-        cancelSOS,
         system,
         setRpiConfig,
         logs,
