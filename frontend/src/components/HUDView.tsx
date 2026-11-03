@@ -867,14 +867,14 @@ export const HUDView: React.FC = () => {
     const dx = e.clientX - cx;
     const dy = e.clientY - cy;
     const dist = Math.hypot(dx, dy);
-    const maxR = 46;
+    const maxR = 60;
     const clampedDist = Math.min(dist, maxR);
     const angle = Math.atan2(dy, dx);
     const clampedX = Math.cos(angle) * clampedDist;
     const clampedY = Math.sin(angle) * clampedDist;
     setDriveKnob({ x: clampedX, y: clampedY });
 
-    if (clampedDist < 12) {
+    if (clampedDist < 14) {
       sendMecanumCommand('S');
       return;
     }
@@ -926,7 +926,7 @@ export const HUDView: React.FC = () => {
     const dx = e.clientX - cx;
     const dy = e.clientY - cy;
     const dist = Math.hypot(dx, dy);
-    const maxR = 34;
+    const maxR = 50;
     const clampedDist = Math.min(dist, maxR);
     const angle = Math.atan2(dy, dx);
     const clampedX = Math.cos(angle) * clampedDist;
@@ -942,9 +942,9 @@ export const HUDView: React.FC = () => {
     if (ptzIntervalRef.current) clearInterval(ptzIntervalRef.current);
     ptzIntervalRef.current = window.setInterval(() => {
       const { dx, dy } = ptzVecRef.current;
-      if (Math.hypot(dx, dy) > 6) {
-        const dPan = Math.round((dx / 34) * 6);
-        const dTilt = Math.round((-dy / 34) * 4);
+      if (Math.hypot(dx, dy) > 8) {
+        const dPan = Math.round((dx / 50) * 8);
+        const dTilt = Math.round((-dy / 50) * 5);
         if (dPan !== 0 || dTilt !== 0) adjustPTZ(dPan, dTilt);
       }
     }, 90);
@@ -970,6 +970,55 @@ export const HUDView: React.FC = () => {
   }, []);
 
   const smallCameras = ALL_CAMERAS.filter((c) => c.id !== activeCam);
+  // PTZ aktiv bo'lganda 2 ta kamera chapda, 2 ta kamera esa o'ng tomondagi joystik tepasiga o'tadi
+  const leftCameras = activeCam === 'ptz' ? smallCameras.slice(0, 2) : smallCameras;
+  const rightCameras = activeCam === 'ptz' ? smallCameras.slice(2, 4) : [];
+
+  const renderCameraTile = (cam: (typeof ALL_CAMERAS)[0], extraClass = '') => (
+    <button
+      key={cam.id}
+      onClick={() => setActiveCam(cam.id)}
+      title={`${cam.long} (kattalashtirish uchun bosing)`}
+      className={`relative flex-none rounded-lg overflow-hidden bg-tactical-950 border-2 border-tactical-700 hover:border-police-cyan transition-all shadow-md group ${extraClass}`}
+      style={{ aspectRatio: '16 / 9' }}
+    >
+      {cam.id === 'front' ? (
+        <>
+          <img
+            src={`http://${system.rpiIp}:${system.rpiPort}/stream.mjpg?r=${rpiRetry}`}
+            alt=""
+            onLoad={() => setRpiOk(true)}
+            onError={() => setRpiOk(false)}
+            className={`absolute inset-0 w-full h-full object-cover ${rpiOk ? '' : 'hidden'}`}
+          />
+          {!rpiOk && (
+            <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-slate-500">
+              <VideoOff className="w-4 h-4" />
+              <span className="text-[10px]">Signal yo'q</span>
+            </span>
+          )}
+        </>
+      ) : cam.id === 'ptz' ? (
+        <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-tactical-900 text-police-cyan group-hover:bg-tactical-850">
+          <SlidersHorizontal className="w-5 h-5 animate-pulse text-police-cyan" />
+          <span className="text-[10px] font-mono text-slate-300 font-bold">{ptz.pan}° / {ptz.tilt}°</span>
+        </span>
+      ) : cam.id === 'face' ? (
+        <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-police-blue/15 text-police-blue">
+          <Camera className="w-5 h-5 text-police-cyan" />
+          <span className="text-[10px] font-semibold text-slate-200">Face ID</span>
+        </span>
+      ) : (
+        <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-slate-500">
+          <VideoOff className="w-4 h-4" />
+          <span className="text-[10px]">Signal yo'q</span>
+        </span>
+      )}
+      <span className="absolute left-1.5 top-1 px-1.5 py-0.5 rounded bg-black/80 text-[10px] font-semibold text-white group-hover:bg-police-blue">
+        {cam.short}
+      </span>
+    </button>
+  );
 
   return (
     <div className="flex-1 min-h-0 flex flex-col relative">
@@ -1030,110 +1079,65 @@ export const HUDView: React.FC = () => {
       <div ref={stageRef} className="relative flex-1 min-h-0 flex flex-row bg-black overflow-hidden select-none">
         
         {/* ========================================================================= */}
-        {/* CHAP TOMON: 4 ta kichik kamera (1.5x kattalashtirilgan).                 */}
-        {/* PTZ tanlanganda 4 ta kamera tepaga (top) suriladi va pastda PTZ joystik chiqadi */}
+        {/* CHAP TOMON: Kichik kameralar + Katta PTZ Joystigi (PTZ faol bo'lsa)        */}
         {/* ========================================================================= */}
         <div
           className={`flex flex-col ${
             activeCam === 'ptz' ? 'justify-start' : 'justify-center'
-          } gap-2.5 p-2 bg-tactical-900/95 border-r border-tactical-700 z-10 shrink-0 overflow-y-auto transition-all`}
+          } gap-2.5 p-2.5 bg-tactical-900/95 border-r border-tactical-700 z-10 shrink-0 overflow-y-auto transition-all`}
           role="group"
           aria-label="Kichik kameralar"
-          style={{ width: 'clamp(126px, 18vw, 210px)' }}
+          style={{ width: activeCam === 'ptz' ? 'clamp(180px, 22vw, 260px)' : 'clamp(130px, 18vw, 210px)' }}
         >
-          {smallCameras.map((cam) => (
-            <button
-              key={cam.id}
-              onClick={() => setActiveCam(cam.id)}
-              title={`${cam.long} (kattalashtirish uchun bosing)`}
-              className="relative flex-none rounded-lg overflow-hidden bg-tactical-950 border-2 border-tactical-700 hover:border-police-cyan transition-all shadow-md group"
-              style={{
-                aspectRatio: '16 / 9',
-                width: '100%'
-              }}
-            >
-              {cam.id === 'front' ? (
-                <>
-                  <img
-                    src={`http://${system.rpiIp}:${system.rpiPort}/stream.mjpg?r=${rpiRetry}`}
-                    alt=""
-                    onLoad={() => setRpiOk(true)}
-                    onError={() => setRpiOk(false)}
-                    className={`absolute inset-0 w-full h-full object-cover ${rpiOk ? '' : 'hidden'}`}
-                  />
-                  {!rpiOk && (
-                    <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-slate-500">
-                      <VideoOff className="w-4 h-4" />
-                      <span className="text-[10px]">Signal yo'q</span>
-                    </span>
-                  )}
-                </>
-              ) : cam.id === 'ptz' ? (
-                <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-tactical-900 text-police-cyan group-hover:bg-tactical-850">
-                  <SlidersHorizontal className="w-5 h-5 animate-pulse text-police-cyan" />
-                  <span className="text-[10px] font-mono text-slate-300 font-bold">{ptz.pan}° / {ptz.tilt}°</span>
-                </span>
-              ) : cam.id === 'face' ? (
-                <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-police-blue/15 text-police-blue">
-                  <Camera className="w-5 h-5 text-police-cyan" />
-                  <span className="text-[10px] font-semibold text-slate-200">Face ID</span>
-                </span>
-              ) : (
-                <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-slate-500">
-                  <VideoOff className="w-4 h-4" />
-                  <span className="text-[10px]">Signal yo'q</span>
-                </span>
-              )}
-              <span className="absolute left-1.5 top-1 px-1.5 py-0.5 rounded bg-black/80 text-[10px] font-semibold text-white group-hover:bg-police-blue">
-                {cam.short}
-              </span>
-            </button>
-          ))}
+          {leftCameras.map((cam) => renderCameraTile(cam, 'w-full'))}
 
-          {/* PTZ KAMERA JOYSTIGI: Faqat PTZ kamera kattalashtirilganda chap tomon pastki qismida paydo bo'ladi */}
+          {/* PTZ KAMERA JOYSTIGI (Iloji boricha katta, o'ta qulay) */}
           {activeCam === 'ptz' && (
-            <div className="mt-auto pt-2 border-t border-tactical-700/80 flex flex-col items-center gap-1.5 animate-in fade-in zoom-in-95 duration-200">
-              <div className="w-full flex items-center justify-between text-[10px] font-mono text-police-cyan px-1">
-                <span className="font-bold flex items-center gap-1">
-                  <SlidersHorizontal className="w-3 h-3" /> PTZ JOYSTIK
+            <div className="mt-auto pt-3 border-t border-tactical-700/80 flex flex-col items-center gap-2 animate-in fade-in zoom-in-95 duration-200">
+              <div className="w-full flex items-center justify-between text-xs font-mono text-police-cyan px-1">
+                <span className="font-bold flex items-center gap-1.5">
+                  <SlidersHorizontal className="w-3.5 h-3.5" /> PTZ JOYSTIK
                 </span>
-                <span>{ptz.pan}° / {ptz.tilt}°</span>
+                <span className="bg-police-blue/20 px-1.5 py-0.5 rounded border border-police-cyan/30 text-[11px] font-bold">
+                  {ptz.pan}° / {ptz.tilt}°
+                </span>
               </div>
 
-              {/* Aylana PTZ Joystigi */}
+              {/* Katta Aylana PTZ Joystigi */}
               <div
                 ref={ptzBaseRef}
                 onPointerDown={handlePtzDown}
                 onPointerMove={handlePtzMove}
                 onPointerUp={handlePtzUp}
                 onPointerCancel={handlePtzUp}
-                className="relative w-24 h-24 rounded-full bg-tactical-950 border-2 border-police-cyan/40 shadow-[0_0_15px_rgba(0,229,255,0.15)] flex items-center justify-center cursor-grab active:cursor-grabbing touch-none select-none"
+                className="relative w-36 h-36 sm:w-44 sm:h-44 rounded-full bg-tactical-950 border-2 border-police-cyan/50 shadow-[0_0_25px_rgba(0,229,255,0.2)] flex items-center justify-center cursor-grab active:cursor-grabbing touch-none select-none my-1"
               >
-                {/* O'qlar ko'rsatkichi */}
-                <ArrowUp className="w-3 h-3 text-slate-500 absolute top-1" />
-                <ArrowDown className="w-3 h-3 text-slate-500 absolute bottom-1" />
-                <ArrowLeft className="w-3 h-3 text-slate-500 absolute left-1" />
-                <ArrowRight className="w-3 h-3 text-slate-500 absolute right-1" />
-                <div className="w-12 h-12 rounded-full border border-police-cyan/20 absolute" />
+                {/* Yo'nalish ko'rsatkichlari */}
+                <ArrowUp className="w-4 h-4 text-police-cyan/70 absolute top-2" />
+                <ArrowDown className="w-4 h-4 text-police-cyan/70 absolute bottom-2" />
+                <ArrowLeft className="w-4 h-4 text-police-cyan/70 absolute left-2" />
+                <ArrowRight className="w-4 h-4 text-police-cyan/70 absolute right-2" />
+                <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full border border-police-cyan/25 absolute" />
+                <div className="w-10 h-10 rounded-full border border-dashed border-police-cyan/30 absolute" />
 
-                {/* Joystik boshi (Knob) */}
+                {/* Katta Joystik tutqichi (Knob) */}
                 <div
-                  className="w-10 h-10 rounded-full bg-police-blue/80 border-2 border-police-cyan shadow-md shadow-police-cyan/40 flex items-center justify-center pointer-events-none transition-transform duration-75"
+                  className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-gradient-to-br from-police-blue to-police-blue/80 border-2 border-police-cyan shadow-lg shadow-police-cyan/50 flex items-center justify-center pointer-events-none transition-transform duration-75"
                   style={{
                     transform: `translate3d(${ptzKnob.x}px, ${ptzKnob.y}px, 0)`
                   }}
                 >
-                  <div className="w-2.5 h-2.5 rounded-full bg-police-cyan" />
+                  <div className="w-4 h-4 rounded-full bg-police-cyan shadow-[0_0_10px_#00e5ff]" />
                 </div>
               </div>
 
               {/* Markazga qaytarish tugmasi */}
               <button
                 onClick={() => setPTZ((p) => ({ ...p, pan: 0, tilt: 15 }))}
-                className="w-full py-1 rounded bg-tactical-800 hover:bg-tactical-700 text-police-cyan text-[10px] font-mono font-semibold border border-tactical-600 transition-colors"
+                className="w-full py-1.5 rounded-lg bg-tactical-800 hover:bg-tactical-700 text-police-cyan text-xs font-mono font-semibold border border-tactical-600 transition-colors flex items-center justify-center gap-1.5"
                 title="PTZ kamerani 0°, 15° markazga qaytarish"
               >
-                Markazga (0°)
+                <RefreshCw className="w-3 h-3" /> Markazga (0°, 15°)
               </button>
             </div>
           )}
@@ -1285,13 +1289,27 @@ export const HUDView: React.FC = () => {
         </div>
 
         {/* ========================================================================= */}
-        {/* O'NG TOMON: Asosiy kameraning o'ng tomonidagi bo'sh joyga VIRTUAL JOYSTIK   */}
+        {/* O'NG TOMON: PTZ aktiv bo'lganda 2 ta kamera tepada + KATTA HARAKAT JOYSTIGI */}
         {/* ========================================================================= */}
-        <div className="flex-none w-52 sm:w-60 md:w-64 h-full flex flex-col items-center justify-between p-3 bg-tactical-900/95 border-l border-tactical-700 z-10 shrink-0 select-none overflow-y-auto">
+        <div className="flex-none w-64 sm:w-72 md:w-80 h-full flex flex-col items-center justify-between p-3 bg-tactical-900/95 border-l border-tactical-700 z-10 shrink-0 select-none overflow-y-auto">
+          
+          {/* PTZ KAMERA ISHGA TUSHGANDA: 2 ta kamera o'ng tomonga o'tib, joystik tepasida joylashadi */}
+          {rightCameras.length > 0 && (
+            <div className="w-full mb-2 pb-2 border-b border-tactical-700/80 animate-in fade-in zoom-in-95 duration-200">
+              <div className="text-[10px] font-mono text-slate-400 mb-1.5 flex items-center justify-between px-0.5">
+                <span className="font-semibold text-police-cyan">QO'SHIMCHA KAMERALAR</span>
+                <span className="text-[9px] bg-tactical-800 px-1.5 py-0.2 rounded text-slate-300">2 ta</span>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5 w-full">
+                {rightCameras.map((cam) => renderCameraTile(cam, 'w-full'))}
+              </div>
+            </div>
+          )}
+
           {/* Sarlavha va oxirgi komanda holati */}
-          <div className="w-full flex items-center justify-between">
+          <div className="w-full flex items-center justify-between mb-1">
             <span className="text-xs font-bold text-white flex items-center gap-1.5">
-              <Gauge className="w-3.5 h-3.5 text-police-cyan" /> Robot Boshqaruvi
+              <Gauge className="w-4 h-4 text-police-cyan" /> Robot Harakati
             </span>
             <span
               className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold border transition-colors ${
@@ -1306,7 +1324,7 @@ export const HUDView: React.FC = () => {
 
           {/* Tezlik (PWM) tanlash chips */}
           <div className="w-full flex items-center justify-between rounded-lg bg-tactical-850 p-1.5 border border-tactical-700/80 my-1">
-            <span className="text-[11px] text-slate-300 pl-1">Tezlik</span>
+            <span className="text-[11px] text-slate-300 pl-1 font-medium">Tezlik</span>
             <div className="flex gap-1">
               {([1, 2, 3] as SpeedLevel[]).map((lvl) => {
                 const pwmLabel = lvl === 1 ? '130' : lvl === 2 ? '190' : '250';
@@ -1325,7 +1343,7 @@ export const HUDView: React.FC = () => {
             </div>
           </div>
 
-          {/* Virtual Joystik Aylana maydoni */}
+          {/* KATTA VIRTUAL HARAKAT JOYSTIGI (Iloji boricha katta, yuqori sezgirlik) */}
           <div className="relative my-auto flex flex-col items-center">
             <div
               ref={driveBaseRef}
@@ -1333,47 +1351,47 @@ export const HUDView: React.FC = () => {
               onPointerMove={handleDriveMove}
               onPointerUp={handleDriveUp}
               onPointerCancel={handleDriveUp}
-              className="relative w-36 h-36 rounded-full bg-tactical-950 border-2 border-police-cyan/50 shadow-[0_0_25px_rgba(0,229,255,0.2)] flex items-center justify-center cursor-grab active:cursor-grabbing touch-none select-none"
+              className="relative w-44 h-44 sm:w-52 sm:h-52 md:w-56 md:h-56 rounded-full bg-tactical-950 border-2 border-police-cyan/50 shadow-[0_0_35px_rgba(0,229,255,0.25)] flex items-center justify-center cursor-grab active:cursor-grabbing touch-none select-none my-1"
             >
               {/* Yo'nalish belgilari */}
-              <div className="absolute top-1 text-[10px] font-bold text-slate-400 flex flex-col items-center">
-                <ArrowUp className="w-3.5 h-3.5 text-police-cyan" />
-                <span className="text-[9px]">F</span>
+              <div className="absolute top-2 text-[11px] font-bold text-slate-400 flex flex-col items-center">
+                <ArrowUp className="w-4 h-4 text-police-cyan" />
+                <span className="text-[9px] font-mono">F</span>
               </div>
-              <div className="absolute bottom-1 text-[10px] font-bold text-slate-400 flex flex-col items-center">
-                <span className="text-[9px]">B</span>
-                <ArrowDown className="w-3.5 h-3.5 text-slate-400" />
+              <div className="absolute bottom-2 text-[11px] font-bold text-slate-400 flex flex-col items-center">
+                <span className="text-[9px] font-mono">B</span>
+                <ArrowDown className="w-4 h-4 text-slate-400" />
               </div>
-              <div className="absolute left-1 text-[10px] font-bold text-slate-400 flex items-center gap-0.5">
-                <ArrowLeft className="w-3.5 h-3.5 text-slate-400" />
-                <span className="text-[9px]">L</span>
+              <div className="absolute left-2 text-[11px] font-bold text-slate-400 flex items-center gap-0.5">
+                <ArrowLeft className="w-4 h-4 text-slate-400" />
+                <span className="text-[9px] font-mono">L</span>
               </div>
-              <div className="absolute right-1 text-[10px] font-bold text-slate-400 flex items-center gap-0.5">
-                <span className="text-[9px]">R</span>
-                <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+              <div className="absolute right-2 text-[11px] font-bold text-slate-400 flex items-center gap-0.5">
+                <span className="text-[9px] font-mono">R</span>
+                <ArrowRight className="w-4 h-4 text-slate-400" />
               </div>
               
               {/* Diagonal ko'rsatkichlar */}
-              <span className="absolute top-3 left-4 text-[9px] text-slate-500 font-mono">Q</span>
-              <span className="absolute top-3 right-4 text-[9px] text-slate-500 font-mono">E</span>
+              <span className="absolute top-4 left-5 text-[10px] text-slate-500 font-mono font-bold">Q</span>
+              <span className="absolute top-4 right-5 text-[10px] text-slate-500 font-mono font-bold">E</span>
 
               {/* Ichki markaz halqalari */}
-              <div className="w-20 h-20 rounded-full border border-police-cyan/20 absolute" />
-              <div className="w-8 h-8 rounded-full border border-dashed border-police-cyan/30 absolute" />
+              <div className="w-28 h-28 sm:w-32 sm:h-32 rounded-full border border-police-cyan/20 absolute" />
+              <div className="w-12 h-12 rounded-full border border-dashed border-police-cyan/35 absolute" />
 
-              {/* Joystik tutqichi (Knob) */}
+              {/* Katta Joystik tutqichi (Knob) */}
               <div
-                className="w-14 h-14 rounded-full bg-gradient-to-br from-police-blue to-police-blue/80 border-2 border-police-cyan shadow-lg shadow-police-cyan/50 flex items-center justify-center pointer-events-none transition-transform duration-75"
+                className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-gradient-to-br from-police-blue to-police-blue/80 border-2 border-police-cyan shadow-xl shadow-police-cyan/50 flex items-center justify-center pointer-events-none transition-transform duration-75"
                 style={{
                   transform: `translate3d(${driveKnob.x}px, ${driveKnob.y}px, 0)`
                 }}
               >
-                <div className="w-4 h-4 rounded-full bg-police-cyan shadow-[0_0_8px_#00e5ff]" />
+                <div className="w-5 h-5 rounded-full bg-police-cyan shadow-[0_0_12px_#00e5ff]" />
               </div>
             </div>
 
-            <p className="text-[10px] text-slate-400 mt-2 text-center font-mono">
-              Surib boshqaring yoki klaviatura: <span className="text-police-cyan">W A S D Q E</span>
+            <p className="text-[10px] text-slate-400 mt-1 text-center font-mono">
+              Surib boshqaring yoki: <span className="text-police-cyan">W A S D Q E</span>
             </p>
           </div>
 
@@ -1383,24 +1401,24 @@ export const HUDView: React.FC = () => {
               <button
                 onClick={() => sendMecanumCommand('U')}
                 title="Teleskopik minorani ko'tarish (U)"
-                className="py-1.5 px-2 rounded-lg border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 text-slate-200 text-[11px] font-semibold flex items-center justify-center gap-1 transition-colors"
+                className="py-1.5 px-2 rounded-lg border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 text-slate-200 text-xs font-semibold flex items-center justify-center gap-1 transition-colors"
               >
-                <ChevronsUp className="w-3.5 h-3.5 text-police-cyan" /> Minora (U)
+                <ChevronsUp className="w-4 h-4 text-police-cyan" /> Minora (U)
               </button>
               <button
                 onClick={() => sendMecanumCommand('D')}
                 title="Teleskopik minorani tushirish (D)"
-                className="py-1.5 px-2 rounded-lg border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 text-slate-200 text-[11px] font-semibold flex items-center justify-center gap-1 transition-colors"
+                className="py-1.5 px-2 rounded-lg border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 text-slate-200 text-xs font-semibold flex items-center justify-center gap-1 transition-colors"
               >
-                <ChevronsDown className="w-3.5 h-3.5 text-police-cyan" /> Minora (D)
+                <ChevronsDown className="w-4 h-4 text-police-cyan" /> Minora (D)
               </button>
             </div>
 
             <button
               onClick={() => sendMecanumCommand('S')}
-              className="w-full py-2 rounded-lg bg-police-red/20 border-2 border-police-red/60 text-police-red font-bold text-xs hover:bg-police-red/30 flex items-center justify-center gap-1.5 transition-all active:scale-95"
+              className="w-full py-2.5 rounded-lg bg-police-red/20 border-2 border-police-red/60 text-police-red font-bold text-xs hover:bg-police-red/30 flex items-center justify-center gap-1.5 transition-all active:scale-95"
             >
-              <Square className="w-3.5 h-3.5 fill-current" /> TO'XTATISH (STOP)
+              <Square className="w-4 h-4 fill-current" /> TO'XTATISH (STOP)
             </button>
           </div>
         </div>
