@@ -25,9 +25,7 @@ import {
   ChevronsUp,
   ChevronsDown,
   Camera,
-  Radio,
   MapPin,
-  Car,
   User,
   RefreshCw,
   Eye,
@@ -36,8 +34,7 @@ import {
   Plus,
   X,
   CheckCircle2,
-  Ruler,
-  UserCheck
+  Ruler
 } from 'lucide-react';
 
 type PanelId = 'control' | 'sensors' | 'ai' | 'ptz' | 'log';
@@ -166,8 +163,16 @@ export const HUDView: React.FC = () => {
   } = useRobot();
 
   const stageRef = useRef<HTMLDivElement | null>(null);
-  const thumbVideoRef = useRef<HTMLVideoElement | null>(null);
-  const [activeCam, setActiveCam] = useState<CamId>('front');
+  // Asosiy oyna: 'face' = Face ID (planshetning frontal kamerasi). Qolganlari robotning 4 tomonidagi kameralar
+  const [activeCam, setActiveCam] = useState<'face' | CamId>('face');
+  // Old kamera = robotning RPi oqimi. Ulanmagan bo'lsa "Signal yo'q" ko'rsatiladi va vaqti-vaqti bilan qayta uriniladi
+  const [rpiOk, setRpiOk] = useState(false);
+  const [rpiRetry, setRpiRetry] = useState(0);
+  useEffect(() => {
+    if (rpiOk) return;
+    const t = window.setInterval(() => setRpiRetry((n) => n + 1), 10000);
+    return () => clearInterval(t);
+  }, [rpiOk]);
   // Ochiq suzuvchi panellar (oxirgisi eng ustida). Hech narsa ochiq bo'lmasa, kadr toza qoladi
   const [openPanels, setOpenPanels] = useState<PanelId[]>(() => {
     try {
@@ -217,7 +222,8 @@ export const HUDView: React.FC = () => {
     ro.observe(el);
     return () => ro.disconnect();
   }, [videoAspect]);
-  const [cameraSource, setCameraSource] = useState<'FRONTAL' | 'RPI' | 'SIMULATION'>('FRONTAL');
+  // Face ID doim planshetning frontal kamerasidan. RPi oqimi Old kamera oynasida ko'rsatiladi
+  const [cameraSource] = useState<'FRONTAL' | 'RPI' | 'SIMULATION'>('FRONTAL');
   const [cameraLoading, setCameraLoading] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [mirrorVideo, setMirrorVideo] = useState(true);
@@ -384,14 +390,6 @@ export const HUDView: React.FC = () => {
       addLog('SYSTEM', 'error', `Frontal kamera xatosi: ${errorMsg}`);
     }
   }, [addLog, stopCameraStream]);
-
-  // Old kamera kichik oynasi (4 kamera qatori) asosiy oqimning o'zini ko'rsatadi
-  useEffect(() => {
-    const v = thumbVideoRef.current;
-    if (!v) return;
-    v.srcObject = cameraLoading ? null : streamRef.current;
-    if (v.srcObject) v.play().catch(() => undefined);
-  }, [cameraLoading, cameraSource, activeCam]);
 
   // Kamera rejimi o'zgarganda ishga tushirish
   useEffect(() => {
@@ -871,29 +869,20 @@ export const HUDView: React.FC = () => {
     <div className="flex-1 min-h-0 flex flex-col relative">
       {/* ===== Yuqori satr: manba, xavfsizlik holati, panellar doki ===== */}
       <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-tactical-900 border-b border-tactical-700">
-        <div className="flex items-center gap-1" role="group" aria-label="Kamera manbasi">
-          {(
-            [
-              ['FRONTAL', 'Frontal', <Camera key="f" className="w-3.5 h-3.5" />],
-              ['RPI', 'RPi oqim', <Radio key="r" className="w-3.5 h-3.5" />],
-              ['SIMULATION', 'Simulyatsiya', null]
-            ] as const
-          ).map(([id, label, icon]) => (
-            <button
-              key={id}
-              onClick={() => setCameraSource(id)}
-              aria-pressed={cameraSource === id}
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors ${
-                cameraSource === id
-                  ? 'bg-police-blue text-white'
-                  : 'text-slate-300 hover:bg-tactical-800'
-              }`}
-            >
-              {icon}
-              {label}
-            </button>
-          ))}
-        </div>
+        <button
+          onClick={() => setActiveCam('face')}
+          aria-pressed={activeCam === 'face'}
+          title="Face ID: planshetning frontal kamerasi"
+          className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors ${
+            activeCam === 'face' ? 'bg-police-blue text-white' : 'text-slate-300 hover:bg-tactical-800'
+          }`}
+        >
+          <Camera className="w-3.5 h-3.5" />
+          Face ID
+          <span className={`text-[10px] ${faceStatus === 'ready' ? 'text-police-green' : faceStatus === 'error' ? 'text-police-red' : 'text-police-amber'}`}>
+            {faceStatus === 'ready' ? 'tayyor' : faceStatus === 'error' ? 'xato' : 'yuklanmoqda'}
+          </span>
+        </button>
 
         <button
           onClick={() => openOnly('sensors')}
@@ -934,7 +923,7 @@ export const HUDView: React.FC = () => {
       {/* ===== Sahna: asosiy kamera + 4 ta kichik kamera ===== */}
       <div ref={stageRef} className="relative flex-1 min-h-0 flex flex-col bg-black">
         <div className="relative flex-1 min-h-0 flex flex-col">
-          <div className={`flex-1 min-h-0 flex flex-col ${activeCam === 'front' ? '' : 'invisible'}`}>
+          <div className={`flex-1 min-h-0 flex flex-col ${activeCam === 'face' ? '' : 'invisible'}`}>
           {/* Video Stream & Viewport: kadr to'liq (kesilmaydi), kadr ustida faqat aniqlangan ramkalar bor.
               Tashqi quti panelning qolgan bo'sh joyini oladi, ichki quti videoning haqiqiy nisbatida shu joyga sig'adi
               (o'lchami ResizeObserver bilan hisoblanadi), shuning uchun pastki qatorlar har doim ekranga sig'adi. */}
@@ -978,145 +967,68 @@ export const HUDView: React.FC = () => {
               </div>
             )}
 
-            {/* 2-REJIM: RPI JONLI VIDEO OQIMI */}
-            {cameraSource === 'RPI' && (
-              <img
-                src={`http://${system.rpiIp}:${system.rpiPort}/stream.mjpg`}
-                alt="RPi Live Stream"
-                style={{ position: 'absolute', inset: 0 }}
-                onError={() => {
-                  addLog('RPI', 'warn', "RPi video oqimi mavjud emas, simulyatsiyaga o'tildi.");
-                  setCameraSource('SIMULATION');
-                }}
-                className="w-full h-full object-contain"
-              />
-            )}
-
-            {/* 3-REJIM: VIRTUAL TAKTIK SIMULYATOR */}
-            {cameraSource === 'SIMULATION' && (
-              <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-b from-tactical-950 via-[#0a1120] to-[#040810]">
-                <div className="absolute inset-0 opacity-25 pointer-events-none">
-                  <div className="w-full h-full flex flex-col justify-end">
-                    <div className="h-1/2 w-full bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-blue-900/30 via-transparent to-transparent" />
-                    <div className="h-1/2 border-t border-police-cyan/30 flex justify-center">
-                      <div className="w-48 h-full border-x border-dashed border-police-cyan/40 transform -perspective-500 rotate-x-45" />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
             {/* ========================================================================= */}
             {/* AI DETECTED OBJECTS: RAMKA CHETIDA ISM-FAMILIYA BILAN VIZUALLASHTIRISH   */}
             {/* ========================================================================= */}
-            {aiEnabled && detectedObjects.map((obj) => (
-              <div
-                key={obj.id}
-                className="absolute border-2 transition-all duration-150 pointer-events-none flex flex-col justify-between z-20"
-                style={{
-                  borderColor: obj.color,
-                  left: `${obj.box.x}%`,
-                  top: `${obj.box.y}%`,
-                  width: `${obj.box.width}%`,
-                  height: `${obj.box.height}%`,
-                  boxShadow: `0 0 16px ${obj.color}70, inset 0 0 10px ${obj.color}25`
-                }}
-              >
-                {/* 4 Ta Taktik Burchak Ko'rsatkichlari */}
-                <div className="absolute -top-1.5 -left-1.5 w-3 h-3 border-t-2 border-l-2" style={{ borderColor: obj.color }} />
-                <div className="absolute -top-1.5 -right-1.5 w-3 h-3 border-t-2 border-r-2" style={{ borderColor: obj.color }} />
-                <div className="absolute -bottom-1.5 -left-1.5 w-3 h-3 border-b-2 border-l-2" style={{ borderColor: obj.color }} />
-                <div className="absolute -bottom-1.5 -right-1.5 w-3 h-3 border-b-2 border-r-2" style={{ borderColor: obj.color }} />
-
-                {/* YUQORI TAKTIK YORLIQ: ISM FAMILIYA YOKI OBYEKT TOIFASI */}
-                <div
-                  className="px-2 py-0.5 text-[10px] font-mono font-black tracking-tight text-white flex items-center justify-between shadow-md"
-                  style={{ backgroundColor: `${obj.color}ee` }}
-                >
-                  <span className="flex items-center space-x-1 truncate max-w-[170px]">
-                    {obj.isIdentifiedPerson ? (
-                      <CheckCircle2 className="w-3 h-3 inline text-white shrink-0" />
-                    ) : obj.category === 'person' ? (
-                      <User className="w-3 h-3 inline text-white shrink-0" />
-                    ) : (
-                      <Car className="w-3 h-3 inline text-white shrink-0" />
-                    )}
-                    <span className="truncate">{obj.label}</span>
-                  </span>
-                  <span className="ml-1 opacity-90 text-[9px]">{(obj.confidence * 100).toFixed(0)}%</span>
-                </div>
-
-                {/* O'rta Nishon (Target Lock) */}
-                <div className="self-center my-auto opacity-40">
-                  <div className="w-4 h-4 rounded-full border border-dashed animate-pulse" style={{ borderColor: obj.color }} />
-                </div>
-
-                {/* RAMKANING PASTKI CHETIDA TO'LIQ ISM-FAMILIYA VA MAQOM VIDJETI */}
-                <div className="flex items-end justify-between w-full p-1 pointer-events-none">
-                  {obj.isIdentifiedPerson && obj.personName ? (
-                    <div
-                      className="px-1.5 py-0.5 rounded font-mono font-bold text-[9px] text-white shadow-md flex items-center space-x-1"
-                      style={{ backgroundColor: 'rgba(2, 6, 23, 0.92)', border: `1.5px solid ${obj.color}` }}
-                    >
-                      <UserCheck className="w-3 h-3 text-emerald-400" />
-                      <span className="text-emerald-300 font-extrabold">{obj.personName}</span>
-                      <span className="text-[7.5px] bg-emerald-950 px-1 py-0.2 rounded text-emerald-300 font-mono ml-0.5">IIV</span>
-                    </div>
-                  ) : obj.category === 'person' ? (
-                    <div
-                      className="px-1.5 py-0.5 rounded font-mono text-[9px] text-slate-300 shadow-md flex items-center space-x-1"
-                      style={{ backgroundColor: 'rgba(2, 6, 23, 0.85)', border: `1px solid ${obj.color}80` }}
-                    >
-                      <User className="w-3 h-3 text-slate-400" />
-                      <span className="text-slate-300 font-bold">Piyoda</span>
-                    </div>
-                  ) : (
-                    <div />
-                  )}
-
-                  {/* Pastki Masofa Ko'rsatkichi (Metrda) */}
+            {aiEnabled &&
+              detectedObjects
+                .filter((obj) => obj.category === 'person')
+                .map((obj) => (
                   <div
-                    className="px-1.5 py-0.5 text-[9px] font-mono text-black font-black rounded shadow-md ml-auto"
-                    style={{ backgroundColor: `${obj.color}ee` }}
+                    key={obj.id}
+                    className="absolute border-2 rounded-sm transition-all duration-150 pointer-events-none z-20"
+                    style={{
+                      borderColor: obj.color,
+                      left: `${obj.box.x}%`,
+                      top: `${obj.box.y}%`,
+                      width: `${obj.box.width}%`,
+                      height: `${obj.box.height}%`
+                    }}
                   >
-                    D: {obj.distanceUpperBound ? '<' : obj.distanceApprox ? '~' : ''}{obj.distance}m
+                    {/* Ism yorlig'i ramka ustida (kadrni yopmaydi). Ramka kadr tepasiga tegib tursa, ichkariga tushadi */}
+                    <div
+                      className={`absolute -left-0.5 flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold text-tactical-950 whitespace-nowrap max-w-[90%] ${
+                        obj.box.y < 8 ? 'top-0 rounded-br-md' : '-top-6 rounded-t-md'
+                      }`}
+                      style={{ backgroundColor: obj.color }}
+                    >
+                      {obj.isIdentifiedPerson ? <CheckCircle2 className="w-3 h-3 shrink-0" /> : <User className="w-3 h-3 shrink-0" />}
+                      <span className="truncate">{obj.label}</span>
+                      {obj.isIdentifiedPerson && <span className="opacity-70 text-[10px]">{(obj.confidence * 100).toFixed(0)}%</span>}
+                    </div>
+                    <div className="absolute right-1 bottom-1 px-1.5 py-0.5 rounded-md bg-black/70 text-[10px] font-semibold text-white">
+                      {obj.distanceUpperBound ? '<' : obj.distanceApprox ? '~' : ''}
+                      {obj.distance} m
+                    </div>
                   </div>
-                </div>
-              </div>
-            ))}
-
-            {/* Xavfsizlik yo'lagi: faqat yo'lda to'siq bo'lganda ko'rinadi (yo'l ochiq bo'lsa kadr toza qoladi) */}
-            {cameraSource === 'FRONTAL' && aiEnabled && (cameraObstacle.isBlocked || cameraObstacle.distanceCm < 80) && (
-              <svg className="absolute inset-0 w-full h-full pointer-events-none z-10" viewBox="0 0 100 100" preserveAspectRatio="none">
-                <polygon
-                  points="18,100 82,100 62,56 38,56"
-                  fill={cameraObstacle.isBlocked ? 'rgba(239,68,68,0.28)' : 'rgba(245,158,11,0.18)'}
-                  stroke={cameraObstacle.isBlocked ? '#ef5b5b' : '#f5b544'}
-                  strokeWidth="0.6"
-                  strokeDasharray={cameraObstacle.isBlocked ? 'none' : '2,1'}
-                />
-                {cameraObstacle.isBlocked && (
-                  <line x1="26" y1="78" x2="74" y2="78" stroke="#ef5b5b" strokeWidth="2" className="animate-pulse" />
-                )}
-              </svg>
-            )}
+                ))}
 
           </div>
           </div>
           </div>
 
-          {activeCam !== 'front' && (
+          {activeCam !== 'face' && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-tactical-950 text-center px-6">
-              <VideoOff className="w-10 h-10 text-slate-500" />
-              <div className="text-sm font-semibold text-slate-200">{CAMERAS.find((c) => c.id === activeCam)?.long} kamerasi ulanmagan</div>
-              <div className="text-xs text-slate-400 max-w-xs">
-                Raspberry Pi dan shu tomonning oqimi ulanganda kadr shu yerda ko'rinadi.
-              </div>
+              {activeCam === 'front' && rpiOk ? (
+                <img
+                  src={`http://${system.rpiIp}:${system.rpiPort}/stream.mjpg?r=${rpiRetry}`}
+                  alt="Old kamera (RPi)"
+                  className="absolute inset-0 w-full h-full object-contain bg-black"
+                />
+              ) : (
+                <>
+                  <VideoOff className="w-10 h-10 text-slate-500" />
+                  <div className="text-sm font-semibold text-slate-200">{CAMERAS.find((c) => c.id === activeCam)?.long} kamerasi ulanmagan</div>
+                  <div className="text-xs text-slate-400 max-w-xs">
+                    Raspberry Pi dan shu tomonning oqimi ulanganda kadr shu yerda ko'rinadi.
+                  </div>
+                </>
+              )}
               <button
-                onClick={() => setActiveCam('front')}
-                className="px-3 py-1.5 rounded-lg bg-police-blue text-white text-xs font-semibold"
+                onClick={() => setActiveCam('face')}
+                className="absolute left-3 top-3 z-10 px-3 py-1.5 rounded-lg bg-police-blue text-white text-xs font-semibold"
               >
-                Old kameraga qaytish
+                Face ID ga qaytish
               </button>
             </div>
           )}
@@ -1137,18 +1049,26 @@ export const HUDView: React.FC = () => {
                 }`}
                 style={{ aspectRatio: '16 / 9', height: 'clamp(64px, 13vh, 120px)', maxWidth: '24%' }}
               >
-                {cam.id === 'front' && cameraSource === 'FRONTAL' ? (
-                  <video
-                    ref={thumbVideoRef}
-                    autoPlay
-                    playsInline
-                    muted
-                    className={`absolute inset-0 w-full h-full object-cover ${mirrorVideo ? 'scale-x-[-1]' : ''}`}
-                  />
+                {cam.id === 'front' ? (
+                  <>
+                    <img
+                      src={`http://${system.rpiIp}:${system.rpiPort}/stream.mjpg?r=${rpiRetry}`}
+                      alt=""
+                      onLoad={() => setRpiOk(true)}
+                      onError={() => setRpiOk(false)}
+                      className={`absolute inset-0 w-full h-full object-cover ${rpiOk ? '' : 'hidden'}`}
+                    />
+                    {!rpiOk && (
+                      <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-slate-500">
+                        <VideoOff className="w-4 h-4" />
+                        <span className="text-[10px]">Signal yo'q</span>
+                      </span>
+                    )}
+                  </>
                 ) : (
                   <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-slate-500">
                     <VideoOff className="w-4 h-4" />
-                    <span className="text-[10px]">{cam.id === 'front' ? 'Manba: ' + cameraSource : 'Signal yo\'q'}</span>
+                    <span className="text-[10px]">Signal yo'q</span>
                   </span>
                 )}
                 <span className="absolute left-1.5 top-1.5 px-1.5 py-0.5 rounded-md bg-black/70 text-[10px] font-semibold text-white">
