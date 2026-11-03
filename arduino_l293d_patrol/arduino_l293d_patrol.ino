@@ -1,56 +1,82 @@
 /*
- * QALQON IIV Patrul Roboti - Arduino Uno + L293D Motor Shield (HW-130)
- * 4WD Mecanum Shassi va Ultratovush Datchiklari Boshqaruvi
+ * =====================================================================================
+ * QALQON v1.0 IIV Patrul Roboti - Arduino Uno + L293D Motor Shield
+ * 4WD Differensial Oddiy Rezina Shinalar, 4 ta Ultratovush (360° Sonar) va Teleskopik Minora
+ * 
+ * 4 TA ULTRATOVUSH DATCHIKLARI (HC-SR04 - 360° PERIMETR HIMOYASI):
+ *   1. OLD (FRONT):  Trig = A0, Echo = A1
+ *   2. ORQA (REAR):  Trig = A0, Echo = A2
+ *   3. CHAP (LEFT):  Trig = A0, Echo = A3
+ *   4. O'NG (RIGHT): Trig = A0, Echo = A4
+ *   (Umumiy Trigger arxitekturasi: A0 barcha 4 datchikning TRIG oyog'iga ulanadi,
+ *    bu simlarni tejaydi va A5 pinini 12V LiFePO4 batareya nazoratiga bo'shatadi)
  * 
  * Raspberry Pi bilan USB Serial orqali ishlaydi (Baud rate: 115200)
- * 
- * Kutubxona: Adafruit Motor Shield V1 (AFMotor.h)
- * O'rnatish: Arduino IDE -> Sketch -> Include Library -> Manage Libraries -> "Adafruit Motor Shield library" (V1)
+ * =====================================================================================
  */
 
 #include <AFMotor.h>
 
-// 4 ta DC motor konfiguratsiyasi (L293D shielddagi portlar)
+// 4 ta DC reduktorli motor (L293D portlari)
 // M1: Old-Chap, M2: Orqa-Chap, M3: Orqa-O'ng, M4: Old-O'ng
-AF_DCMotor motorFL(1); // Front-Left  (Old-Chap)
-AF_DCMotor motorRL(2); // Rear-Left   (Orqa-Chap)
-AF_DCMotor motorRR(3); // Rear-Right  (Orqa-O'ng)
-AF_DCMotor motorFR(4); // Front-Right (Old-O'ng)
+AF_DCMotor motorFL(1); // Front-Left
+AF_DCMotor motorRL(2); // Rear-Left
+AF_DCMotor motorRR(3); // Rear-Right
+AF_DCMotor motorFR(4); // Front-Right
 
-// Datchik pinlari (L293D shieldda bo'sh turgan Analog pinlar)
-#define TRIG_FRONT A0
-#define ECHO_FRONT A1
+// Teleskopik Minora Aktuatori Pinlari
+#define MAST_UP_PIN   9  // SERVO_2 signali / Rele IN1
+#define MAST_DOWN_PIN 10 // SERVO_1 signali / Rele IN2
 
-#define TRIG_BACK  A2
-#define ECHO_BACK  A3
+// 4 ta Ultratovush datchiklari pinlari
+#define TRIG_PIN   A0 // Umumiy Trigger (4 ta datchikning TRIG oyoqchalari ulangan)
+#define ECHO_FRONT A1 // 1. Old datchik (Front)
+#define ECHO_REAR  A2 // 2. Orqa datchik (Rear)
+#define ECHO_LEFT  A3 // 3. Chap datchik (Left)
+#define ECHO_RIGHT A4 // 4. O'ng datchik (Right)
+#define BATTERY_PIN A5 // 12V Akkumulyator kuchlanishini o'lchash (Rezistor bo'lgich orqali)
 
 // Xavfsiz to'xtash masofasi (santimetrda)
-const int SAFE_STOP_DISTANCE = 22; 
+const int SAFE_STOP_DISTANCE = 25; 
 
-// Tezlik (0 dan 255 gacha)
-int currentSpeed = 180;
+// Dvigatel bazaviy tezligi (0 - 255)
+int currentSpeed = 190;
+
+// Kalibrovka balans koeffitsiyentlari (Trim)
+int speedTrimLeft  = 190; // Chap g'ildiraklar (M1, M2)
+int speedTrimRight = 190; // O'ng g'ildiraklar (M3, M4)
 
 void setup() {
   Serial.begin(115200);
   
-  // Datchik pinlarini sozlash
-  pinMode(TRIG_FRONT, OUTPUT);
+  // 4 ta Datchik pinlarini sozlash
+  pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_FRONT, INPUT);
-  pinMode(TRIG_BACK, OUTPUT);
-  pinMode(ECHO_BACK, INPUT);
+  pinMode(ECHO_REAR,  INPUT);
+  pinMode(ECHO_LEFT,  INPUT);
+  pinMode(ECHO_RIGHT, INPUT);
+  pinMode(BATTERY_PIN, INPUT);
 
-  // Dastlabki motor tezligini o'rnatish
-  setMotorsSpeed(currentSpeed);
+  // Minora aktuatori pinlari
+  pinMode(MAST_UP_PIN, OUTPUT);
+  pinMode(MAST_DOWN_PIN, OUTPUT);
+  stopMast();
+
+  // Dastlabki tezlikni sozlash
+  applyTrimmedSpeeds(currentSpeed);
   stopAll();
 
-  Serial.println("STATUS:READY_L293D");
+  Serial.println("STATUS:READY_QALQON_V1_4_SONARS");
 }
 
 void loop() {
-  // 1. Old to'siqni doimiy o'lchash (Xavfsizlik refleski)
-  long distFront = readDistance(TRIG_FRONT, ECHO_FRONT);
+  // 1. 4 ta datchikdan masofalarni o'lchash
+  long distFront = readSonarDistance(ECHO_FRONT);
+  long distRear  = readSonarDistance(ECHO_REAR);
+  long distLeft  = readSonarDistance(ECHO_LEFT);
+  long distRight = readSonarDistance(ECHO_RIGHT);
 
-  // 2. Raspberry Pi-dan buyruq tekshirish
+  // 2. Raspberry Pi buyruqlarini tekshirish
   if (Serial.available() > 0) {
     char cmd = Serial.read();
 
@@ -66,28 +92,23 @@ void loop() {
         break;
 
       case 'B': // Orqaga
-        moveBackward();
-        Serial.println("ACK:BACKWARD");
+        if (distRear > 0 && distRear < SAFE_STOP_DISTANCE) {
+          stopAll();
+          Serial.println("WARN:OBSTACLE_REAR");
+        } else {
+          moveBackward();
+          Serial.println("ACK:BACKWARD");
+        }
         break;
 
-      case 'L': // Chapga burilish (joyida)
+      case 'L': // Joyida chapga 360° burilish
         turnLeft();
-        Serial.println("ACK:LEFT");
+        Serial.println("ACK:LEFT_SPIN");
         break;
 
-      case 'R': // O'ngga burilish (joyida)
+      case 'R': // Joyida o'ngga 360° burilish
         turnRight();
-        Serial.println("ACK:RIGHT");
-        break;
-
-      case 'Q': // Chapga yonlama (Mecanum Strafe Left)
-        strafeLeft();
-        Serial.println("ACK:STRAFE_LEFT");
-        break;
-
-      case 'E': // O'ngga yonlama (Mecanum Strafe Right)
-        strafeRight();
-        Serial.println("ACK:STRAFE_RIGHT");
+        Serial.println("ACK:RIGHT_SPIN");
         break;
 
       case 'S': // To'xtash
@@ -95,44 +116,66 @@ void loop() {
         Serial.println("ACK:STOP");
         break;
 
-      case '1': // Past tezlik
-        currentSpeed = 130;
-        setMotorsSpeed(currentSpeed);
-        Serial.println("ACK:SPEED_LOW");
+      case 'U': // Teleskopik minorani ko'tarish
+        deployMast();
+        Serial.println("ACK:MAST_DEPLOYED");
         break;
 
-      case '2': // O'rta tezlik
+      case 'D': // Teleskopik minorani tushirish
+        retractMast();
+        Serial.println("ACK:MAST_RETRACTED");
+        break;
+
+      case '1': // Past tezlik (Patrul)
+        currentSpeed = 140;
+        applyTrimmedSpeeds(currentSpeed);
+        Serial.println("ACK:SPEED_PATROL");
+        break;
+
+      case '2': // Standart tezlik
         currentSpeed = 190;
-        setMotorsSpeed(currentSpeed);
+        applyTrimmedSpeeds(currentSpeed);
         Serial.println("ACK:SPEED_MED");
         break;
 
-      case '3': // Yuqori tezlik
-        currentSpeed = 250;
-        setMotorsSpeed(currentSpeed);
-        Serial.println("ACK:SPEED_HIGH");
+      case '3': // Maksimal tezlik
+        currentSpeed = 255;
+        applyTrimmedSpeeds(currentSpeed);
+        Serial.println("ACK:SPEED_MAX");
         break;
 
-      case 'D': // Masofa so'rovi (Ping)
-        Serial.print("DIST:");
+      case 'P': // Barcha 4 ta datchik ma'lumotini yuborish (Ping Telemetriya)
+        Serial.print("SONAR:F=");
         Serial.print(distFront);
-        Serial.println("cm");
+        Serial.print(",B=");
+        Serial.print(distRear);
+        Serial.print(",L=");
+        Serial.print(distLeft);
+        Serial.print(",R=");
+        Serial.print(distRight);
+        Serial.print(",BAT=");
+        Serial.println(readBatteryVoltage(), 2);
+        break;
+
+      case 'C': // Kalibrovka ma'lumotlari
+        Serial.print("TRIM:L=");
+        Serial.print(speedTrimLeft);
+        Serial.print(",R=");
+        Serial.println(speedTrimRight);
         break;
     }
   }
 
-  // Harakat vaqtida to'satdan to'siq chiqib qolsa avtomatik to'xtatish
+  // To'satdan to'siq chiqsa tormozlash refleksi
   if (distFront > 0 && distFront < SAFE_STOP_DISTANCE) {
-    // Agar oldinga ketayotgan bo'lsa darhol to'xtatadi
     stopAll();
   }
 
   delay(20);
 }
 
-// ----------------- MECANUM KINEMATIKASI -----------------
+// ----------------- 4WD DIFFERENSIAL HARAKAT -----------------
 
-// Oldinga harakat: barcha g'ildiraklar oldinga
 void moveForward() {
   motorFL.run(FORWARD);
   motorRL.run(FORWARD);
@@ -140,7 +183,6 @@ void moveForward() {
   motorFR.run(FORWARD);
 }
 
-// Orqaga harakat: barcha g'ildiraklar orqaga
 void moveBackward() {
   motorFL.run(BACKWARD);
   motorRL.run(BACKWARD);
@@ -148,7 +190,6 @@ void moveBackward() {
   motorFR.run(BACKWARD);
 }
 
-// Joyida chapga burilish: chaplar orqaga, o'nglar oldinga
 void turnLeft() {
   motorFL.run(BACKWARD);
   motorRL.run(BACKWARD);
@@ -156,7 +197,6 @@ void turnLeft() {
   motorFR.run(FORWARD);
 }
 
-// Joyida o'ngga burilish: chaplar oldinga, o'nglar orqaga
 void turnRight() {
   motorFL.run(FORWARD);
   motorRL.run(FORWARD);
@@ -164,23 +204,6 @@ void turnRight() {
   motorFR.run(BACKWARD);
 }
 
-// Mecanum: Chapga yonlama yurish (burilmasdan parallel)
-void strafeLeft() {
-  motorFL.run(BACKWARD);
-  motorRL.run(FORWARD);
-  motorRR.run(BACKWARD);
-  motorFR.run(FORWARD);
-}
-
-// Mecanum: O'ngga yonlama yurish (burilmasdan parallel)
-void strafeRight() {
-  motorFL.run(FORWARD);
-  motorRL.run(BACKWARD);
-  motorRR.run(FORWARD);
-  motorFR.run(BACKWARD);
-}
-
-// To'liq to'xtatish
 void stopAll() {
   motorFL.run(RELEASE);
   motorRL.run(RELEASE);
@@ -188,24 +211,61 @@ void stopAll() {
   motorFR.run(RELEASE);
 }
 
-// Barcha motorlarga tezlik o'rnatish
-void setMotorsSpeed(int spd) {
-  motorFL.setSpeed(spd);
-  motorRL.setSpeed(spd);
-  motorRR.setSpeed(spd);
-  motorFR.setSpeed(spd);
+void applyTrimmedSpeeds(int baseSpeed) {
+  float lRatio = (float)speedTrimLeft / 200.0;
+  float rRatio = (float)speedTrimRight / 200.0;
+
+  int leftSpd  = constrain((int)(baseSpeed * lRatio), 0, 255);
+  int rightSpd = constrain((int)(baseSpeed * rRatio), 0, 255);
+
+  motorFL.setSpeed(leftSpd);
+  motorRL.setSpeed(leftSpd);
+  motorRR.setSpeed(rightSpd);
+  motorFR.setSpeed(rightSpd);
 }
 
-// Ultratovush datchigidan masofani o'qish (sm da)
-long readDistance(int trigPin, int echoPin) {
-  digitalWrite(trigPin, LOW);
-  delayMicroseconds(2);
-  digitalWrite(trigPin, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(trigPin, LOW);
+// ----------------- TELESKOPIK MINORA BOSHQARUVI -----------------
 
-  // 15ms kutish (maksimum ~2.5 metr)
-  long duration = pulseIn(echoPin, HIGH, 20000);
-  if (duration == 0) return 999; // To'siq yo'q
-  return duration * 0.034 / 2;
+void deployMast() {
+  digitalWrite(MAST_DOWN_PIN, LOW);
+  digitalWrite(MAST_UP_PIN, HIGH);
+  delay(1500);
+  stopMast();
+}
+
+void retractMast() {
+  digitalWrite(MAST_UP_PIN, LOW);
+  digitalWrite(MAST_DOWN_PIN, HIGH);
+  delay(1500);
+  stopMast();
+}
+
+void stopMast() {
+  digitalWrite(MAST_UP_PIN, LOW);
+  digitalWrite(MAST_DOWN_PIN, LOW);
+}
+
+// ----------------- 4 TA ULTRATOVUSH O'LCHOV FUNKSIYASI -----------------
+
+long readSonarDistance(int echoPin) {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  long duration = pulseIn(echoPin, HIGH, 22000); // ~3.7 metr kutish
+  if (duration == 0) return 999;
+  return (long)((duration * 0.0343) / 2.0);
+}
+
+// ----------------- AKKUMULYATOR KUCHLANISHI -----------------
+
+float readBatteryVoltage() {
+  // A5 pinidagi analog kuchlanish (0-1023)
+  // Masalan: 10k va 2.2k rezistor bo'lgich (Bo'linish koeffitsiyenti: ~5.54)
+  int raw = analogRead(BATTERY_PIN);
+  float pinVoltage = (raw / 1023.0) * 5.0;
+  float batteryVoltage = pinVoltage * ( (10.0 + 2.2) / 2.2 ); // 12.8V gacha
+  return batteryVoltage;
 }
