@@ -45,6 +45,7 @@ import uvicorn
 from lidar_module import LidarModule
 from camera_module import CameraModule
 from arduino_bridge import ArduinoBridge
+from watchdog_daemon import QalqonWatchdogDaemon
 
 START_TIME = time.time()
 
@@ -55,6 +56,7 @@ print("="*65)
 lidar = LidarModule()
 camera = CameraModule(source=0)
 arduino = ArduinoBridge()
+watchdog = QalqonWatchdogDaemon(arduino_bridge=arduino, failsafe_timeout_sec=0.65)
 
 # Boshqaruv rejimi: faqat qo'lda boshqaruv va xavfsizlik nazorati
 patrol_mode = "MANUAL"
@@ -177,6 +179,7 @@ def handle_command(c: Optional[str] = None, speed: Optional[int] = None):
                 "message": f"Oldinda to'siq bor ({sonars['front']} sm)! Faqat orqaga yoki burilish mumkin."
             }
 
+        watchdog.feed_heartbeat(f"CMD:{cmd_char}")
         ok = arduino.send_command(cmd_char)
         return {"status": "ok" if ok else "blocked", "cmd": cmd_char}
 
@@ -250,9 +253,27 @@ def alert_snapshot():
     return Response(content=b"", status_code=404)
 
 @app.get("/api/slam_map")
+@app.get("/api/occupancy_grid")
 def get_slam_map():
-    """LD19 LiDAR 2D Occupancy Grid SLAM xaritasi (TT 3-bandi)"""
+    """LDROBOT STL-19P 2D Probabilistic Occupancy Grid (TT 3-bandi, Memorandum 2.1)"""
     return lidar.get_slam_grid(grid_size=60, resolution_m=0.1)
+
+@app.get("/api/hazard_analysis")
+def get_hazard_analysis():
+    """LDROBOT STL-19P 360° to'siqlar va xavfli hududlarni avtonom monitoring tahlili (Memorandum 2.5)"""
+    return lidar.get_hazard_analysis()
+
+@app.get("/api/watchdog/status")
+def get_watchdog_status():
+    """Raspberry Pi 4 va Arduino Serial Watchdog telemetriyasi (Memorandum 2.4-bandi)"""
+    return watchdog.get_status()
+
+@app.post("/api/failsafe/stop")
+@app.get("/api/failsafe/stop")
+def trigger_failsafe_stop(reason: str = "MANUAL_PANIC"):
+    """Favqulodda to'xtash va harakatni qulflash"""
+    watchdog.trigger_manual_emergency_stop(reason)
+    return {"status": "TRIGGERED", "reason": reason}
 
 
 @app.get("/api/telemetry")
@@ -265,13 +286,17 @@ def get_telemetry():
     cam_status = camera.get_status()
     ard_status = arduino.get_status()
 
-    is_blocked = (lidar_sectors["front"] <= 0.45) or (sonars["front"] <= 25) or ard_status["obstacle_warning"]
+    hazard = lidar.get_hazard_analysis()
+    wd_status = watchdog.get_status()
+    is_blocked = (lidar_sectors["front"] <= 0.45) or (sonars["front"] <= 25) or ard_status["obstacle_warning"] or hazard["emergency_stop_required"]
 
     return {
         "time": time.time(),
         "uptime_sec": int(time.time() - START_TIME),
         "mode": patrol_mode,
         "is_front_blocked": is_blocked,
+        "hazard": hazard,
+        "watchdog": wd_status,
         "strobe": strobe_active,
         "siren": siren_active,
         "motion": {
@@ -305,6 +330,7 @@ async def websocket_telemetry(ws: WebSocket):
     active_websockets.add(ws)
     try:
         while True:
+            watchdog.feed_heartbeat("WEBSOCKET")
             telem = get_telemetry()
             await ws.send_json(telem)
             await asyncio.sleep(0.1)
