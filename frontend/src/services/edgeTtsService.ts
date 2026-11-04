@@ -158,16 +158,21 @@ class EdgeTtsService {
         this.voices = window.speechSynthesis.getVoices();
       }
 
-      // FAQAT Sardor yoki O'zbek ovozini qidirish (hech qachon rus yoki boshqa tilga o'tmaydi!)
-      const sardorVoice = this.voices.find(v =>
-        v.name.toLowerCase().includes('sardor') ||
-        v.voiceURI.toLowerCase().includes('sardor')
-      ) || this.voices.find(v =>
-        v.lang === 'uz-UZ' || v.lang === 'uz' || v.name.toLowerCase().includes('uzbek')
+      // Faqat erkak ovozi: avval Sardor (Edge brauzerida "Microsoft Sardor Online (Natural)"),
+      // bo'lmasa ayol ovozi (Madina) bo'lmagan o'zbek ovozi. Rus yoki boshqa tilga o'tmaydi.
+      const isFemale = (v: SpeechSynthesisVoice) => /madina|female/i.test(`${v.name} ${v.voiceURI}`);
+      const sardorVoice = this.voices.find(v => /sardor/i.test(`${v.name} ${v.voiceURI}`));
+      const uzMaleVoice = this.voices.find(v =>
+        (v.lang === 'uz-UZ' || v.lang === 'uz' || /uzbek/i.test(v.name)) && !isFemale(v)
       );
+      const chosen = sardorVoice || uzMaleVoice;
 
-      if (sardorVoice) {
-        utterance.voice = sardorVoice;
+      if (chosen) {
+        utterance.voice = chosen;
+      }
+      if (!sardorVoice) {
+        // Sardor topilmasa ovozni pastroq qilib erkak tembriga yaqinlashtiramiz
+        utterance.pitch = options?.pitch ?? 0.8;
       }
 
       this.isSpeaking = true;
