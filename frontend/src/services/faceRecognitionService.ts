@@ -243,7 +243,7 @@ class FaceRecognitionEngine {
       this.timings[name] = Math.round(now - t);
       t = now;
     };
-    await tf.ready();
+    await (tf as any).ready?.();
     lap('tf');
     await Promise.all([
       faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
