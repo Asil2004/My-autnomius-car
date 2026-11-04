@@ -94,3 +94,27 @@ export interface SystemStatus {
   uptimeSeconds: number;
   serialWarning: string | null;
 }
+
+/** Pi telemetriyasidagi masofaviy admin holati (raspberry_pi/remote_control.py) */
+export interface RemoteEvent {
+  t: number;
+  src: 'admin' | 'local' | 'system';
+  cmd: string;
+  ok: boolean;
+  reason?: string;
+}
+
+export interface RemoteStatus {
+  /** Pi da admin token o'rnatilgan (masofaviy kirish yoqilgan) */
+  enabled: boolean;
+  /** Monitor kalit (kill-switch): false bo'lsa admin harakat buyruqlari rad etiladi */
+  allowed: boolean;
+  /** Oxirgi 2 soniyada admin buyrug'i kelgan */
+  admin_active: boolean;
+  /** Lokal operator yaqinda buyruq bergan: admin harakati vaqtincha to'xtatilgan */
+  local_hold: boolean;
+  lease_ms: number;
+  max_speed: number;
+  last: RemoteEvent | null;
+  events: RemoteEvent[];
+}

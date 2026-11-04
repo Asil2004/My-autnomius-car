@@ -10,7 +10,8 @@ import type {
   LidarInfo,
   PatrolMode,
   SystemStatus,
-  GPSState
+  GPSState,
+  RemoteStatus
 } from '../types/robot';
 import { tacticalAudio } from '../services/audioService';
 
@@ -30,6 +31,10 @@ interface RobotContextType {
   lastCommand: MecanumCommand;
   speedLevel: SpeedLevel;
   sendMecanumCommand: (cmd: MecanumCommand) => void;
+
+  // Masofaviy admin (internet orqali, 2-planshet): Pi telemetriyasidan
+  remote: RemoteStatus | null;
+  setRemoteAllowed: (allowed: boolean) => void;
   setSpeedLevel: (lvl: SpeedLevel) => void;
   isMoving: boolean;
   
@@ -99,6 +104,8 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [activeTab, setActiveTab] = useState<'hud' | 'ai' | 'telemetry' | 'maps' | 'settings'>('hud');
   
   const [lastCommand, setLastCommand] = useState<MecanumCommand>('S');
+  const [remote, setRemote] = useState<RemoteStatus | null>(null);
+  const lastAdminLogRef = useRef({ cmd: '', t: 0 });
   const [speedLevel, setSpeedLevelState] = useState<SpeedLevel>(2);
   const [isMoving, setIsMoving] = useState<boolean>(false);
 
@@ -264,6 +271,7 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     { id: '4', time: '15:30:16', source: 'AI', level: 'info', text: 'TensorFlow COCO-SSD & Mobil kameralar detektori tayyor.' },
   ]);
 
+  const addLogRef = useRef<(source: LogMessage['source'], level: LogMessage['level'], text: string) => void>(() => undefined);
   const addLog = useCallback((source: LogMessage['source'], level: LogMessage['level'], text: string) => {
     const timeStr = new Date().toTimeString().slice(0, 8);
     const newLog: LogMessage = {
@@ -275,6 +283,9 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
     setLogs((prev) => [newLog, ...prev.slice(0, 49)]);
   }, []);
+  useEffect(() => {
+    addLogRef.current = addLog;
+  }, [addLog]);
 
   // =========================================================================
   // HAQIQIY GPS (GEOLOCATION API) SIKLI
@@ -544,6 +555,19 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 timestamp: Date.now()
               }));
             }
+            if (d.remote) {
+              const r = d.remote as RemoteStatus;
+              setRemote(r);
+              // Admin buyrug'i jurnalga yoziladi (har 250 ms da emas: buyruq o'zgarganda yoki 3 s dan keyin)
+              const last = r.last;
+              if (last && last.src === 'admin' && last.ok) {
+                const prev = lastAdminLogRef.current;
+                if (last.cmd !== prev.cmd || last.t - prev.t > 3) {
+                  lastAdminLogRef.current = { cmd: last.cmd, t: last.t };
+                  addLogRef.current('RPI', 'info', `Masofaviy admin buyrug'i: ${last.cmd}`);
+                }
+              }
+            }
             if (d.motion) {
               if (d.motion.last_cmd) setLastCommand(d.motion.last_cmd);
               if (d.motion.speed_level) setSpeedLevelState(d.motion.speed_level);
@@ -621,6 +645,21 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => clearInterval(interval);
   }, [isSimulationMode, isMoving]);
 
+  // Monitor kaliti (kill-switch): masofaviy admin harakat buyruqlarini ruxsat etish yoki taqiqlash. Faqat lokal (LAN) o'zgartira oladi
+  const setRemoteAllowed = useCallback(
+    (allowed: boolean) => {
+      if (isSimulationMode) return;
+      fetch(`http://${system.rpiIp}:${system.rpiPort}/api/remote/allow?on=${allowed ? 1 : 0}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((st) => {
+          if (st) setRemote(st as RemoteStatus);
+          addLog('SYSTEM', allowed ? 'success' : 'warn', allowed ? 'Masofaviy admin boshqaruvi RUXSAT etildi.' : "Masofaviy admin boshqaruvi TAQIQLANDI.");
+        })
+        .catch(() => addLog('RPI', 'error', "Masofaviy ruxsatni o'zgartirib bo'lmadi: Pi ga ulanib bo'lmadi."));
+    },
+    [addLog, isSimulationMode, system.rpiIp, system.rpiPort]
+  );
+
   const setRpiConfig = (ip: string, port: number) => {
     setSystem((prev) => ({ ...prev, rpiIp: ip, rpiPort: port }));
     addLog('SYSTEM', 'info', `RPi konfiguratsiyasi yangilandi: ${ip}:${port}`);
@@ -634,6 +673,8 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         lastCommand,
         speedLevel,
         sendMecanumCommand,
+        remote,
+        setRemoteAllowed,
         setSpeedLevel,
         isMoving,
         sonars,

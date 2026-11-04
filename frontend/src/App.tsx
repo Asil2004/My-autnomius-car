@@ -9,6 +9,9 @@ import { GoogleMapsPatrolView } from './components/GoogleMapsPatrolView';
 import { SettingsView } from './components/SettingsView';
 import { RobotFaceView } from './components/RobotFaceView';
 import { OperatorAuthModal } from './components/OperatorAuthModal';
+import { AdminLoginModal } from './components/AdminLoginModal';
+import { AdminPanelView } from './components/AdminPanelView';
+import type { RemoteLink } from './services/remoteClient';
 
 const MainContent: React.FC = () => {
   const { activeTab } = useRobot();
@@ -27,12 +30,28 @@ const MainContent: React.FC = () => {
 const AppShell: React.FC = () => {
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
+  // Masofaviy admin: ikkinchi planshet saytni #admin bilan ochsa, kirish oynasi darhol chiqadi
+  const [adminLoginOpen, setAdminLoginOpen] = useState(() => window.location.hash === '#admin');
+  const [adminLink, setAdminLink] = useState<RemoteLink | null>(null);
+
+  if (adminLink) {
+    return <AdminPanelView link={adminLink} onExit={() => setAdminLink(null)} />;
+  }
 
   // DEFAULT VIEW: Robot yuzi (2D ko'zlar, kamera yoqilgach odamni kuzatadi)
   if (!isUnlocked) {
     return (
       <div className="relative h-screen w-screen bg-tactical-950 overflow-hidden select-none">
-        <RobotFaceView onUnlockRequest={() => setAuthModalOpen(true)} />
+        <RobotFaceView onUnlockRequest={() => setAuthModalOpen(true)} onAdminRequest={() => setAdminLoginOpen(true)} />
+        {adminLoginOpen && (
+          <AdminLoginModal
+            onClose={() => setAdminLoginOpen(false)}
+            onConnected={(link) => {
+              setAdminLoginOpen(false);
+              setAdminLink(link);
+            }}
+          />
+        )}
         <OperatorAuthModal
           isOpen={authModalOpen}
           onClose={() => setAuthModalOpen(false)}

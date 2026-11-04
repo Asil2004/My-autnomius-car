@@ -14,6 +14,8 @@ RestartSec=3
 StandardOutput=journal
 StandardError=journal
 Environment=PYTHONUNBUFFERED=1
+# Masofaviy admin tokeni va sozlamalari (REMOTE_ACCESS.md). Fayl bo'lmasa, masofaviy kirish o'chiq turadi
+EnvironmentFile=-/etc/qalqon/remote.env
 
 [Install]
 WantedBy=multi-user.target

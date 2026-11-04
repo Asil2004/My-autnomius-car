@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Lock, Unlock, Camera, CameraOff, Volume2 } from 'lucide-react';
+import { Lock, Unlock, Camera, CameraOff, Volume2, ShieldCheck } from 'lucide-react';
 import { faceRecognitionService } from '../services/faceRecognitionService';
 import { tacticalAudio } from '../services/audioService';
 import { edgeTtsService } from '../services/edgeTtsService';
@@ -7,9 +7,11 @@ import { RobotAvatar, type EyeInput } from './RobotAvatar';
 
 interface RobotFaceViewProps {
   onUnlockRequest: () => void;
+  /** Ikkinchi planshetdan masofaviy admin kirishi */
+  onAdminRequest?: () => void;
 }
 
-export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest }) => {
+export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, onAdminRequest }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -275,6 +277,21 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
           Ovozni sinash
         </button>
       </div>
+
+      {/* Admin (masofaviy) kirish tugmasi */}
+      {onAdminRequest && (
+        <button
+          onClick={() => {
+            tacticalAudio.playClick();
+            onAdminRequest();
+          }}
+          title="Admin kirishi (masofaviy boshqaruv)"
+          aria-label="Admin kirishi"
+          className="absolute top-4 right-16 z-30 p-2.5 rounded-xl bg-tactical-900 border border-tactical-700 text-slate-300 hover:text-white hover:bg-tactical-800 transition-transform active:scale-90"
+        >
+          <ShieldCheck className="w-4 h-4" />
+        </button>
+      )}
 
       {/* Operator kirish tugmasi */}
       <button

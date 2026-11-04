@@ -60,6 +60,18 @@ const ALL_CAMERAS: { id: CamId; short: string; long: string }[] = [
 
 const OPEN_KEY = 'qalqon.hud.open.v1';
 
+const REMOTE_CMD_NAMES: Record<string, string> = {
+  F: 'Oldinga',
+  B: 'Orqaga',
+  L: 'Chapga burilish',
+  R: "O'ngga burilish",
+  Q: 'Chapga siljish',
+  E: "O'ngga siljish",
+  S: "To'xtatish",
+  U: 'Minora yuqoriga',
+  D: 'Minora pastga'
+};
+
 // COCO-SSD klasslari uchun o'zbekcha nomlar. Odam va transport alohida ishlanadi, qolgan hamma jism robot uchun "to'siq"
 const UZ_OBSTACLE_NAMES: Record<string, string> = {
   chair: "Stul (To'siq)",
@@ -155,7 +167,9 @@ export const HUDView: React.FC = () => {
     gps,
     startRealGPS,
     toggleGPSMode,
-    addLog
+    addLog,
+    remote,
+    setRemoteAllowed
   } = useRobot();
 
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -1242,6 +1256,18 @@ export const HUDView: React.FC = () => {
           <span>{safetyLabel}</span>
         </button>
 
+        {/* Masofaviy admin: buyruq kelayotganda monitorda ko'rinadi (kim, nima buyruq berdi) */}
+        {remote?.admin_active && remote.last && (
+          <div
+            data-remote-admin
+            role="status"
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-2 border bg-police-blue/20 text-police-cyan border-police-blue/60"
+          >
+            <ShieldCheck className="w-4 h-4" />
+            <span>Masofaviy admin: {REMOTE_CMD_NAMES[remote.last.cmd] ?? remote.last.cmd}</span>
+          </div>
+        )}
+
         <div className="flex items-center gap-1" role="group" aria-label="Panellar">
           {DOCK.map((d) => (
             <button
@@ -1911,6 +1937,35 @@ export const HUDView: React.FC = () => {
                 <SonarChip side="rear" label="ORQA" pins="TRIG A2, ECHO A3" value={sonars.rear} />
                 <SonarChip side="left" label="CHAP" value={sonars.left} />
                 <SonarChip side="right" label="O'NG" value={sonars.right} />
+              </div>
+
+              {/* Masofaviy admin kaliti: robot yonidagi operator internet orqali boshqaruvni o'chira oladi (STOP baribir ishlaydi) */}
+              <div className="rounded-lg border border-tactical-700 bg-tactical-850 px-3 py-2 text-xs flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="font-semibold text-slate-100">Masofaviy admin</div>
+                  <div className="text-[11px] text-slate-400">
+                    {!remote
+                      ? 'Pi ga ulanilmagan'
+                      : !remote.enabled
+                      ? "Pi da token o'rnatilmagan, masofaviy kirish o'chiq"
+                      : remote.allowed
+                      ? 'Internet orqali boshqarishga ruxsat berilgan'
+                      : 'Taqiqlangan, faqat STOP ishlaydi'}
+                  </div>
+                </div>
+                <button
+                  disabled={!remote || !remote.enabled}
+                  onClick={() => setRemoteAllowed(!remote?.allowed)}
+                  aria-pressed={!!remote?.allowed}
+                  data-remote-toggle
+                  className={`shrink-0 px-3 py-1.5 rounded-lg border font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                    remote?.allowed
+                      ? 'bg-police-blue border-police-blue text-white'
+                      : 'bg-tactical-900 border-tactical-600 text-slate-300'
+                  }`}
+                >
+                  {remote?.allowed ? 'Ruxsat' : 'Taqiq'}
+                </button>
               </div>
 
               <div

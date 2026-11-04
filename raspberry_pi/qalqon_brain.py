@@ -36,8 +36,8 @@ try:
 except Exception:
     pass
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Response
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Response, Request
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
@@ -46,6 +46,7 @@ from lidar_module import LidarModule
 from camera_module import CameraModule
 from arduino_bridge import ArduinoBridge
 from watchdog_daemon import QalqonWatchdogDaemon
+from remote_control import RemoteControl
 
 START_TIME = time.time()
 
@@ -57,6 +58,8 @@ lidar = LidarModule()
 camera = CameraModule(source=0)
 arduino = ArduinoBridge()
 watchdog = QalqonWatchdogDaemon(arduino_bridge=arduino, failsafe_timeout_sec=0.65)
+# Masofaviy admin boshqaruvi (internet/Cloudflare Tunnel orqali). Token: QALQON_ADMIN_TOKEN muhit o'zgaruvchisi
+remote = RemoteControl(arduino=arduino, watchdog=watchdog)
 
 # Boshqaruv rejimi: faqat qo'lda boshqaruv va xavfsizlik nazorati
 patrol_mode = "MANUAL"
@@ -65,6 +68,9 @@ siren_active = False
 obstacle_override_distance: Optional[float] = None
 
 app = FastAPI(title="Qalqon Brain API", version="1.0")
+
+# Masofaviy himoya CORS dan OLDIN o'rnatiladi (CORS eng tashqi qatlam bo'lib, xato javoblariga ham sarlavha qo'shadi)
+remote.install(app)
 
 app.add_middleware(
     CORSMiddleware,
@@ -156,17 +162,24 @@ def video_feed():
     )
 
 @app.get("/cmd")
-def handle_command(c: Optional[str] = None, speed: Optional[int] = None):
+def handle_command(request: Request, c: Optional[str] = None, speed: Optional[int] = None):
     """
     Boshqaruv buyruqlari ('F', 'B', 'L', 'R', 'Q', 'E', 'S', speed=1..3)
     Agar to'siq bo'lsa, 'F' buyrug'i qabul qilinmaydi va bloklanadi!
+    src: "local" (robotdagi monitor, LAN) yoki "admin" (internet orqali, token bilan)
     """
+    src = getattr(request.state, "src", "local")
+
     if speed is not None:
+        speed = remote.cap_speed(src, speed)
         arduino.set_speed(speed)
         return {"status": "ok", "speed": speed}
 
     if c:
         cmd_char = c.upper().strip()
+        verdict = remote.pre_command(src, cmd_char)
+        if verdict:
+            return JSONResponse(verdict[1], status_code=verdict[0])
         sonars = arduino.get_sonars()
         lidar_sectors = lidar.get_sectors()
         is_blocked = (lidar_sectors["front"] <= 0.45) or (sonars["front"] <= 25) or arduino.obstacle_warning
@@ -181,7 +194,8 @@ def handle_command(c: Optional[str] = None, speed: Optional[int] = None):
 
         watchdog.feed_heartbeat(f"CMD:{cmd_char}")
         ok = arduino.send_command(cmd_char)
-        return {"status": "ok" if ok else "blocked", "cmd": cmd_char}
+        remote.post_command(src, cmd_char, ok)
+        return {"status": "ok" if ok else "blocked", "cmd": cmd_char, "src": src}
 
     return {"status": "error", "message": "Buyruq berilmadi"}
 
@@ -305,6 +319,7 @@ def get_telemetry():
             "is_moving": ard_status["last_cmd"] not in ('S', 'STOP'),
             "obstacle_warning": is_blocked
         },
+        "remote": remote.status(),
         "sonars": sonars,
         "battery": battery,
         "lidar": {
@@ -326,6 +341,9 @@ active_websockets = set()
 @app.websocket("/ws")
 async def websocket_telemetry(ws: WebSocket):
     """Real-vaqtli telemetriya oqimi (10 Hz)"""
+    # Masofaviy (tunnel orqali) ulanish uchun admin token talab qilinadi
+    if not await remote.ws_gate(ws):
+        return
     await ws.accept()
     active_websockets.add(ws)
     try:
