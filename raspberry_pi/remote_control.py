@@ -135,10 +135,17 @@ class RemoteControl:
         cmd = cmd.upper().strip()
         now = time.time()
         with self.lock:
-            ev = {"t": now, "src": src, "cmd": cmd, "ok": bool(ok)}
+            # Ketma-ket bir xil buyruq (ushlab turilganda har 250 ms da keladi) bitta yozuvga birlashadi: t0 boshlanish, t oxirgi vaqt
+            prev = self.events[-1] if self.events else None
+            if (prev and prev["src"] == src and prev["cmd"] == cmd and prev["ok"] == bool(ok)
+                    and "reason" not in prev and now - prev["t"] < 1.5):
+                prev["t"] = now
+                ev = prev
+            else:
+                ev = {"t": now, "t0": now, "src": src, "cmd": cmd, "ok": bool(ok)}
+                self.events.append(ev)
+                self.events = self.events[-12:]
             self.last_event = ev
-            self.events.append(ev)
-            self.events = self.events[-12:]
             if src == "admin":
                 self.last_admin_cmd_t = now
                 if cmd in MOVE_CMDS and ok:
@@ -169,7 +176,8 @@ class RemoteControl:
                     if self.arduino:
                         self.arduino.send_command("S")
                     with self.lock:
-                        ev = {"t": time.time(), "src": "system", "cmd": "S", "ok": True, "reason": "deadman"}
+                        _now = time.time()
+                        ev = {"t": _now, "t0": _now, "src": "system", "cmd": "S", "ok": True, "reason": "deadman"}
                         self.last_event = ev
                         self.events.append(ev)
                         self.events = self.events[-12:]
@@ -190,8 +198,8 @@ class RemoteControl:
                 "local_hold": (now - self.last_local_cmd_t) * 1000 < self.local_hold_ms,
                 "lease_ms": self.lease_ms,
                 "max_speed": self.max_speed,
-                "last": self.last_event,
-                "events": self.events[-6:],
+                "last": dict(self.last_event) if self.last_event else None,
+                "events": [dict(e) for e in self.events[-8:]],
             }
 
     # ------------------------------------------------------------------ FastAPI ulanishi

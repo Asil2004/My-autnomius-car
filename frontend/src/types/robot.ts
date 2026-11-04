@@ -97,7 +97,10 @@ export interface SystemStatus {
 
 /** Pi telemetriyasidagi masofaviy admin holati (raspberry_pi/remote_control.py) */
 export interface RemoteEvent {
+  /** Oxirgi marta shu buyruq kelgan vaqt (soniya) */
   t: number;
+  /** Shu buyruq birinchi marta kelgan vaqt. Ketma-ket bir xil buyruqlar bitta yozuvga birlashadi */
+  t0?: number;
   src: 'admin' | 'local' | 'system';
   cmd: string;
   ok: boolean;

@@ -63,6 +63,38 @@ const KEY_MAP: Record<string, MecanumCommand> = {
   e: 'E'
 };
 
+const MOVE_CMDS = new Set(['F', 'B', 'L', 'R', 'Q', 'E']);
+
+interface FeedItem {
+  key: string;
+  t: number;
+  src: RemoteEvent['src'];
+  text: string;
+}
+
+/** Hodisalarni o'qishga qulay qatorlarga aylantiradi: "buyruq + to'xtatish" juftligi bitta "Oldinga (0.8 s)" bo'ladi */
+const buildFeed = (events: RemoteEvent[]): FeedItem[] => {
+  const out: FeedItem[] = [];
+  for (let i = 0; i < events.length; i++) {
+    const ev = events[i];
+    const next = events[i + 1];
+    const t0 = ev.t0 ?? ev.t;
+    const name = CMD_NAMES[ev.cmd] ?? ev.cmd;
+    if (ev.src === 'admin' && ev.ok && MOVE_CMDS.has(ev.cmd) && next && next.src === 'admin' && next.cmd === 'S' && !next.reason) {
+      out.push({ key: `${t0}-${i}`, t: t0, src: ev.src, text: `${name} (${Math.max(0.1, next.t - t0).toFixed(1)} s)` });
+      i += 1; // juftlikdagi "To'xtatish" qatori qo'shilmaydi
+      continue;
+    }
+    const held = ev.t - t0;
+    let text = name;
+    if (held >= 0.3 && MOVE_CMDS.has(ev.cmd)) text += ` (${held.toFixed(1)} s, davom etmoqda)`;
+    if (ev.reason === 'deadman') text += " (aloqa uzildi, avto-to'xtash)";
+    if (!ev.ok) text += ' (rad etildi)';
+    out.push({ key: `${t0}-${i}`, t: t0, src: ev.src, text });
+  }
+  return out.reverse();
+};
+
 const fmtTime = (t: number) => new Date(t * 1000).toLocaleTimeString('uz-UZ', { hour12: false });
 const srcLabel = (s: RemoteEvent['src']) => (s === 'admin' ? 'Admin' : s === 'local' ? 'Monitor' : 'Tizim');
 
@@ -309,17 +341,13 @@ export const AdminPanelView: React.FC<AdminPanelViewProps> = ({ link, onExit }) 
             <div className="text-xs font-semibold text-slate-300 mb-2">Oxirgi buyruqlar</div>
             <ul className="text-[11px] space-y-1 max-h-40 overflow-y-auto">
               {(remote?.events ?? []).length === 0 && <li className="text-slate-500">Hozircha buyruq yo'q</li>}
-              {[...(remote?.events ?? [])].reverse().map((ev, i) => (
-                <li key={`${ev.t}-${i}`} className="flex gap-2">
-                  <span className="text-slate-500">{fmtTime(ev.t)}</span>
-                  <span className={ev.src === 'admin' ? 'text-police-cyan' : ev.src === 'local' ? 'text-police-amber' : 'text-slate-400'}>
-                    {srcLabel(ev.src)}
+              {buildFeed(remote?.events ?? []).map((it) => (
+                <li key={it.key} className="flex gap-2">
+                  <span className="text-slate-500">{fmtTime(it.t)}</span>
+                  <span className={it.src === 'admin' ? 'text-police-cyan' : it.src === 'local' ? 'text-police-amber' : 'text-slate-400'}>
+                    {srcLabel(it.src)}
                   </span>
-                  <span className="text-slate-200">
-                    {CMD_NAMES[ev.cmd] ?? ev.cmd}
-                    {ev.reason === 'deadman' ? ' (aloqa uzildi, avto-to\'xtash)' : ''}
-                    {!ev.ok ? ' (rad etildi)' : ''}
-                  </span>
+                  <span className="text-slate-200">{it.text}</span>
                 </li>
               ))}
             </ul>

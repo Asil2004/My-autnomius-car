@@ -160,6 +160,17 @@ with client.websocket_connect("/ws", headers=LOCAL) as w:
 codes = [client.get("/cmd?c=S", headers={"host": "robot.example.com", "x-admin-token": "bad", "cf-connecting-ip": "9.9.9.9"}).status_code for _ in range(10)]
 check("ko'p noto'g'ri urinish: 429", codes[-1] == 429 and codes[0] == 401)
 
+# --- hodisalar: ketma-ket bir xil buyruq birlashadi
+time.sleep(0.6)
+n0 = len(remote.status()["events"])
+for _ in range(4):
+    client.get("/cmd?c=Q", headers=REMOTE)
+    time.sleep(0.1)
+evs = remote.status()["events"]
+check("takroriy buyruq bitta yozuvga birlashadi", evs[-1]["cmd"] == "Q" and sum(1 for e in evs if e["cmd"] == "Q") == 1)
+check("birlashgan yozuvda boshlanish va oxirgi vaqt bor", evs[-1]["t"] > evs[-1]["t0"])
+client.get("/cmd?c=S", headers=REMOTE)
+
 # --- standart holat (QALQON_LOCAL_HOSTS yo'q): Host e'tiborga olinmaydi, faqat Cloudflare sarlavhalari
 _saved = os.environ.pop("QALQON_LOCAL_HOSTS")
 default = RemoteControl(arduino=FakeArduino())
