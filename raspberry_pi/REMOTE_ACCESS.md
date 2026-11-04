@@ -90,7 +90,7 @@ Manzil doimiy bo'ladi: `https://robot.sizning-domeningiz.uz`.
 
 ## 4. Xavfsizlik qoidalari (kodda amalga oshirilgan)
 
-- Tunnel orqali kelgan har bir so'rov **token talab qiladi** (Cloudflare sarlavhalari yoki lokal bo'lmagan Host bo'yicha aniqlanadi).
+- Tunnel orqali kelgan har bir so'rov **token talab qiladi** (Cloudflare sarlavhalari bo'yicha aniqlanadi).
   LAN dagi monitor avvalgidek tokensiz ishlaydi.
 - Admin faqat buyruq, telemetriya, video va holat yo'llariga kira oladi. To'siq simulyatsiyasi, OTA va boshqa xizmat yo'llari yopiq.
 - **Deadman**: aloqa uzilsa yoki planshet o'chsa, `QALQON_LEASE_MS` dan keyin robot to'xtaydi. Admin STOP ni har doim yubora oladi.

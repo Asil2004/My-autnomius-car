@@ -6,9 +6,9 @@ Maqsad: ikkinchi planshetdan (admin) internet orqali robotni qo'lda boshqarish. 
 keladi, monitor (robotdagi planshet) esa telemetriya orqali "kim, qaysi buyruqni berdi" ma'lumotini ko'radi.
 
 Xavfsizlik qoidalari:
-  1. So'rov "masofaviy" hisoblanadi, agar Cloudflare sarlavhalari (CF-Connecting-IP, CF-Ray) bor bo'lsa yoki Host
-     lokal manzil (IP, localhost, *.local) bo'lmasa. Tunnel orqali kelgan so'rov Pi ga 127.0.0.1 dan kiradi, shuning uchun
-     IP bo'yicha ajratib bo'lmaydi.
+  1. So'rov "masofaviy" hisoblanadi, agar Cloudflare sarlavhalari (CF-Connecting-IP, CF-Ray) bor bo'lsa. Tunnel orqali
+     kelgan so'rov Pi ga 127.0.0.1 dan kiradi, shuning uchun IP bo'yicha ajratib bo'lmaydi. (Faqat sinov uchun
+     QALQON_LOCAL_HOSTS berilsa, Host ham tekshiriladi.) Boshqa tunnel (ngrok va h.k.) CF sarlavhasiz bo'lsa, himoyalanmaydi.
   2. Masofaviy so'rov ADMIN TOKEN talab qiladi (env: QALQON_ADMIN_TOKEN). Token bo'sh bo'lsa, masofaviy kirish butunlay o'chiq.
      Noto'g'ri token ketma-ket urinishlari cheklanadi.
   3. Masofaviy admin faqat ruxsat etilgan yo'llarga kira oladi (buyruq, telemetriya, video, holat). To'siq simulyatsiyasi,
@@ -20,7 +20,6 @@ Xavfsizlik qoidalari:
 """
 
 import hmac
-import ipaddress
 import os
 import threading
 import time
@@ -75,20 +74,16 @@ class RemoteControl:
 
     # ------------------------------------------------------------------ aniqlash va autentifikatsiya
     def is_remote(self, headers, client_host: str = "") -> bool:
+        # Tunnel (Cloudflare) orqali kelgan so'rovni Cloudflare qo'shgan sarlavhalar aniq ajratadi
         if headers.get("cf-connecting-ip") or headers.get("cf-ray"):
             return True
-        host = (headers.get("host") or "").split(":")[0].strip().lower().strip("[]")
-        if not host:
-            return False
+        # Faqat sinov rejimi: QALQON_LOCAL_HOSTS berilgan bo'lsa, ro'yxatda yo'q Host masofaviy hisoblanadi.
+        # Standart holatda Host e'tiborga olinmaydi, shunda LAN dagi monitor qaysi nom bilan ulansa ham (IP, .local, .lan)
+        # avvalgidek tokensiz ishlayveradi.
         if self.local_hosts is not None:
-            return host not in self.local_hosts
-        if host in ("localhost", "::1") or host.endswith(".local") or "." not in host:
-            return False
-        try:
-            ipaddress.ip_address(host)
-            return False
-        except ValueError:
-            return True
+            host = (headers.get("host") or "").split(":")[0].strip().lower().strip("[]")
+            return bool(host) and host not in self.local_hosts
+        return False
 
     def _client_key(self, headers, client_host: str) -> str:
         return headers.get("cf-connecting-ip") or client_host or "?"

@@ -8,6 +8,7 @@ import time
 os.environ["QALQON_ADMIN_TOKEN"] = "test-token-123"
 os.environ["QALQON_LEASE_MS"] = "300"
 os.environ["QALQON_LOCAL_HOLD_MS"] = "500"
+os.environ["QALQON_LOCAL_HOSTS"] = "127.0.0.1"  # sinov rejimi: boshqa Host masofaviy hisoblanadi
 
 from typing import Optional
 from fastapi import FastAPI, Request, WebSocket
@@ -90,7 +91,7 @@ def check(name, cond):
 # --- aniqlash
 check("lokal so'rov token talab qilmaydi", client.get("/cmd?c=F", headers=LOCAL).json()["src"] == "local")
 check("tunnel sarlavhasi bilan token talab qilinadi", client.get("/cmd?c=F", headers={**LOCAL, "cf-connecting-ip": "1.2.3.4"}).status_code == 401)
-check("domen hosti masofaviy hisoblanadi", client.get("/cmd?c=F", headers={"host": "robot.example.com"}).status_code == 401)
+check("[sinov rejimi] lokal ro'yxatda yo'q Host masofaviy hisoblanadi", client.get("/cmd?c=F", headers={"host": "robot.example.com"}).status_code == 401)
 check("noto'g'ri token rad etiladi", client.get("/cmd?c=F", headers={"host": "robot.example.com", "x-admin-token": "xxx"}).status_code == 401)
 r = client.get("/cmd?c=S", headers=REMOTE)
 check("to'g'ri token (sarlavha) qabul qilinadi", r.status_code == 200 and r.json()["src"] == "admin")
@@ -158,5 +159,14 @@ with client.websocket_connect("/ws", headers=LOCAL) as w:
 # --- urinishlarni cheklash (oxirida: IP bloklanadi)
 codes = [client.get("/cmd?c=S", headers={"host": "robot.example.com", "x-admin-token": "bad", "cf-connecting-ip": "9.9.9.9"}).status_code for _ in range(10)]
 check("ko'p noto'g'ri urinish: 429", codes[-1] == 429 and codes[0] == 401)
+
+# --- standart holat (QALQON_LOCAL_HOSTS yo'q): Host e'tiborga olinmaydi, faqat Cloudflare sarlavhalari
+_saved = os.environ.pop("QALQON_LOCAL_HOSTS")
+default = RemoteControl(arduino=FakeArduino())
+os.environ["QALQON_LOCAL_HOSTS"] = _saved
+check("standart: .lan hosti lokal (monitor buzilmaydi)", default.is_remote({"host": "qalqon.lan:8000"}) is False)
+check("standart: .local hosti lokal", default.is_remote({"host": "raspberrypi.local"}) is False)
+check("standart: IP hosti lokal", default.is_remote({"host": "192.168.1.50:8000"}) is False)
+check("standart: Cloudflare sarlavhasi masofaviy", default.is_remote({"host": "qalqon.lan", "cf-ray": "abc"}) is True)
 
 print(f"\n{passed} ta sinov o'tdi")
