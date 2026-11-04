@@ -13,26 +13,31 @@ export interface EdgeTtsOptions {
   pitch?: number;
 }
 
+// Audio yo'li sayt bazasiga nisbatan: GitHub Pages'da sayt /My-autnomius-car/ ichida turadi,
+// shuning uchun "/audio/..." (domen ildizi) 404 berib, brauzerning boshqa (ayol/ingliz) ovoziga tushib qolardi.
+const AUDIO_BASE = `${import.meta.env.BASE_URL}audio/`;
+const a = (file: string) => `${AUDIO_BASE}${file}`;
+
 // Oldindan Microsoft Edge TTS uz-UZ-SardorNeural 1x da tayyorlangan tiniq audiolarning xaritasi
 const PRE_RENDERED_SARDOR_AUDIO: Record<string, string> = {
   // Asosiy tanishuv / demo
-  "assalomu alaykum! men qalqon avtonom patrul robotiman. jamoat xavfsizligini ta'minlashga tayyorman!": "/audio/sardor_intro.mp3",
-  "assalomu alaykum men qalqon avtonom patrul robotiman": "/audio/sardor_intro.mp3",
+  "assalomu alaykum! men qalqon avtonom patrul robotiman. jamoat xavfsizligini ta'minlashga tayyorman!": a('sardor_intro.mp3'),
+  "assalomu alaykum men qalqon avtonom patrul robotiman": a('sardor_intro.mp3'),
 
   // Shaxs tasdiqlandi umumiy
-  "assalomu alaykum! qalqon tizimi shaxsingizni tasdiqladi.": "/audio/sardor_face_verified.mp3",
-  "assalomu alaykum qalqon tizimi shaxsingizni tasdiqladi": "/audio/sardor_face_verified.mp3",
+  "assalomu alaykum! qalqon tizimi shaxsingizni tasdiqladi.": a('sardor_face_verified.mp3'),
+  "assalomu alaykum qalqon tizimi shaxsingizni tasdiqladi": a('sardor_face_verified.mp3'),
 
   // Shaxslar bo'yicha
-  "sarvar": "/audio/sardor_greet_sarvar.mp3",
-  "asilbek": "/audio/sardor_greet_asilbek.mp3",
-  "boburjon": "/audio/sardor_greet_boburjon.mp3",
-  "zulfiddin": "/audio/sardor_greet_zulfiddin.mp3",
-  "muhammadali": "/audio/sardor_greet_muhammadali.mp3",
+  "sarvar": a('sardor_greet_sarvar.mp3'),
+  "asilbek": a('sardor_greet_asilbek.mp3'),
+  "boburjon": a('sardor_greet_boburjon.mp3'),
+  "zulfiddin": a('sardor_greet_zulfiddin.mp3'),
+  "muhammadali": a('sardor_greet_muhammadali.mp3'),
 
   // Ogohlantirishlar
-  "diqqat! hududda shubhali harakat aniqlandi.": "/audio/sardor_alert.mp3",
-  "patrul nazorati xizmati muvaffaqiyatli ishga tushirildi.": "/audio/sardor_patrol_active.mp3"
+  "diqqat! hududda shubhali harakat aniqlandi.": a('sardor_alert.mp3'),
+  "patrul nazorati xizmati muvaffaqiyatli ishga tushirildi.": a('sardor_patrol_active.mp3')
 };
 
 class EdgeTtsService {
@@ -119,10 +124,22 @@ class EdgeTtsService {
         audio.onended = handleDone;
         audio.onerror = () => {
           // Fayl ochilmasa fallbackga o'tamiz
+          console.warn('[EdgeTTS] Sardor audio fayli ochilmadi:', matchedAudioUrl);
           this.speakViaSpeechSynthesis(text, options, onStart, onEnd);
         };
 
-        audio.play().catch(() => {
+        audio.play().catch((err: unknown) => {
+          const name = err instanceof Error ? err.name : '';
+          if (name === 'NotAllowedError') {
+            // Brauzer foydalanuvchi teginmaguncha ovozni bloklaydi. Boshqa (ayol) ovozga o'tmaymiz:
+            // Sardor audiosi birinchi teginish/tugma bosilishida ijro etiladi.
+            this.isSpeaking = false;
+            this.currentAudio = null;
+            if (onEnd) onEnd();
+            this.playOnFirstGesture(audio);
+            return;
+          }
+          if (name === 'AbortError') return; // stop() chaqirilgan
           this.speakViaSpeechSynthesis(text, options, onStart, onEnd);
         });
         return;
@@ -197,7 +214,30 @@ class EdgeTtsService {
     }
   }
 
+  private pendingGestureAudio: HTMLAudioElement | null = null;
+
+  /** Autoplay bloklanganda audioni birinchi foydalanuvchi harakatida ijro etish */
+  private playOnFirstGesture(audio: HTMLAudioElement): void {
+    const hadPending = this.pendingGestureAudio !== null;
+    this.pendingGestureAudio = audio;
+    if (hadPending) return;
+    const events = ['pointerdown', 'keydown', 'touchstart'] as const;
+    const handler = () => {
+      events.forEach(ev => window.removeEventListener(ev, handler, true));
+      const pending = this.pendingGestureAudio;
+      this.pendingGestureAudio = null;
+      if (!pending || this.isSpeaking) return;
+      pending.onended = () => { this.isSpeaking = false; this.currentAudio = null; };
+      pending.onplay = () => { this.isSpeaking = true; };
+      this.currentAudio = pending;
+      pending.currentTime = 0;
+      pending.play().catch(() => { this.currentAudio = null; });
+    };
+    events.forEach(ev => window.addEventListener(ev, handler, { capture: true }));
+  }
+
   public stop(): void {
+    this.pendingGestureAudio = null;
     if (this.currentAudio) {
       try {
         this.currentAudio.pause();

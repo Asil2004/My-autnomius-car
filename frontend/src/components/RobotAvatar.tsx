@@ -54,36 +54,31 @@ const EYE_UPPER = 'M 316 633 Q 384 538 452 628';
 const EYE_LOWER = 'M 316 633 Q 384 696 452 628';
 const EYE_SHAPE = `${EYE_UPPER} Q 384 696 316 633 Z`;
 
-// ---- Erkak qiyofasi (asl rasm ustidan chiziladi, chap yarmi; o'ng yarmi ko'zgudagi aksi) ----
+// ---- Furajkadagi gerb ----
 const CAP = '#2e3a50'; // furajka rangi
-const HAIR = '#3b2a23';
 // Asl rasmdagi gerb chegarasi: x 446..578, y 250..385
 const BADGE_CX = 512;
 const BADGE_CY = 318;
 const GERB_W = 142;
 const GERB_H = (GERB_W * 563) / 577;
-// Jag'ni kengaytiruvchi bo'lak: yangi to'rtburchakroq chiziqdan asl kontur bo'ylab orqaga
-const JAW_WEDGE =
-  'M 268 745 Q 272 822 302 872 Q 338 926 420 952 L 440 950 ' +
-  'L 393 920 L 368 900 L 346 880 L 327 860 L 310 840 L 297 820 L 289 800 L 281 780 L 274 760 Z';
-const SIDEBURN = 'M 242 560 L 276 560 L 282 734 Q 268 744 255 732 L 246 650 Z';
-const BROW = 'M 297 560 Q 294 530 330 513 Q 386 494 464 506 L 466 548 Q 402 540 346 549 Q 318 554 297 560 Z';
-const STUBBLE =
-  'M 276 768 Q 282 850 312 888 Q 352 940 430 958 Q 512 970 594 958 Q 672 940 712 888 Q 742 850 748 768 ' +
-  'Q 712 790 668 784 Q 640 772 600 766 Q 512 758 424 766 Q 384 772 356 784 Q 312 790 276 768 Z';
 
-const MaleFeatures: React.FC = () => (
+// ---- Erkak lablari ----
+// Erkak lab ranglari: qizil emas, teriga yaqin jigarrang
+const LIP_UPPER = '#8a5a48';
+const LIP_LOWER = '#94634f';
+// Yopiq og'iz chizig'i animatsiyadagi yuqori lab bilan bir xil geometriyada (ochilishda sakrash bo'lmaydi)
+const CLOSED_HW = MOUTH_HALF * 0.96;
+const CLOSED_LIP = `M ${MID_X - CLOSED_HW} ${MOUTH_Y} Q ${MID_X} ${2 * MOUTH_MID_Y - MOUTH_Y} ${MID_X + CLOSED_HW} ${MOUTH_Y}`;
+
+const BadgeAndLips: React.FC = () => (
   <g>
     <defs>
-      <filter id="maleSoft" x="-20%" y="-20%" width="140%" height="140%">
-        <feGaussianBlur stdDeviation="6" />
-      </filter>
-      <filter id="maleSoftSm" x="-10%" y="-10%" width="120%" height="120%">
+      <filter id="badgeSoft" x="-10%" y="-10%" width="120%" height="120%">
         <feGaussianBlur stdDeviation="2" />
       </filter>
     </defs>
     {/* Furajkadagi eski gerbni yopish va O'zbekiston Respublikasi gerbini qo'yish */}
-    <ellipse cx={BADGE_CX} cy={BADGE_CY} rx="78" ry="80" fill={CAP} filter="url(#maleSoftSm)" />
+    <ellipse cx={BADGE_CX} cy={BADGE_CY} rx="78" ry="80" fill={CAP} filter="url(#badgeSoft)" />
     <image
       href={gerbUrl}
       x={BADGE_CX - GERB_W / 2}
@@ -92,37 +87,17 @@ const MaleFeatures: React.FC = () => (
       height={GERB_H}
       preserveAspectRatio="xMidYMid meet"
     />
-    {[false, true].map(mirror => (
-      <g key={String(mirror)} transform={mirror ? `translate(${MID_X * 2} 0) scale(-1 1)` : undefined}>
-        <path d={JAW_WEDGE} fill={SKIN} />
-        <path d={SIDEBURN} fill={HAIR} />
-      </g>
-    ))}
-    {/* Soqol o'rni (yengil soya) va iyak ostidagi jag' chizig'i */}
-    <path d={STUBBLE} fill="#2b1d18" opacity="0.14" filter="url(#maleSoft)" />
+    {/* Rasmdagi qizil (ayolona) lab chizig'ini teri bilan yopib, o'rniga erkak lab chizig'i */}
+    <path d={CLOSED_LIP} fill="none" stroke={SKIN} strokeWidth="16" strokeLinecap="round" />
+    <path d={CLOSED_LIP} fill="none" stroke={LIP_UPPER} strokeWidth="4" strokeLinecap="round" />
     <path
-      d="M 300 874 Q 340 930 420 955 Q 512 975 604 955 Q 684 930 724 874"
+      d={`M ${MID_X - 40} ${MOUTH_MID_Y + 14} Q ${MID_X} ${MOUTH_MID_Y + 24} ${MID_X + 40} ${MOUTH_MID_Y + 14}`}
       fill="none"
-      stroke="#7d5644"
-      strokeOpacity="0.4"
-      strokeWidth="9"
+      stroke={LIP_LOWER}
+      strokeOpacity="0.35"
+      strokeWidth="3"
       strokeLinecap="round"
-      filter="url(#maleSoftSm)"
     />
-    {/* Burun */}
-    <path d="M 498 698 Q 489 732 502 743 Q 512 749 525 742" fill="none" stroke="#956a54" strokeOpacity="0.5" strokeWidth="4.5" strokeLinecap="round" />
-    {/* Qalin, to'g'ri qoshlar */}
-    {[false, true].map(mirror => (
-      <path
-        key={`brow-${mirror}`}
-        d={BROW}
-        fill={HAIR}
-        stroke={HAIR}
-        strokeWidth="3"
-        strokeLinejoin="round"
-        transform={mirror ? `translate(${MID_X * 2} 0) scale(-1 1)` : undefined}
-      />
-    ))}
   </g>
 );
 
@@ -151,8 +126,8 @@ const Eye: React.FC<{ id: string; irisRef: React.RefObject<SVGGElement | null>; 
         <path d={EYE_UPPER} fill="none" stroke="#000" strokeOpacity="0.18" strokeWidth="16" />
       </g>
       <path d={EYE_LOWER} fill="none" stroke="#5b3f33" strokeOpacity="0.55" strokeWidth="2.5" strokeLinecap="round" />
-      <path d={EYE_UPPER} fill="none" stroke="#101010" strokeWidth="11" strokeLinecap="round" />
-      <path d="M 320 631 Q 308 628 298 617" fill="none" stroke="#101010" strokeWidth="7" strokeLinecap="round" />
+      {/* Erkak kipriklari: ingichka, uchi yuqoriga qayrilmagan (ayolona "qanot" olib tashlangan) */}
+      <path d={EYE_UPPER} fill="none" stroke="#1d1611" strokeWidth="6.5" strokeLinecap="round" />
     </g>
   </g>
 );
@@ -331,7 +306,7 @@ export const RobotAvatar: React.FC<RobotAvatarProps> = ({ inputRef }) => {
       <div ref={rootRef} style={{ height: 'min(94%, 1100px)', aspectRatio: '1024 / 1280', willChange: 'transform' }}>
         <svg viewBox="0 0 1024 1280" className="w-full h-full block" role="img">
           <image href={baseUrl} x="0" y="0" width="1024" height="1280" />
-          <MaleFeatures />
+          <BadgeAndLips />
           <Eye id="eyeL" irisRef={irisL} lidRef={lidL} />
           <Eye id="eyeR" irisRef={irisR} lidRef={lidR} mirror />
           {/* Og'iz bo'shlig'i, tishlar, til va lablar (yopiq paytda yashirin, asl lab chizig'i ko'rinadi) */}
@@ -345,8 +320,8 @@ export const RobotAvatar: React.FC<RobotAvatarProps> = ({ inputRef }) => {
               <ellipse ref={tongueRef} cx={MID_X} cy={MOUTH_MID_Y} rx="40" ry="8" fill="#c2566a" />
               <path ref={teethRef} d="" fill="#f4f1ea" />
             </g>
-            <path ref={upperLipRef} d="" fill="none" stroke="#a65b47" strokeWidth="4.5" strokeLinecap="round" />
-            <path ref={lowerLipRef} d="" fill="none" stroke="#b5664f" strokeWidth="5.5" strokeLinecap="round" />
+            <path ref={upperLipRef} d="" fill="none" stroke={LIP_UPPER} strokeWidth="4" strokeLinecap="round" />
+            <path ref={lowerLipRef} d="" fill="none" stroke={LIP_LOWER} strokeWidth="4.5" strokeLinecap="round" />
           </g>
         </svg>
       </div>
