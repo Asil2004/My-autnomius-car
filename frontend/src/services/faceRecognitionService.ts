@@ -595,7 +595,12 @@ class FaceRecognitionEngine {
    */
   public async identifyPeople(
     video: HTMLVideoElement,
-    personBoxes: PersonBox[]
+    personBoxes: PersonBox[],
+    /**
+     * voteMissingFace: ramkada yuz topilmagan kadr "hech kim" ovozi sifatida yoziladi. Qulf ekrani butun kadrni
+     * doimiy ramka sifatida beradi: odam ketganda eski ovozlar o'chib, keyingi odamga oldingi ism chiqmasligi uchun.
+     */
+    opts: { voteMissingFace?: boolean } = {}
   ): Promise<PersonIdentity[]> {
     const asPiyoda = (box: PersonBox): PersonIdentity => ({
       box, person: null, confidence: null, faceFound: false, faceBox: null, eyes: null, fromFaceOnly: false, faceScore: null
@@ -676,6 +681,9 @@ class FaceRecognitionEngine {
         track.votes.push(person && accepted ? person.id : null);
         if (track.votes.length > LIVE_VOTE_WINDOW) track.votes.shift();
         if (person && accepted) track.lastDistance = distance;
+      } else if (opts.voteMissingFace) {
+        track.votes.push(null);
+        if (track.votes.length > LIVE_VOTE_WINDOW) track.votes.shift();
       }
       const id = this.resolveTrack(track);
       const person = id ? this.database.find((p) => p.id === id) ?? null : null;
