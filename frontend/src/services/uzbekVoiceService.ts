@@ -18,6 +18,7 @@ export interface UzbekVoiceConfig {
 
 const STORAGE_KEY = 'qalqon_uzbekvoice_api_key';
 const ENDPOINT_KEY = 'qalqon_uzbekvoice_endpoint';
+export const DEFAULT_UZBEKVOICE_API_KEY = '4a3c6d14-77b1-4758-852a-70468a800e3b:a3a4bd8a-7f6d-4a4c-81ad-7ce2af0db63c';
 
 export interface TranscriptionResult {
   text: string;
@@ -31,11 +32,12 @@ class UzbekVoiceService {
   private audioChunks: Blob[] = [];
 
   /**
-   * Saqlangan API kalitni olish
+   * Saqlangan yoki standart API kalitni olish
    */
   public getApiKey(): string {
-    if (typeof window === 'undefined') return '';
-    return localStorage.getItem(STORAGE_KEY) || '';
+    if (typeof window === 'undefined') return DEFAULT_UZBEKVOICE_API_KEY;
+    const saved = localStorage.getItem(STORAGE_KEY);
+    return saved !== null && saved !== '' ? saved : DEFAULT_UZBEKVOICE_API_KEY;
   }
 
   /**
