@@ -12,9 +12,15 @@
  * 6. Hech biri bo'lmasa: robot buni ochiq aytadi (bir xil "men robotman" javobini takrorlamaydi).
  */
 
-import { findLegalAnswer, isLegalQuestion, LEGAL_ENTRIES } from './legalKnowledge';
-import { findQa } from './localKnowledge';
+import { findLegalAnswer, isLegalQuestion, looksLikeQuestion, LEGAL_ENTRIES } from './legalKnowledge';
+import { findQa, isRightsEntry } from './localKnowledge';
 import { answerCache } from './answerCache';
+import { OFFICER_CONDUCT, RIGHTS_QA } from './rightsKnowledge';
+
+// Favqulodda holat (102) belgilari
+const EMERGENCY_RE = /\b102\b|yordam\s*(ber|kerak|qiling)|qutqar|hujum|o'g'ri|ogri\b|o'g'irla|bezori|pichoq|qurol|urishyapti|xavf ostida|xavfdaman/;
+// Hozir sodir bo'layotgan xavf: savol shaklida bo'lsa ham huquqiy ma'lumot emas, darhol SOS
+const ACTIVE_EMERGENCY_RE = /qutqar|yordam\s*(ber|kerak|qiling)|hujum qil|urishyapti|xavf ostida|xavfdaman|o'ldir|otyapti|pichoq bilan/;
 
 const GEMINI_KEY_STORAGE = 'qalqon_gemini_api_key';
 // gemini-1.5-flash o'chirilgan (404). Avval doimiy yangilanadigan taxallus, keyin aniq versiyalar
@@ -107,12 +113,22 @@ class AiDialogService {
     const greet = greeted ? 'Va alaykum assalom! ' : '';
     if (!t) {
       return {
-        answer: "Va alaykum assalom! Men QALQON patrul robotiman. Sizga qanday yordam bera olaman?",
+        answer: "Va alaykum assalom, hurmatli fuqaro! Men QALQON patrul robotiman. Sizga qanday yordam bera olaman?",
         source: 'local_brain'
       };
     }
 
-    // 2. Huquqiy savol (savol shaklida, favqulodda chaqiruv emas) SOS dan oldin
+    // 2a. Fuqaro va xodim huquq-burchlari (IIO qonuni, Konstitutsiya). "Qurol ishlatishi mumkinmi" kabi savol
+    // SOS emas: savol shaklida bo'lsa yoki favqulodda so'z bo'lmasa, aniq mos kelgan huquqiy javob beriladi.
+    const qa = findQa(t);
+    if (
+      qa && qa.score >= QA_STRONG && isRightsEntry(qa.entry) && !ACTIVE_EMERGENCY_RE.test(t) &&
+      (looksLikeQuestion(t) || !EMERGENCY_RE.test(t))
+    ) {
+      return { answer: greet + qa.entry.a, source: 'local_brain' };
+    }
+
+    // 2b. Huquqiy savol (savol shaklida, favqulodda chaqiruv emas) SOS dan oldin
     const legalAnswer = isLegalQuestion(t) ? findLegalAnswer(t) : null;
     if (legalAnswer) return { answer: greet + legalAnswer, source: 'local_brain' };
 
@@ -125,7 +141,7 @@ class AiDialogService {
       };
     }
     // Favqulodda holat: 102
-    if (has(t, /\b102\b|yordam\s*(ber|kerak|qiling)|qutqar|hujum|o'g'ri|ogri\b|o'g'irla|bezori|pichoq|qurol|urishyapti|xavf ostida|xavfdaman/)) {
+    if (has(t, EMERGENCY_RE)) {
       return {
         answer: "Diqqat! 102 Tezkor Yordam xizmati xabardor qilinmoqda. Xotirjamlikni saqlang, xodimlar yo'lda! Agar imkoningiz bo'lsa, o'zingiz ham 102 raqamiga qo'ng'iroq qiling.",
         action: 'SOS_102',
@@ -152,7 +168,6 @@ class AiDialogService {
     if (local) return { ...local, answer: greet + local.answer };
 
     // 6. Lokal savol-javob bazasi (oflayn): aniq mos kelsa darhol
-    const qa = findQa(t);
     if (qa && qa.score >= QA_STRONG) return { answer: greet + qa.entry.a, source: 'local_brain' };
 
     // 7. Kesh: oldin Gemini javob bergan shu yoki juda o'xshash savol (internetsiz ham ishlaydi)
@@ -237,7 +252,7 @@ class AiDialogService {
 
   /** Gemini orqali erkin o'zbekcha javob (suhbat tarixi va robot bilimlari bilan) */
   private async askGemini(prompt: string, apiKey: string): Promise<string> {
-    const legalRef = LEGAL_ENTRIES.map((e) => `- ${e.answer}`).join('\n');
+    const legalRef = [...LEGAL_ENTRIES.map((e) => e.answer), ...RIGHTS_QA.map((e) => e.a)].map((a) => `- ${a}`).join('\n');
     const systemInstruction =
       "Sen QALQON v1.0 — O'zbekistondagi jamoat xavfsizligi patrul robotisan. Seni Navoiy viloyati IIB, Navoiy davlat universiteti va " +
       'Navoiy davlat konchilik va texnologiyalar universiteti talabalari (Asilbek, Boburjon, Sarvar, Zulfiddin, Muhammadali) yaratgan. ' +
@@ -246,6 +261,7 @@ class AiDialogService {
       "2. Xushmuomala, aniq, xavfsizlik xodimi uslubida gapir. Bilmasang, bilmasligingni ayt, to'qib chiqarma.\n" +
       "3. Favqulodda holatda darhol 102 ga qo'ng'iroq qilishni maslahat ber.\n" +
       "4. Huquqiy savollarda faqat quyidagi tekshirilgan ma'lumotlarga tayan, boshqa modda raqamlarini o'ylab topma; aniq holat uchun advokat yoki lex.uz ni tavsiya qil.\n" +
+      `${OFFICER_CONDUCT}\n` +
       `Tekshirilgan huquqiy ma'lumotlar:\n${legalRef}`;
 
     const contents = [

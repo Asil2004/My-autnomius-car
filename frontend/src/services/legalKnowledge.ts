@@ -139,18 +139,23 @@ export const LEGAL_ENTRIES: LegalEntry[] = [
 const LEGAL_INTENT = ['qonun', 'modda', 'kodeks', 'huquq', 'javobgarlik', 'jarima', 'jazo', 'taqiqlan', 'qonuniy'];
 
 export const LEGAL_GENERAL_ANSWER =
-  "Men Konstitutsiya, Jinoyat, Jinoyat-protsessual, Jinoyat-ijroiya va Oila kodekslari, \"Ichki ishlar organlari to'g'risida\"gi qonun hamda Prezidentning PQ-155 va PQ-59 qarorlari bo'yicha qisqa ma'lumot bera olaman. Masalan, shaxsiy ma'lumotlar, ushlab turish, bezorilik yoki dronlar haqida so'rang.";
+  "Men Konstitutsiya, Jinoyat, Jinoyat-protsessual, Jinoyat-ijroiya va Oila kodekslari, \"Ichki ishlar organlari to'g'risida\"gi qonun hamda Prezidentning PQ-155 va PQ-59 qarorlari bo'yicha qisqa ma'lumot bera olaman. Masalan, politsiya to'xtatganda huquqlaringiz, ushlab turish, fuqarolarning burchlari yoki xodim ustidan shikoyat haqida so'rang.";
 
 /** Savol (ma'lumot so'rash) belgilari: shunda "bezorilik" kabi so'z SOS emas, huquqiy savol deb tushuniladi */
 const QUESTION_HINTS = ['qanday', 'nima', 'qaysi', 'mumkinmi', 'haqida', 'bormi', 'nechta', 'qachon', 'kim ', 'qonun', 'modda', 'jazo', 'huquq'];
 /** Haqiqiy favqulodda holat: bunda huquqiy ma'lumot emas, darhol SOS */
 const HARD_EMERGENCY = /102|qutqar|hujum|yordam ber|tez yordam|xavf ostida|urishyapti|pichoq|qurol/;
 
+/** Matn savol shaklidami (favqulodda so'zlarni tekshirmaydi) */
+export function looksLikeQuestion(text: string): boolean {
+  const t = normalizeForLegal(text);
+  return QUESTION_HINTS.some((w) => t.includes(w)) || t.endsWith('mi');
+}
+
 /** Matn ma'lumot so'rash (savol) bo'lib, favqulodda chaqiruv emasmi */
 export function isLegalQuestion(text: string): boolean {
-  const t = normalizeForLegal(text);
-  if (HARD_EMERGENCY.test(t)) return false;
-  return QUESTION_HINTS.some((w) => t.includes(w)) || t.endsWith('mi');
+  if (HARD_EMERGENCY.test(normalizeForLegal(text))) return false;
+  return looksLikeQuestion(text);
 }
 
 /** Matnni solishtirish uchun normallashtirish: kichik harf, apostroflarsiz, ortiqcha bo'shliqlarsiz */

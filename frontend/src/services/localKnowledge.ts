@@ -7,6 +7,7 @@
  */
 
 import { tokens, tokenMatch } from './textMatch';
+import { RIGHTS_QA } from './rightsKnowledge';
 
 export interface QaEntry {
   id: string;
@@ -15,7 +16,7 @@ export interface QaEntry {
   a: string;
 }
 
-export const QA_ENTRIES: QaEntry[] = [
+const BASE_QA: QaEntry[] = [
   // ---------------- Favqulodda raqamlar va yordam ----------------
   {
     id: 'raqamlar',
@@ -207,7 +208,7 @@ export const QA_ENTRIES: QaEntry[] = [
   {
     id: 'haqorat',
     q: ['sen ahmoqsan', 'sen keraksizsan', 'jim bol', 'yoqol bu yerdan', 'sen tentaksan'],
-    a: "Tushundim. Agar biror narsa yoqmagan bo'lsa, uzr. Kerak bo'lsam, shu yerdaman."
+    a: "Hurmatli fuqaro, keling, bir-birimizni hurmat qilib gaplashaylik. Biror narsa yoqmagan bo'lsa, uzr. Men sizga yordam berish uchun shu yerdaman."
   },
   {
     id: 'kim-kuzatyapti',
@@ -254,6 +255,13 @@ export const QA_ENTRIES: QaEntry[] = [
     a: "Muzli yo'lda sekin, kichik qadamlar bilan yuring, qo'llaringizni cho'ntakda ushlamang va sirpanchiq poyabzal kiymang."
   }
 ];
+
+/** Umumiy mavzular + fuqarolar va xodimlarning huquq-burchlari (rightsKnowledge) */
+export const QA_ENTRIES: QaEntry[] = [...BASE_QA, ...RIGHTS_QA];
+
+const RIGHTS_IDS = new Set(RIGHTS_QA.map((e) => e.id));
+/** Mavzu huquq-burchlar bazasidanmi */
+export const isRightsEntry = (entry: QaEntry) => RIGHTS_IDS.has(entry.id);
 
 // ---------------------------------------------------------------------------
 // Moslash: so'z o'zaklari + IDF og'irligi
