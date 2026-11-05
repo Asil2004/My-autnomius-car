@@ -7,6 +7,7 @@ import {
   ChevronsDown,
   ChevronsUp,
   LogOut,
+  Mic,
   RotateCcw,
   RotateCw,
   ShieldCheck,
@@ -439,6 +440,32 @@ export const AdminPanelView: React.FC<AdminPanelViewProps> = ({ link, onExit }) 
               Tugmani ushlab turing: qo'yib yuborsangiz robot to'xtaydi. Klaviatura: <span className="text-police-cyan">W A S D Q E</span>, Space/Esc
               (STOP).
             </p>
+          </div>
+
+          <div className="rounded-xl border border-tactical-700 bg-tactical-900 p-3 text-xs flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="font-semibold text-slate-100 flex items-center gap-1.5">
+                <Mic className="w-3.5 h-3.5 text-police-cyan" /> Ovozli yordamchi
+              </div>
+              <div className="text-[11px] text-slate-400">
+                {!telemetry?.assistant
+                  ? "Holat yo'q"
+                  : telemetry.assistant.enabled
+                  ? `Robot "Qalqon" deyilishini tinglayapti (baza: ${telemetry.assistant.kb_chunks} modda)`
+                  : "O'chiq"}
+              </div>
+            </div>
+            <button
+              disabled={!telemetry?.assistant}
+              onClick={() => void link.setAssistantEnabled(!telemetry?.assistant?.enabled)}
+              aria-pressed={!!telemetry?.assistant?.enabled}
+              data-assistant-toggle
+              className={`shrink-0 px-3 py-1.5 rounded-lg border font-semibold transition-colors disabled:opacity-40 ${
+                telemetry?.assistant?.enabled ? 'bg-police-blue border-police-blue text-white' : 'bg-tactical-850 border-tactical-600 text-slate-300'
+              }`}
+            >
+              {telemetry?.assistant?.enabled ? 'Yoqilgan' : "O'chiq"}
+            </button>
           </div>
 
           <div className="rounded-xl border border-tactical-700 bg-tactical-900 p-3 text-xs">

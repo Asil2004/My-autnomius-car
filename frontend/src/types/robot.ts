@@ -121,3 +121,32 @@ export interface RemoteStatus {
   last: RemoteEvent | null;
   events: RemoteEvent[];
 }
+
+/** Ovozli yordamchi holati (raspberry_pi/assistant.py), Pi telemetriyasidan */
+export interface AssistantStatus {
+  enabled: boolean;
+  wake_word: string;
+  kb_chunks: number;
+  kb_ready: boolean;
+  /** Pi da Gemini kaliti o'rnatilgan */
+  llm: boolean;
+  busy: boolean;
+  last: { t: number; found: boolean } | null;
+}
+
+export interface AssistantSource {
+  title: string;
+  article: string;
+  url: string;
+  score: number;
+}
+
+export interface AssistantAnswer {
+  status: 'ok';
+  answer: string;
+  found: boolean;
+  sources: AssistantSource[];
+  disclaimer: string;
+  audio_url: string | null;
+  t: number;
+}

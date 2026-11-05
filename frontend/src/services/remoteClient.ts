@@ -1,4 +1,4 @@
-import type { MecanumCommand, RemoteStatus } from '../types/robot';
+import type { AssistantStatus, MecanumCommand, RemoteStatus } from '../types/robot';
 
 /**
  * Masofaviy admin ulanishi: internet orqali (Cloudflare Tunnel) Raspberry Pi ga.
@@ -19,6 +19,7 @@ export interface RemoteTelemetry {
   is_front_blocked?: boolean;
   watchdog?: { failsafe_active?: boolean; heartbeat_age_ms?: number };
   remote?: RemoteStatus;
+  assistant?: AssistantStatus;
 }
 
 /** "abc.trycloudflare.com/" -> "https://abc.trycloudflare.com". Yo'l va oxirgi slash olib tashlanadi */
@@ -126,6 +127,16 @@ export class RemoteLink {
       await this.request(`/cmd?speed=${level}`, 2000);
     } catch {
       // tezlik o'zgarmaydi, keyingi telemetriya haqiqiy qiymatni ko'rsatadi
+    }
+  }
+
+  /** Ovozli yordamchini yoqish/o'chirish (robotdagi planshet Pi telemetriyasidan o'qib, tinglashni boshlaydi/to'xtatadi) */
+  async setAssistantEnabled(on: boolean): Promise<AssistantStatus | null> {
+    try {
+      const res = await this.request(`/api/assistant/enable?on=${on ? 1 : 0}`, 3000);
+      return res.ok ? ((await res.json()) as AssistantStatus) : null;
+    } catch {
+      return null;
     }
   }
 

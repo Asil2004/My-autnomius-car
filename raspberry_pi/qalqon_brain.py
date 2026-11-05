@@ -47,6 +47,7 @@ from camera_module import CameraModule
 from arduino_bridge import ArduinoBridge
 from watchdog_daemon import QalqonWatchdogDaemon
 from remote_control import RemoteControl
+from assistant import Assistant, install_routes as install_assistant_routes
 
 START_TIME = time.time()
 
@@ -60,6 +61,8 @@ arduino = ArduinoBridge()
 watchdog = QalqonWatchdogDaemon(arduino_bridge=arduino, failsafe_timeout_sec=0.65)
 # Masofaviy admin boshqaruvi (internet/Cloudflare Tunnel orqali). Token: QALQON_ADMIN_TOKEN muhit o'zgaruvchisi
 remote = RemoteControl(arduino=arduino, watchdog=watchdog)
+# Ovozli yordamchi (lex.uz bazasi + Gemini + Sardor ovozi). Kalit: QALQON_GEMINI_API_KEY
+assistant = Assistant()
 
 # Boshqaruv rejimi: faqat qo'lda boshqaruv va xavfsizlik nazorati
 patrol_mode = "MANUAL"
@@ -160,6 +163,9 @@ def video_feed():
         mjpeg_frame_generator(),
         media_type="multipart/x-mixed-replace; boundary=frame"
     )
+
+install_assistant_routes(app, assistant)
+
 
 @app.get("/cmd")
 def handle_command(request: Request, c: Optional[str] = None, speed: Optional[int] = None):
@@ -320,6 +326,7 @@ def get_telemetry():
             "obstacle_warning": is_blocked
         },
         "remote": remote.status(),
+        "assistant": assistant.status(),
         "sonars": sonars,
         "battery": battery,
         "lidar": {

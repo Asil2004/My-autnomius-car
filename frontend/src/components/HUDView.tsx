@@ -169,7 +169,9 @@ export const HUDView: React.FC = () => {
     toggleGPSMode,
     addLog,
     remote,
-    setRemoteAllowed
+    setRemoteAllowed,
+    assistant,
+    setAssistantEnabled
   } = useRobot();
 
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -1937,6 +1939,32 @@ export const HUDView: React.FC = () => {
                 <SonarChip side="rear" label="ORQA" pins="TRIG A2, ECHO A3" value={sonars.rear} />
                 <SonarChip side="left" label="CHAP" value={sonars.left} />
                 <SonarChip side="right" label="O'NG" value={sonars.right} />
+              </div>
+
+              {/* Ovozli yordamchi: yoqilsa robot yuzi "Qalqon" deb chaqirilganda lex.uz bazasidan savolga javob beradi */}
+              <div className="rounded-lg border border-tactical-700 bg-tactical-850 px-3 py-2 text-xs flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="font-semibold text-slate-100">Ovozli yordamchi</div>
+                  <div className="text-[11px] text-slate-400">
+                    {!assistant
+                      ? "Holat noma'lum (Pi ulanmagan)"
+                      : !assistant.kb_ready
+                      ? 'Bilim bazasi yuklanmoqda...'
+                      : `Baza: ${assistant.kb_chunks} modda${assistant.llm ? '' : ", Gemini kaliti yo'q (faqat modda matni)"}`}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setAssistantEnabled(!assistant?.enabled)}
+                  aria-pressed={!!assistant?.enabled}
+                  data-assistant-toggle
+                  className={`shrink-0 px-3 py-1.5 rounded-lg border font-semibold transition-colors ${
+                    assistant?.enabled
+                      ? 'bg-police-blue border-police-blue text-white'
+                      : 'bg-tactical-900 border-tactical-600 text-slate-300'
+                  }`}
+                >
+                  {assistant?.enabled ? 'Yoqilgan' : "O'chiq"}
+                </button>
               </div>
 
               {/* Masofaviy admin kaliti: robot yonidagi operator internet orqali boshqaruvni o'chira oladi (STOP baribir ishlaydi) */}

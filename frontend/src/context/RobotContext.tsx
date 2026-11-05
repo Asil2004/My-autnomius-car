@@ -11,7 +11,8 @@ import type {
   PatrolMode,
   SystemStatus,
   GPSState,
-  RemoteStatus
+  RemoteStatus,
+  AssistantStatus
 } from '../types/robot';
 import { tacticalAudio } from '../services/audioService';
 
@@ -35,6 +36,10 @@ interface RobotContextType {
   // Masofaviy admin (internet orqali, 2-planshet): Pi telemetriyasidan
   remote: RemoteStatus | null;
   setRemoteAllowed: (allowed: boolean) => void;
+
+  // Ovozli yordamchi (lex.uz bazasi): holat Pi da saqlanadi, telemetriya orqali tarqaladi
+  assistant: AssistantStatus | null;
+  setAssistantEnabled: (on: boolean) => void;
   setSpeedLevel: (lvl: SpeedLevel) => void;
   isMoving: boolean;
   
@@ -105,6 +110,8 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   
   const [lastCommand, setLastCommand] = useState<MecanumCommand>('S');
   const [remote, setRemote] = useState<RemoteStatus | null>(null);
+  // Pi ulanmagan (simulyatsiya) paytida yordamchi holati shu yerda lokal saqlanadi
+  const [assistant, setAssistant] = useState<AssistantStatus | null>(null);
   const lastAdminLogRef = useRef({ cmd: '', t: 0 });
   const [speedLevel, setSpeedLevelState] = useState<SpeedLevel>(2);
   const [isMoving, setIsMoving] = useState<boolean>(false);
@@ -555,6 +562,7 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 timestamp: Date.now()
               }));
             }
+            if (d.assistant) setAssistant(d.assistant as AssistantStatus);
             if (d.remote) {
               const r = d.remote as RemoteStatus;
               setRemote(r);
@@ -660,6 +668,61 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     [addLog, isSimulationMode, system.rpiIp, system.rpiPort]
   );
 
+  // Yordamchi holati Pi da saqlanadi. Real rejimda u telemetriya orqali keladi. Simulyatsiya rejimida (sahifa qayta yuklangandan
+  // keyin standart) Pi ga ulanish mumkin bo'lsa, holat siyrak so'raladi: shunda qulf ekrani tinglashni davom ettiradi.
+  useEffect(() => {
+    if (!isSimulationMode) return;
+    let alive = true;
+    const poll = () => {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 2500);
+      fetch(`http://${system.rpiIp}:${system.rpiPort}/api/assistant/status`, { signal: ctrl.signal })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((st) => {
+          if (alive && st) setAssistant(st as AssistantStatus);
+        })
+        .catch(() => undefined)
+        .finally(() => clearTimeout(t));
+    };
+    poll();
+    const id = setInterval(poll, 10000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [isSimulationMode, system.rpiIp, system.rpiPort]);
+
+  // Yordamchini yoqish/o'chirish: Pi ga yoziladi (admin panel ham shu holatni o'zgartiradi). Pi ulanmagan simulyatsiyada lokal holat
+  const setAssistantEnabled = useCallback(
+    (on: boolean) => {
+      const local = () => {
+        setAssistant((prev) => ({
+          enabled: on,
+          wake_word: 'qalqon',
+          kb_chunks: prev?.kb_chunks ?? 0,
+          kb_ready: prev?.kb_ready ?? false,
+          llm: prev?.llm ?? false,
+          busy: false,
+          last: prev?.last ?? null
+        }));
+        addLog('SYSTEM', 'info', `Ovozli yordamchi ${on ? 'yoqildi' : "o'chirildi"} (Pi ulanmagan, faqat shu qurilmada).`);
+      };
+      fetch(`http://${system.rpiIp}:${system.rpiPort}/api/assistant/enable?on=${on ? 1 : 0}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((st) => {
+          if (st) {
+            setAssistant(st as AssistantStatus);
+            addLog('SYSTEM', 'info', `Ovozli yordamchi ${on ? 'yoqildi' : "o'chirildi"}.`);
+          } else if (isSimulationMode) local();
+        })
+        .catch(() => {
+          if (isSimulationMode) local();
+          else addLog('RPI', 'error', "Ovozli yordamchi holatini o'zgartirib bo'lmadi: Pi ga ulanib bo'lmadi.");
+        });
+    },
+    [addLog, isSimulationMode, system.rpiIp, system.rpiPort]
+  );
+
   const setRpiConfig = (ip: string, port: number) => {
     setSystem((prev) => ({ ...prev, rpiIp: ip, rpiPort: port }));
     addLog('SYSTEM', 'info', `RPi konfiguratsiyasi yangilandi: ${ip}:${port}`);
@@ -675,6 +738,8 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         sendMecanumCommand,
         remote,
         setRemoteAllowed,
+        assistant,
+        setAssistantEnabled,
         setSpeedLevel,
         isMoving,
         sonars,

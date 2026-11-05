@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from remote_control import RemoteControl
+from assistant import Assistant, install_routes as install_assistant_routes
 
 START = time.time()
 
@@ -51,6 +52,7 @@ class MockArduino:
 
 arduino = MockArduino()
 remote = RemoteControl(arduino=arduino)
+assistant = Assistant()
 app = FastAPI(title="Qalqon Mock Pi")
 remote.install(app)  # CORS dan oldin
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -69,11 +71,15 @@ def telemetry() -> dict:
             "obstacle_warning": arduino.sonars["front"] <= 25,
         },
         "remote": remote.status(),
+        "assistant": assistant.status(),
         "sonars": arduino.sonars,
         "battery": {"voltage": 12.4, "percentage": 83, "current": 1.2, "temp": 31, "isCharging": False},
         "watchdog": {"failsafe_active": False, "heartbeat_age_ms": 0},
         "logs": arduino.logs[-8:],
     }
+
+
+install_assistant_routes(app, assistant)
 
 
 @app.get("/cmd")

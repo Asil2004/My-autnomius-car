@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Lock, Unlock, Camera, CameraOff, Volume2, ShieldCheck } from 'lucide-react';
+import { Lock, Unlock, Camera, CameraOff, Volume2, ShieldCheck, Mic, MicOff, Send } from 'lucide-react';
 import { faceRecognitionService } from '../services/faceRecognitionService';
 import { tacticalAudio } from '../services/audioService';
 import { edgeTtsService } from '../services/edgeTtsService';
 import { RobotAvatar, type EyeInput } from './RobotAvatar';
+import { useRobot } from '../context/RobotContext';
+import { useVoiceAssistant } from '../hooks/useVoiceAssistant';
 
 interface RobotFaceViewProps {
   onUnlockRequest: () => void;
@@ -30,6 +32,15 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
 
   // Ko'zlar shu ref dan o'qiydi (har kadrda React qayta chizilmaydi)
   const eyeInputRef = useRef<EyeInput>({ faceX: 0, faceY: 0, hasFace: false, speech: 0, happy: false });
+
+  // Ovozli yordamchi: yoqish/o'chirish Pi da (panel va admin paneldan). "Qalqon" deb chaqirilganda savolga javob beradi
+  const { assistant, system } = useRobot();
+  const voice = useVoiceAssistant({
+    enabled: !!assistant?.enabled,
+    baseUrl: `http://${system.rpiIp}:${system.rpiPort}`,
+    eyeInputRef
+  });
+  const [typedQuestion, setTypedQuestion] = useState('');
 
   // Yuz bazasi va neyron modellarini fonda tayyorlash (yengil: shader isitishsiz)
   useEffect(() => {
@@ -190,7 +201,14 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
 
   return (
     <div className="relative w-full h-full bg-tactical-950 overflow-hidden select-none">
-      <RobotAvatar inputRef={eyeInputRef} />
+      {/* Javob kartasi ochilganda yuz chetga suriladi, shunda ko'zlar va og'iz yopilib qolmaydi */}
+      <div
+        className={`absolute inset-0 transition-transform duration-300 ${
+          voice.question || voice.result ? 'lg:-translate-x-[14%] max-lg:-translate-y-[16%] max-lg:scale-[0.7]' : ''
+        }`}
+      >
+        <RobotAvatar inputRef={eyeInputRef} />
+      </div>
 
       {/* Yuzni aniqlash uchun ko'rinmas kamera oqimi */}
       <video
@@ -242,6 +260,74 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
         )}
       </div>
 
+      {/* Ovozli yordamchi holati */}
+      {assistant?.enabled && (
+        <div className="absolute top-16 left-4 z-20 flex flex-col gap-2 max-w-[70vw]" aria-live="polite">
+          <div
+            data-assistant-state={voice.state}
+            className={`px-3 py-1.5 rounded-xl border text-xs flex items-center gap-2 ${
+              voice.error
+                ? 'bg-police-red/10 border-police-red/50 text-police-red'
+                : voice.state === 'awaiting'
+                ? 'bg-police-blue/20 border-police-blue/60 text-police-cyan'
+                : 'bg-tactical-900 border-tactical-700 text-slate-300'
+            }`}
+          >
+            {voice.supported ? <Mic className="w-3.5 h-3.5" /> : <MicOff className="w-3.5 h-3.5" />}
+            <span>
+              {voice.error
+                ? voice.error
+                : !voice.supported
+                ? "Nutq tanish yo'q (Chrome kerak), savolni yozing"
+                : voice.state === 'awaiting'
+                ? 'Eshitaman, savolingizni ayting'
+                : voice.state === 'thinking'
+                ? 'Javob tayyorlanmoqda...'
+                : voice.state === 'speaking'
+                ? 'Javob berilmoqda'
+                : "Tinglayapti: «Qalqon» deb chaqiring"}
+            </span>
+          </div>
+          {voice.audioBlocked && (
+            <button
+              onClick={voice.unblockAudio}
+              className="px-3 py-1.5 rounded-xl bg-police-amber/15 border border-police-amber/50 text-police-amber text-xs font-semibold text-left"
+            >
+              Ovozni eshitish uchun bosing
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Savol va javob kartasi: javob, manbalar (modda, havola) va ogohlantirish */}
+      {(voice.question || voice.result) && (
+        <div
+          data-assistant-card
+          className="absolute z-30 bottom-28 left-1/2 -translate-x-1/2 w-[min(92vw,640px)] max-h-[34vh] lg:left-auto lg:right-6 lg:translate-x-0 lg:top-24 lg:bottom-28 lg:w-[min(42vw,560px)] lg:max-h-none overflow-y-auto rounded-xl bg-tactical-900 border border-tactical-700 p-4 animate-fade-in"
+        >
+          {voice.question && <p className="text-xs text-slate-400 mb-1">Savol: {voice.question}</p>}
+          {voice.state === 'thinking' && !voice.result && <p className="text-sm text-slate-300">Javob tayyorlanmoqda...</p>}
+          {voice.result && (
+            <>
+              <p className="text-sm text-slate-100 leading-relaxed">{voice.result.answer}</p>
+              {voice.result.sources.length > 0 && (
+                <ul className="mt-3 flex flex-col gap-1">
+                  {voice.result.sources.slice(0, 3).map((src) => (
+                    <li key={`${src.url}-${src.article}`} className="text-[11px] text-slate-400">
+                      <a href={src.url} target="_blank" rel="noreferrer" className="text-police-cyan hover:underline">
+                        {src.article}
+                      </a>
+                      <span className="text-slate-500">, {src.title}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {voice.result.disclaimer && <p className="mt-2 text-[10px] text-slate-500">{voice.result.disclaimer}</p>}
+            </>
+          )}
+        </div>
+      )}
+
       {/* Nutq subtitri */}
       {speechSubtitle && (
         <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-20 max-w-lg px-5 py-2.5 rounded-xl bg-tactical-900 border border-tactical-700 text-center animate-fade-in">
@@ -276,6 +362,28 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
           <Volume2 className="w-4 h-4" />
           Ovozni sinash
         </button>
+
+        {assistant?.enabled && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void voice.ask(typedQuestion);
+              setTypedQuestion('');
+            }}
+            className="flex items-center gap-1 bg-tactical-900 border border-tactical-700 rounded-xl pl-3 pr-1"
+          >
+            <input
+              value={typedQuestion}
+              onChange={(e) => setTypedQuestion(e.target.value)}
+              placeholder="Savolni yozing"
+              aria-label="Savolni yozing"
+              className="bg-transparent text-xs text-white placeholder-slate-500 py-2 w-40 focus:outline-none"
+            />
+            <button type="submit" aria-label="Yuborish" className="p-2 rounded-lg text-police-cyan hover:bg-tactical-800">
+              <Send className="w-4 h-4" />
+            </button>
+          </form>
+        )}
       </div>
 
       {/* Admin (masofaviy) kirish tugmasi */}

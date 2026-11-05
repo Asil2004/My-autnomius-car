@@ -1,0 +1,11 @@
+{
+  "_izoh": "lex.uz hujjatlari ro'yxati. Yangi hujjat qo'shish: url (va ixtiyoriy title) yozing, keyin: python knowledge/ingest_lex.py",
+  "sources": [
+    { "url": "https://lex.uz/docs/8046189" },
+    { "url": "https://lex.uz/uz/docs/111460" },
+    { "url": "https://lex.uz/uz/docs/111453" },
+    { "url": "https://lex.uz/uz/docs/3027843" },
+    { "url": "https://lex.uz/uz/docs/104720" },
+    { "url": "https://lex.uz/docs/6445145" }
+  ]
+}

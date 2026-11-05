@@ -33,7 +33,9 @@ ALL_CMDS = MOVE_CMDS | {"S", "U", "D"}
 # Masofaviy admin kira oladigan yo'llar (boshqa hammasi yopiq)
 ADMIN_PATHS = {
     "/cmd", "/api/telemetry", "/stream.mjpg", "/video_feed", "/api/health",
-    "/api/remote/status", "/strobe", "/siren", "/openapi.json"
+    "/api/remote/status", "/strobe", "/siren", "/openapi.json",
+    # Ovozli yordamchini yoqish/o'chirish (admin paneldan). Savol berish (/api/assistant/ask) admin uchun yopiq
+    "/api/assistant/enable", "/api/assistant/status"
 }
 
 
