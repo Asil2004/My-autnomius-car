@@ -11,6 +11,11 @@ import { nvrRecordingService } from '../services/nvrRecordingService';
 import { createAnnotatedStream, type AnnotatedStream, type OverlayBox } from '../services/nvrOverlayCompositor';
 import { RobotAvatar, type EyeInput } from './RobotAvatar';
 
+// Avto-salom oraliqlari
+const GREET_ANY_MS = 60 * 1000; // har qanday ikki salom orasida (yangi odam tanilsa ham) kamida 1 daqiqa
+const GREET_SAME_PERSON_MS = 10 * 60 * 1000; // bir xil xodimga 10 daqiqada bir marta
+const GREET_STRANGER_MS = 3 * 60 * 1000; // notanish odamlarga 3 daqiqada bir marta
+
 interface RobotFaceViewProps {
   onUnlockRequest: () => void;
   /** Ikkinchi planshetdan masofaviy admin kirishi */
@@ -29,8 +34,10 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
   const processingRef = useRef(false);
   const lastConversationRef = useRef(0);
   const speakRef = useRef<(text: string, opts?: { force?: boolean; onDone?: () => void }) => void>(() => {});
+  // Avto-salom oralig'i: istalgan ikki salom orasida kamida GREET_ANY_MS (yangi odam tanilsa ham),
+  // bir xil xodimga GREET_SAME_PERSON_MS, notanish odamlarga GREET_STRANGER_MS da bir marta
   const lastGreetTimeRef = useRef<number>(0);
-  const lastGreetedIdRef = useRef<string | null>(null);
+  const greetLogRef = useRef(new Map<string, number>());
 
   // Ko'zlar shu ref dan o'qiydi (har kadrda React qayta chizilmaydi)
   const eyeInputRef = useRef<EyeInput>({ faceX: 0, faceY: 0, hasFace: false, speech: 0, happy: false });
@@ -222,6 +229,19 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
         // - kameraga juda yaqin yuz (kadr kichraytiriladi) va past baholi yuzlarni qayta qidirish
         // Qulf ekranida COCO yo'q, shuning uchun butun kadr bitta "odam ramkasi" sifatida beriladi.
         // ------------------------------------------------------------------
+        // Salom berish mumkinmi: avto-salom yoqilgan, suhbat yo'q, oxirgi salomdan keyin yetarli vaqt o'tgan
+        const canGreet = (id: string, nowMs: number) => {
+          if (!autoGreetRef.current || processingRef.current) return false;
+          if (nowMs - lastConversationRef.current < 30000) return false;
+          if (nowMs - lastGreetTimeRef.current < GREET_ANY_MS) return false;
+          const last = greetLogRef.current.get(id) ?? 0;
+          return nowMs - last >= (id === 'stranger' ? GREET_STRANGER_MS : GREET_SAME_PERSON_MS);
+        };
+        const markGreeted = (id: string, nowMs: number) => {
+          lastGreetTimeRef.current = nowMs;
+          greetLogRef.current.set(id, nowMs);
+        };
+
         let isBusyDetecting = false;
         let faceCycles = 0; // ketma-ket yuz ko'ringan kadrlar soni
         // Tanish ovozi to'planguncha begona deb e'lon qilmaymiz (bazadagi xodimga "Piyoda" deb salom bermaslik uchun)
@@ -284,9 +304,8 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
                 input.happy = true;
 
                 // Kamera asosida tanilgan xodim bilan salomlashish
-                if (autoGreetRef.current && !processingRef.current && nowMs - lastConversationRef.current > 30000 && (lastGreetedIdRef.current !== main.person.id || nowMs - lastGreetTimeRef.current > 18000)) {
-                  lastGreetedIdRef.current = main.person.id;
-                  lastGreetTimeRef.current = nowMs;
+                if (canGreet(main.person.id, nowMs)) {
+                  markGreeted(main.person.id, nowMs);
                   // To'liq ism: "Qo'ldoshev Sarvar" da birinchi so'z familiya. Tayyor Sardor audiosi ism bo'yicha tanlanadi
                   speakRef.current(`Assalomu alaykum ${main.person.fullName}! QALQON tizimi shaxsingizni tasdiqladi.`);
                 }
@@ -294,9 +313,8 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
                 input.happy = false;
 
                 // Kamera asosida istalgan inson/piyoda ko'ringanda avtomatik salomlashish va og'iz qimirlashi
-                if (autoGreetRef.current && !processingRef.current && nowMs - lastConversationRef.current > 30000 && (lastGreetedIdRef.current !== 'stranger' || nowMs - lastGreetTimeRef.current > 18000)) {
-                  lastGreetedIdRef.current = 'stranger';
-                  lastGreetTimeRef.current = nowMs;
+                if (canGreet('stranger', nowMs)) {
+                  markGreeted('stranger', nowMs);
                   speakRef.current("Assalomu alaykum! Men QALQON avtonom patrul robotiman. Jamoat xavfsizligini ta'minlashga tayyorman!");
                 }
               } else {
@@ -310,9 +328,6 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
             faceCycles = 0;
             input.hasFace = false;
             input.happy = false;
-            if (Date.now() - lastGreetTimeRef.current > 6000) {
-              lastGreetedIdRef.current = null;
-            }
           } catch (e) {
             console.warn('[RobotFaceView] Yuz deteksiya siklida ogohlantirish:', e);
           } finally {

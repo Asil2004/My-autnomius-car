@@ -4,8 +4,8 @@
  * 
  * Bu xizmat:
  * 1. Oldindan sintez qilingan haqiqiy uz-UZ-SardorNeural audio fayllarini (100% tabiiy ovoz) ijro etadi.
- * 2. Dinamik matnlar (AI javoblari): Edge brauzerida Sardor, boshqa brauzerlarda uzbekvoice.ai TTS,
- *    so'ng brauzerdagi o'zbekcha ovoz. Rus yoki ingliz ovoziga hech qachon o'tmaydi.
+ * Asosiy ovoz: uzbekvoice.ai TTS (salomlashuv ham, AI javoblari ham). Zaxira: tayyor Sardor mp3 (faqat doimiy
+ * gaplar), so'ng brauzerdagi o'zbekcha ovoz. Rus yoki ingliz ovoziga hech qachon o'tmaydi.
  */
 
 import { uzbekVoiceService } from './uzbekVoiceService';
@@ -166,40 +166,26 @@ class EdgeTtsService {
     this.stop();
     const gen = this.generation;
 
-    // 1-USUL: oldindan tayyorlangan Sardor audiosi (salom, tanishuv kabi doimiy gaplar)
-    const matchedAudioUrl = this.matchPreRenderedAudio(text);
-    if (matchedAudioUrl) {
-      this.playAudioUrl(matchedAudioUrl, gen, options, onStart, onEnd, () => {
-        console.warn('[EdgeTTS] Sardor audio fayli ochilmadi:', matchedAudioUrl);
-        this.speakDynamic(text, gen, options, onStart, onEnd);
-      });
-      return;
-    }
-
-    this.speakDynamic(text, gen, options, onStart, onEnd);
-  }
-
-  /**
-   * AI javoblari kabi o'zgaruvchan matn:
-   * 2-USUL: brauzerda Sardor ovozi bo'lsa (Microsoft Edge brauzeri) — Sardor.
-   * 3-USUL: uzbekvoice.ai TTS (jasur so'raladi; tarifda bo'lmasa server o'zbekcha "lola" beradi).
-   * 4-USUL: brauzerdagi boshqa o'zbekcha ovoz. Rus yoki boshqa til ovoziga hech qachon o'tmaydi.
-   */
-  private speakDynamic(text: string, gen: number, options?: EdgeTtsOptions, onStart?: () => void, onEnd?: () => void): void {
-    if (this.findSardorVoice()) {
-      this.speakViaSpeechSynthesis(text, options, onStart, onEnd);
-      return;
-    }
+    // 1-USUL (asosiy): uzbekvoice.ai TTS — barcha gaplar, jumladan salomlashuv (audio manzili 3 kun keshda)
+    // Ishlamasa (internet yo'q, limit): tayyor Sardor mp3 (faqat doimiy gaplar), so'ng brauzerdagi o'zbekcha ovoz
+    const fallback = () => {
+      if (gen !== this.generation) return; // orada stop() yoki yangi gap boshlandi
+      const mp3 = this.matchPreRenderedAudio(text);
+      if (mp3) {
+        this.playAudioUrl(mp3, gen, options, onStart, onEnd, () => this.speakViaSpeechSynthesis(text, options, onStart, onEnd));
+      } else {
+        this.speakViaSpeechSynthesis(text, options, onStart, onEnd);
+      }
+    };
     uzbekVoiceService
       .synthesize(text)
       .then((url) => {
-        if (gen !== this.generation) return; // orada stop() yoki yangi gap boshlandi
-        this.playAudioUrl(url, gen, options, onStart, onEnd, () => this.speakViaSpeechSynthesis(text, options, onStart, onEnd));
+        if (gen !== this.generation) return;
+        this.playAudioUrl(url, gen, options, onStart, onEnd, fallback);
       })
       .catch((err) => {
-        if (gen !== this.generation) return;
-        console.warn('[EdgeTTS] UzbekVoice TTS ishlamadi:', err);
-        this.speakViaSpeechSynthesis(text, options, onStart, onEnd);
+        console.warn('[EdgeTTS] UzbekVoice TTS ishlamadi, zaxira ovoz:', err);
+        fallback();
       });
   }
 
@@ -256,11 +242,6 @@ class EdgeTtsService {
     }
   }
 
-  private findSardorVoice(): SpeechSynthesisVoice | undefined {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return undefined;
-    if (this.voices.length === 0) this.voices = window.speechSynthesis.getVoices();
-    return this.voices.find((v) => /sardor/i.test(`${v.name} ${v.voiceURI}`));
-  }
 
   private speakViaSpeechSynthesis(
     text: string,
