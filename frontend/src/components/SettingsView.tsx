@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRobot } from '../context/RobotContext';
 import {
   Sliders,
@@ -12,8 +12,11 @@ import {
   Key,
   Eye,
   EyeOff,
-  Bot
+  Bot,
+  HardDrive,
+  FolderOpen
 } from 'lucide-react';
+import { nvrRecordingService, type NvrDiskStatus, type NvrStorageStats } from '../services/nvrRecordingService';
 import { uzbekVoiceService } from '../services/uzbekVoiceService';
 import { aiDialogService } from '../services/aiDialogService';
 import { edgeTtsService } from '../services/edgeTtsService';
@@ -61,6 +64,23 @@ export const SettingsView: React.FC = () => {
     setTimeout(() => setSaveSuccess(false), 2500);
   };
 
+  // Video arxiv holati
+  const [nvrDisk, setNvrDisk] = useState<NvrDiskStatus>(() => nvrRecordingService.getDiskStatus());
+  const [nvrStats, setNvrStats] = useState<NvrStorageStats>({ usedBytes: 0, maxBytes: 1, percentUsed: 0, chunkCount: 0 });
+  useEffect(() => {
+    let alive = true;
+    const refresh = () => {
+      setNvrDisk(nvrRecordingService.getDiskStatus());
+      void nvrRecordingService.getStorageStats().then((s) => alive && setNvrStats(s));
+    };
+    refresh();
+    const unsub = nvrRecordingService.subscribe(refresh);
+    return () => {
+      alive = false;
+      unsub();
+    };
+  }, []);
+
   const testAudioTone = () => {
     tacticalAudio.playCommandBeep();
     setTimeout(() => tacticalAudio.playObstacleAlert(), 300);
@@ -94,6 +114,65 @@ export const SettingsView: React.FC = () => {
         >
           {isSimulationMode ? 'SIMULYATSIYA REJIMI' : 'HAQIQIY ROBOT (LIVE)'}
         </button>
+      </div>
+
+      {/* Video arxiv (NVR): kamera tasviri D diskdagi papkaga 1 GB aylanma yoziladi */}
+      <div className="hud-panel rounded-xl p-4 space-y-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <h3 className="font-mono text-sm font-bold text-white flex items-center space-x-2">
+            <HardDrive className="w-4 h-4 text-police-cyan" />
+            <span>VIDEO ARXIV (NVR): AVTOMATIK YOZUV</span>
+          </h3>
+          <span className={`flex items-center gap-1.5 font-mono text-xs font-bold ${nvrDisk.recording ? 'text-rose-400' : 'text-slate-400'}`}>
+            <span className={`w-2 h-2 rounded-full inline-block ${nvrDisk.recording ? 'bg-rose-500 animate-pulse' : 'bg-slate-600'}`} />
+            {nvrDisk.recording ? 'YOZILMOQDA' : 'Kamera o\'chiq'}
+          </span>
+        </div>
+        <p className="text-xs text-slate-400 font-mono">
+          Kamera yoqilganda tasvir 30 soniyalik fayllar bo'lib yoziladi. Papkada 1 GB to'lganda eng eski yozuv avtomatik o'chadi.
+          Papka tanlanmasa, brauzer xotirasiga (100 MB) yoziladi.
+        </p>
+        <div className="flex items-center gap-3 flex-wrap font-mono text-xs">
+          <div className="flex-1 min-w-[220px] p-2.5 rounded-lg bg-tactical-950 border border-tactical-800">
+            <div className="text-slate-400">Saqlash joyi:</div>
+            <div className="text-white font-bold">
+              {nvrDisk.mode === 'disk' ? `📁 ${nvrDisk.folderName} (disk, 1 GB)` : nvrDisk.needsPermission ? `📁 ${nvrDisk.folderName}: ruxsat kerak` : 'Brauzer xotirasi (100 MB)'}
+            </div>
+            <div className="text-police-cyan mt-1">
+              {(nvrStats.usedBytes / (1024 * 1024)).toFixed(1)} MB / {Math.round(nvrStats.maxBytes / (1024 * 1024))} MB • {nvrStats.chunkCount} ta fayl
+            </div>
+            <div className="mt-1.5 h-1.5 rounded bg-tactical-800 overflow-hidden">
+              <div className="h-full bg-police-cyan" style={{ width: `${nvrStats.percentUsed}%` }} />
+            </div>
+          </div>
+          {nvrDisk.supported ? (
+            <div className="flex flex-col gap-2">
+              {nvrDisk.needsPermission && (
+                <button
+                  onClick={() => void nvrRecordingService.resumeDiskAccess()}
+                  className="px-3 py-2 rounded-lg bg-amber-500/20 border border-amber-500/60 text-amber-300 font-bold animate-pulse"
+                >
+                  Diskka yozishni tiklash
+                </button>
+              )}
+              <button
+                onClick={() => void nvrRecordingService.chooseDiskFolder()}
+                className="px-3 py-2 rounded-lg bg-police-blue hover:bg-blue-600 text-white font-bold flex items-center gap-2"
+              >
+                <FolderOpen className="w-4 h-4" />
+                {nvrDisk.folderName ? 'Papkani almashtirish' : 'D diskdan papka tanlash'}
+              </button>
+            </div>
+          ) : (
+            <div className="text-amber-300 max-w-xs">Diskka yozish faqat kompyuterdagi Chrome yoki Edge brauzerida ishlaydi.</div>
+          )}
+        </div>
+        {nvrDisk.lastError && <div className="text-rose-400 font-mono text-[11px]">{nvrDisk.lastError}</div>}
+        <div className="text-[11px] text-slate-500 font-mono">
+          Maslahat: D diskda masalan <span className="text-slate-300">QALQON_NVR</span> papkasini yarating va uni tanlang. Brauzer
+          ruxsat so'raganda "Har safar ruxsat berish" ni tanlasangiz, keyingi ochilishlarda ham avtomatik yozadi. Yozuvlar
+          <span className="text-slate-300"> sana/soat-soat.webm</span> ko'rinishida saqlanadi va istalgan pleyerda ochiladi.
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

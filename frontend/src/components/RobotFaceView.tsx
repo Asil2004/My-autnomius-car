@@ -4,6 +4,7 @@ import { SpeechToSpeechModal } from './SpeechToSpeechModal';
 import { faceRecognitionService } from '../services/faceRecognitionService';
 import { tacticalAudio } from '../services/audioService';
 import { edgeTtsService } from '../services/edgeTtsService';
+import { nvrRecordingService } from '../services/nvrRecordingService';
 import { RobotAvatar, type EyeInput } from './RobotAvatar';
 
 interface RobotFaceViewProps {
@@ -86,6 +87,8 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
 
   const handleUnlockAudio = useCallback(() => {
     setAudioUnlocked(true);
+    // Yangi seansda D diskdagi NVR papkasiga yozish ruxsatini qayta tiklash (brauzer faqat bosishda so'raydi)
+    void nvrRecordingService.resumeDiskAccess();
     tacticalAudio.playClick();
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.resume();
@@ -123,6 +126,12 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
           audio: false
         });
 
+        if (cancelled) {
+          // Kamera ochilguncha effekt tozalangan (kamera o'chirildi yoki sahifa almashdi)
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           try {
@@ -132,6 +141,9 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
             if (errName !== 'AbortError') throw pErr;
           }
         }
+
+        // Kamera tasviri avtomatik yoziladi: tanlangan disk papkasiga (1 GB) yoki brauzer xotirasiga (100 MB)
+        nvrRecordingService.startRecording(stream);
 
         // ------------------------------------------------------------------
         // Operator HUD dagi Face ID texnologiyasi (faceRecognitionService.identifyPeople):
@@ -257,10 +269,13 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
       }
     };
 
+    let cancelled = false;
     startCamera();
 
     return () => {
+      cancelled = true;
       if (trackInterval) clearInterval(trackInterval);
+      nvrRecordingService.stopRecording();
       if (stream) {
         stream.getTracks().forEach(t => t.stop());
       }

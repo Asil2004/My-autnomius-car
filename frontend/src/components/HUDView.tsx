@@ -5,7 +5,7 @@ import { faceRecognitionService, type KnownPerson } from '../services/faceRecogn
 import { distanceEstimator } from '../services/distanceService';
 import type * as cocoSsd from '@tensorflow-models/coco-ssd';
 import { loadCocoModel } from '../services/aiPreload';
-import { nvrRecordingService, type TimelineRange, type NvrChunk, type NvrStorageStats, NVR_MAX_STORAGE_BYTES } from '../services/nvrRecordingService';
+import { nvrRecordingService, type TimelineRange, type NvrChunk, type NvrStorageStats, type NvrDiskStatus, NVR_MAX_STORAGE_BYTES } from '../services/nvrRecordingService';
 import { FloatingPanel } from './FloatingPanel';
 import {
   Activity,
@@ -218,6 +218,7 @@ export const HUDView: React.FC = () => {
     chunkCount: 0
   });
   const [currentPlaybackChunk, setCurrentPlaybackChunk] = useState<NvrChunk | null>(null);
+  const [nvrDisk, setNvrDisk] = useState<NvrDiskStatus>(() => nvrRecordingService.getDiskStatus());
   const playbackVideoRef = useRef<HTMLVideoElement | null>(null);
 
   // NVR timeline oralig'i va 100MB xotira statistikasini yuklash
@@ -232,7 +233,10 @@ export const HUDView: React.FC = () => {
     };
 
     refreshData();
-    const unsub = nvrRecordingService.subscribe(refreshData);
+    const unsub = nvrRecordingService.subscribe(() => {
+      setNvrDisk(nvrRecordingService.getDiskStatus());
+      void refreshData();
+    });
     return () => {
       active = false;
       unsub();
@@ -528,6 +532,7 @@ export const HUDView: React.FC = () => {
   // 2. FRONTAL KAMERA (WEBCAM) OQIMINI BOSHQARISH
   // =========================================================================
   const stopCameraStream = useCallback(() => {
+    nvrRecordingService.stopRecording();
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
@@ -569,6 +574,8 @@ export const HUDView: React.FC = () => {
       }
       if (isStale()) return;
       setCameraLoading(false);
+      // Kamera tasviri avtomatik yoziladi (disk papkasi 1 GB yoki brauzer 100 MB, eng eskisi o'chadi)
+      nvrRecordingService.startRecording(stream);
       addLog('SYSTEM', 'success', "Frontal kamera oqimi tiniq rejimda ulandi.");
     } catch (err: unknown) {
       if (isStale()) return;
@@ -1751,10 +1758,37 @@ export const HUDView: React.FC = () => {
                         <span className="w-2.5 h-2.5 rounded-sm bg-slate-700 border border-slate-600 inline-block" /> Zapis yo'q (Kulrang)
                       </span>
                     </div>
-                    <div className="flex items-center gap-1 text-police-cyan font-semibold">
-                      <span>NVR 100MB Xotira: {(storageStats.usedBytes / (1024 * 1024)).toFixed(1)} MB / 100 MB</span>
+                    <div className="flex items-center gap-2 text-police-cyan font-semibold">
+                      {nvrDisk.recording && (
+                        <span className="flex items-center gap-1 text-rose-400">
+                          <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse inline-block" /> REC
+                        </span>
+                      )}
+                      <span>
+                        {nvrDisk.mode === 'disk' ? `Disk (${nvrDisk.folderName})` : 'Brauzer xotirasi'}:{' '}
+                        {(storageStats.usedBytes / (1024 * 1024)).toFixed(1)} MB / {Math.round(storageStats.maxBytes / (1024 * 1024))} MB
+                      </span>
                       <span className="text-slate-500">({storageStats.percentUsed}%)</span>
+                      {nvrDisk.supported && (
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            if (nvrDisk.needsPermission) await nvrRecordingService.resumeDiskAccess();
+                            else await nvrRecordingService.chooseDiskFolder();
+                            resetOverlayTimer();
+                          }}
+                          title="Yozuvlar saqlanadigan papkani tanlang, masalan D:\QALQON_NVR (1 GB, eng eski yozuv avtomatik o'chadi)"
+                          className={`px-2 py-0.5 rounded-md border text-[10px] font-semibold transition-colors ${
+                            nvrDisk.needsPermission
+                              ? 'bg-amber-500/20 border-amber-500/60 text-amber-300 animate-pulse'
+                              : 'bg-tactical-850 border-tactical-700 text-slate-200 hover:bg-tactical-800'
+                          }`}
+                        >
+                          {nvrDisk.needsPermission ? 'Diskka yozishni tiklash' : nvrDisk.mode === 'disk' ? 'Papkani almashtirish' : 'D diskka saqlash (1 GB)'}
+                        </button>
+                      )}
                     </div>
+                    {nvrDisk.lastError && <span className="text-rose-400">{nvrDisk.lastError}</span>}
                   </div>
                 </div>
 
