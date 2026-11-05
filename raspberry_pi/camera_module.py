@@ -4,10 +4,11 @@
 QALQON - Kamera va Kompyuter Ko'rishi Moduli (OpenCV)
 Platforma: Raspberry Pi 4 / Kompyuter / Telefon sinovlari.
 
+- Barcha mavjud web kameralarni (0, 1, 2, ...) parallel aniqlash va oqimlash (MultiCameraManager).
 - USB Web-kamera / IP kamera / Sintetik test video oqimi.
 - Yo'lak (Lane Follower) aniqlash: avtonom boshqaruv buyruqlari ('F', 'L', 'R', 'S').
 - Yuz / Odam (Piyoda) deteksiyasi va taktik kadr overlay.
-- Multi-klient MJPEG oqimi (/stream.mjpg va /video_feed).
+- Multi-klient MJPEG oqimi (/stream.mjpg va /video_feed, /video_feed/{id}).
 """
 
 import os
@@ -70,7 +71,8 @@ class CameraModule:
 
     def _open_capture(self):
         try:
-            self.cap = cv2.VideoCapture(self.source)
+            backend = cv2.CAP_DSHOW if (os.name == 'nt' and isinstance(self.source, int)) else cv2.CAP_ANY
+            self.cap = cv2.VideoCapture(self.source, backend)
             if self.cap.isOpened():
                 self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
                 self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
@@ -79,14 +81,16 @@ class CameraModule:
                 ret, frame = self.cap.read()
                 if ret and frame is not None:
                     self.is_synthetic = False
-                    print(f"[Kamera] [OK] Kamera ulandi (manba: {self.source}, {self.width}x{self.height})")
+                    h, w = frame.shape[:2]
+                    self.width, self.height = w, h
+                    print(f"[Kamera] [OK] Kamera {self.source} ulandi ({self.width}x{self.height})")
                     return
         except Exception as e:
-            print(f"[Kamera] [!] Kamera ochilmadi: {e}")
+            print(f"[Kamera] [!] Kamera {self.source} ochilmadi: {e}")
 
         # Agar jismoniy kamera ochilmasa, sintetik test video generatorini yoqamiz
         self.is_synthetic = True
-        print("[Kamera] [*] Sintetik Test Video generatori FAOL (kamera ulanmagan)")
+        print(f"[Kamera] [*] Kamera {self.source}: Sintetik Test Video generatori FAOL")
 
     def _generate_synthetic_frame(self, t: float):
         """Kamera bo'lmaganda taktik patrul yo'lak simulyatsiyasini chizadi"""
@@ -202,8 +206,8 @@ class CameraModule:
         mode_str = "AVTO-YO'L" if self.auto_lane else "QO'LDA"
         mode_color = (0, 255, 0) if self.auto_lane else (0, 229, 255)
         
-        cv2.putText(frame, f"REJIM: {mode_str}", (15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.65, mode_color, 2)
-        cv2.putText(frame, f"YO'NALISH: {self.lane_status}", (15, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        cv2.putText(frame, f"KAMERA: {self.source} | {mode_str}", (15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, mode_color, 2)
+        cv2.putText(frame, f"YO'NALISH: {self.lane_status}", (15, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
         cv2.putText(frame, f"FPS: {self.fps:.1f}", (w - 110, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 229, 255), 1)
 
         return frame
@@ -294,8 +298,10 @@ class CameraModule:
 
     def get_status(self):
         return {
+            "source": self.source,
             "fps": round(self.fps, 1),
             "is_synthetic": self.is_synthetic,
+            "resolution": f"{self.width}x{self.height}",
             "lane_status": self.lane_status,
             "deviation": self.lane_deviation,
             "recommended_cmd": self.recommended_cmd,
@@ -312,11 +318,120 @@ class CameraModule:
                 pass
 
 
+class MultiCameraManager:
+    """
+    QALQON - Ko'p Kamerali Boshqaruvchi (Multi-Camera Hub)
+    - Tizimdagi barcha mavjud jismoniy kameralarni (0, 1, 2, ...) avtomatik qidiradi
+    - Har bir kamera uchun parallel oqim va kadr tahlilini yuritadi
+    - Bosh kamera (active_source) va individual kanallar (/video_feed/0, /video_feed/1) ni ta'minlaydi
+    """
+    def __init__(self, max_cams_to_probe: int = 4):
+        self.cameras = {}
+        self.active_source = 0
+        self.lock = threading.Lock()
+        
+        # 1. Barcha jismoniy kameralarni qidirish
+        found_sources = self._probe_cameras(max_cams_to_probe)
+        if not found_sources:
+            print("[MultiCamera] Hech qanday jismoniy kamera topilmadi. Standart 0-kamera sintetik rejimda ochiladi.")
+            found_sources = [0]
+            
+        for src in found_sources:
+            cam = CameraModule(source=src)
+            self.cameras[src] = cam
+            
+        self.active_source = found_sources[0]
+        print(f"[MultiCamera] [OK] Jami {len(self.cameras)} ta kamera oqimi tayyor. Bosh kamera: {self.active_source}")
+
+    def _probe_cameras(self, max_cams: int = 4):
+        valid = []
+        backend = cv2.CAP_DSHOW if os.name == 'nt' else cv2.CAP_ANY
+        for idx in range(max_cams):
+            try:
+                cap = cv2.VideoCapture(idx, backend)
+                if cap.isOpened():
+                    ret, frame = cap.read()
+                    cap.release()
+                    if ret and frame is not None:
+                        valid.append(idx)
+            except Exception:
+                pass
+        return valid
+
+    def get_camera(self, source: int = None):
+        if source is None:
+            source = self.active_source
+        return self.cameras.get(source) or self.cameras.get(self.active_source)
+
+    def select_camera(self, source: int) -> bool:
+        if source in self.cameras:
+            self.active_source = source
+            print(f"[MultiCamera] Bosh kamera o'zgartirildi: {source}")
+            return True
+        return False
+
+    def get_jpeg(self, source: int = None):
+        cam = self.get_camera(source)
+        return cam.get_jpeg() if cam else None
+
+    def get_jpeg_by_source(self, source: int):
+        cam = self.cameras.get(source)
+        return cam.get_jpeg() if cam else None
+
+    def get_cameras_list(self):
+        result = []
+        for src_id, cam in self.cameras.items():
+            st = cam.get_status()
+            name = f"Kamera {src_id}"
+            if src_id == 0:
+                name += " (Oldi / Front)"
+            elif src_id == 1:
+                name += " (Gumbaz / 360 Panoramik)"
+            elif src_id == 2:
+                name += " (Orqa / Rear)"
+            result.append({
+                "id": src_id,
+                "name": name,
+                "is_active": (src_id == self.active_source),
+                "is_synthetic": cam.is_synthetic,
+                "resolution": f"{cam.width}x{cam.height}",
+                "fps": st["fps"],
+                "persons_detected": st["persons_detected"],
+                "lane_status": st["lane_status"]
+            })
+        return result
+
+    @property
+    def detected_persons(self):
+        cam = self.get_camera()
+        return cam.detected_persons if cam else []
+
+    def dispatch_alert_to_iib(self, reason: str = "Xavfli vaziyat aniqlandi"):
+        cam = self.get_camera()
+        return cam.dispatch_alert_to_iib(reason) if cam else None
+
+    def get_latest_alert_jpeg(self):
+        cam = self.get_camera()
+        return cam.get_latest_alert_jpeg() if cam else None
+
+    def get_status(self):
+        cam = self.get_camera()
+        st = cam.get_status() if cam else {}
+        st["active_camera_id"] = self.active_source
+        st["total_cameras"] = len(self.cameras)
+        st["all_cameras"] = self.get_cameras_list()
+        return st
+
+    def close(self):
+        for cam in self.cameras.values():
+            cam.close()
+
+
 if __name__ == '__main__':
-    print("Kamera moduli sinovi...")
-    cam = CameraModule(source=0)
+    print("Multi-Camera moduli sinovi...")
+    hub = MultiCameraManager()
     time.sleep(1.0)
-    print("Status:", cam.get_status())
-    jpeg = cam.get_jpeg()
-    print("JPEG o'lchami:", len(jpeg) if jpeg else 0, "bayt")
-    cam.close()
+    print("Kameralar ro'yxati:", hub.get_cameras_list())
+    jpeg = hub.get_jpeg()
+    print("Asosiy kamera JPEG:", len(jpeg) if jpeg else 0, "bayt")
+    hub.close()

@@ -72,9 +72,12 @@ class ArduinoBridge:
         threading.Thread(target=self._simulator_loop, daemon=True).start()
 
     def _find_arduino_port(self):
+        env_port = os.environ.get('ARDUINO_PORT')
+        if env_port:
+            return env_port
         if not HAS_SERIAL:
             return None
-        # Linux / RPi portlari
+        # Linux / RPi portlari (ACM avval tekshiriladi)
         ports = glob.glob('/dev/ttyACM*') + glob.glob('/dev/ttyUSB*')
         if ports:
             return ports[0]
@@ -82,9 +85,29 @@ class ArduinoBridge:
         if list_ports:
             for p in list_ports.comports():
                 desc = f"{p.description} {p.manufacturer or ''}".lower()
-                if any(k in desc for k in ("arduino", "ch340", "uno", "mega", "usb serial")):
+                if any(k in desc for k in ("arduino", "ch340", "uno", "mega", "usb serial", "ftdi")):
                     return p.device
         return None
+
+    def test_uart(self):
+        available = []
+        if HAS_SERIAL and list_ports:
+            for p in list_ports.comports():
+                available.append({"device": p.device, "description": p.description, "hwid": getattr(p, "hwid", "")})
+        return {
+            "mode": "HARDWARE" if self.is_hardware else "SIMULATION",
+            "is_hardware": self.is_hardware,
+            "port": self.port or "VIRTUAL_ARDUINO_SERIAL",
+            "baudrate": self.baudrate,
+            "last_cmd": self.last_cmd,
+            "speed_level": self.current_speed,
+            "obstacle_warning": self.obstacle_warning,
+            "last_rx": self.last_rx_msg,
+            "sonars": dict(self.sonars),
+            "battery": dict(self.battery),
+            "available_ports": available,
+            "status": "ONLINE (UART ULANDI)" if self.is_hardware else "SIMULATOR (DATCHIKLAR FAOL)"
+        }
 
     def _hardware_listen_loop(self):
         while self.running and self.ser and self.ser.is_open:

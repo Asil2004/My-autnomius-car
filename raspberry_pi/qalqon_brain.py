@@ -41,9 +41,13 @@ from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+if CURRENT_DIR not in sys.path:
+    sys.path.insert(0, CURRENT_DIR)
+
 # Mahalliy modullar
 from lidar_module import LidarModule
-from camera_module import CameraModule
+from camera_module import CameraModule, MultiCameraManager
 from arduino_bridge import ArduinoBridge
 from watchdog_daemon import QalqonWatchdogDaemon
 from remote_control import RemoteControl
@@ -55,7 +59,7 @@ print("🛡️  QALQON v1.0 AMR — MIYA TIZIMI ISHGA TUSHMOQDA (Raspberry Pi 4)
 print("="*65)
 
 lidar = LidarModule()
-camera = CameraModule(source=0)
+camera = MultiCameraManager()
 arduino = ArduinoBridge()
 watchdog = QalqonWatchdogDaemon(arduino_bridge=arduino, failsafe_timeout_sec=0.65)
 # Masofaviy admin boshqaruvi (internet/Cloudflare Tunnel orqali). Token: QALQON_ADMIN_TOKEN muhit o'zgaruvchisi
@@ -151,6 +155,52 @@ def mjpeg_frame_generator():
 # --------------------------------------------------------------------------
 # API Yo'llari (Endpoints)
 # --------------------------------------------------------------------------
+
+@app.get("/api/cameras")
+def get_cameras_list():
+    """Tizimdagi barcha faol web kameralar ro'yxati va holati"""
+    return camera.get_cameras_list()
+
+@app.get("/api/camera/select")
+@app.post("/api/camera/select")
+def select_active_camera(source: int):
+    """Asosiy video oqim kamerasini almashtirish (0: Oldi, 1: Gumbaz / 360)"""
+    ok = camera.select_camera(source)
+    return {"status": "ok" if ok else "error", "active_source": camera.active_source}
+
+@app.get("/video_feed/{cam_id}")
+@app.get("/stream.mjpg/{cam_id}")
+def video_feed_by_id(cam_id: int):
+    """Muayyan kamera uchun jonli MJPEG oqimi (/video_feed/0, /video_feed/1)"""
+    def generate():
+        while True:
+            jpeg = camera.get_jpeg_by_source(cam_id)
+            if jpeg:
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + jpeg + b'\r\n')
+            time.sleep(0.04)
+    return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+@app.get("/api/hardware/test")
+def test_all_hardware():
+    """Barcha kameralar, LiDAR va Arduino UART aloqalarini to'liq test qilish"""
+    return {
+        "status": "ok",
+        "cameras": camera.get_cameras_list(),
+        "lidar": lidar.test_uart(),
+        "arduino": arduino.test_uart(),
+        "watchdog": watchdog.get_status()
+    }
+
+@app.get("/api/lidar/test_uart")
+def test_lidar_uart_endpoint():
+    """LiDAR UART (230400 bod) diagnostikasi"""
+    return lidar.test_uart()
+
+@app.get("/api/arduino/test_uart")
+def test_arduino_uart_endpoint():
+    """Arduino Uno UART (115200 bod) diagnostikasi"""
+    return arduino.test_uart()
 
 @app.get("/stream.mjpg")
 @app.get("/video_feed")

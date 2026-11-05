@@ -8,6 +8,7 @@ Platforma: Raspberry Pi 4 / Kompyuter / Telefon sinovlari.
 - LiDAR yo'qligida: Smart Simulyator rejimida 360° to'lqinlarni hosil qiladi.
 """
 
+import os
 import math
 import sys
 import time
@@ -84,7 +85,7 @@ class LidarModule:
         self.crc_errors = 0
         self.packets_count = 0
         
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         
         # Simulyatsiya parametrlari
         self.sim_obstacles = [
@@ -119,14 +120,38 @@ class LidarModule:
         threading.Thread(target=self._simulator_loop, daemon=True).start()
 
     def _find_port(self):
-        if not HAS_SERIAL or list_ports is None:
+        env_port = os.environ.get('LIDAR_PORT')
+        if env_port:
+            return env_port
+        if not HAS_SERIAL:
             return None
-        for p in list_ports.comports():
-            desc = f"{p.description} {p.manufacturer or ''} {getattr(p, 'hwid', '')}".lower()
-            # LDROBOT STL-19P (CP2102: VID 10C4, PID EA60) va boshqa USB-UART adapterlar
-            if any(k in desc for k in ("cp210", "ch340", "ftdi", "silicon labs", "usb-serial", "lidar", "stl-19", "ld19", "10c4:ea60", "stl19p")):
-                return p.device
+        import glob
+        for p in glob.glob('/dev/ttyUSB*') + glob.glob('/dev/serial0') + glob.glob('/dev/ttyAMA0'):
+            return p
+        if list_ports:
+            for p in list_ports.comports():
+                desc = f"{p.description} {p.manufacturer or ''} {getattr(p, 'hwid', '')}".lower()
+                # LDROBOT STL-19P (CP2102: VID 10C4, PID EA60) va boshqa USB-UART adapterlar
+                if any(k in desc for k in ("cp210", "ch340", "ftdi", "silicon labs", "usb-serial", "lidar", "stl-19", "ld19", "10c4:ea60", "stl19p")):
+                    return p.device
         return None
+
+    def test_uart(self):
+        available = []
+        if HAS_SERIAL and list_ports:
+            for p in list_ports.comports():
+                available.append({"device": p.device, "description": p.description, "hwid": getattr(p, "hwid", "")})
+        return {
+            "mode": "HARDWARE" if self.is_hardware else "SIMULATION",
+            "is_hardware": self.is_hardware,
+            "port": self.port or "VIRTUAL_LIDAR_UART",
+            "baudrate": self.baudrate,
+            "rate_hz": round(self.rate_hz, 1),
+            "packets_count": self.packets_count,
+            "crc_errors": self.crc_errors,
+            "available_ports": available,
+            "status": "ONLINE (UART ULANDI)" if self.is_hardware else "SIMULATOR (RADAR FAOL)"
+        }
 
     def _hardware_loop(self):
         buf = bytearray()

@@ -1,0 +1,104 @@
+{
+  "timestamp": "2026-11-05 13:47:11",
+  "webcams": [
+    {
+      "id": 0,
+      "role": "Oldi / Front Kuzatuv",
+      "resolution": "640x480",
+      "fps": 1.0,
+      "latency_ms": 1009.0,
+      "snapshot": "d:\\antigravity\\qalqon\\scripts\\test_output\\webcam_0_verified.jpg",
+      "status": "FAOL (MUVAFFAQIYATLI)"
+    },
+    {
+      "id": 1,
+      "role": "Gumbaz / 360 Panoramik",
+      "resolution": "1280x720",
+      "fps": 1.0,
+      "latency_ms": 1010.4,
+      "snapshot": "d:\\antigravity\\qalqon\\scripts\\test_output\\webcam_1_verified.jpg",
+      "status": "FAOL (MUVAFFAQIYATLI)"
+    }
+  ],
+  "lidar": {
+    "mode": "SIMULATION",
+    "port": "VIRTUAL_LIDAR_UART",
+    "baudrate": 230400,
+    "rate_hz": 10.0,
+    "packets_count": 0,
+    "crc_errors": 0,
+    "sectors": {
+      "front": 2.98,
+      "rear": 2.98,
+      "left": 2.08,
+      "right": 2.05
+    },
+    "hazard_status": "NORMAL",
+    "status": "SIMULATOR (RADAR FAOL)"
+  },
+  "arduino": {
+    "mode": "SIMULATION",
+    "port": "VIRTUAL_ARDUINO_SERIAL",
+    "baudrate": 115200,
+    "last_cmd": "S",
+    "speed_level": 3,
+    "sonars": {
+      "front": 62,
+      "rear": 117,
+      "left": 79,
+      "right": 83
+    },
+    "battery": {
+      "voltage": 12.49,
+      "percentage": 90,
+      "current": 4.2,
+      "temp": 28.5,
+      "isCharging": false
+    },
+    "status": "SIMULATOR (DATCHIKLAR FAOL)"
+  },
+  "server_endpoints": {
+    "/api/health": {
+      "code": 200,
+      "ms": 76.5,
+      "desc": "Tizim sog'lomligi (Health Check)",
+      "status": "ONLINE"
+    },
+    "/api/telemetry": {
+      "code": 200,
+      "ms": 7.3,
+      "desc": "To'liq telemetriya JSON",
+      "status": "ONLINE"
+    },
+    "/api/hardware/test": {
+      "code": 200,
+      "ms": 16.9,
+      "desc": "Barcha apparat va UART aloqasi",
+      "status": "ONLINE"
+    },
+    "/api/cameras": {
+      "code": 200,
+      "ms": 0.0,
+      "desc": "Faol web kameralar ro'yxati",
+      "status": "ONLINE"
+    },
+    "/api/lidar/test_uart": {
+      "code": 200,
+      "ms": 21.3,
+      "desc": "LiDAR UART diagnostikasi",
+      "status": "ONLINE"
+    },
+    "/api/arduino/test_uart": {
+      "code": 200,
+      "ms": 15.2,
+      "desc": "Arduino UART diagnostikasi",
+      "status": "ONLINE"
+    },
+    "/api/slam_map": {
+      "code": 200,
+      "ms": 47.7,
+      "desc": "2D SLAM Occupancy Grid xaritasi",
+      "status": "ONLINE"
+    }
+  }
+}
