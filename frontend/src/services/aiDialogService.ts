@@ -10,6 +10,8 @@
  * 5. Ixtiyoriy: Tashqi Gemini LLM API kaliti kiritilgan bo'lsa, umumiy mavzularda chuqur muloqot qilish.
  */
 
+import { findLegalAnswer, isLegalQuestion } from './legalKnowledge';
+
 const GEMINI_KEY_STORAGE = 'qalqon_gemini_api_key';
 
 export interface DialogResponse {
@@ -54,11 +56,18 @@ class AiDialogService {
       };
     }
 
+    // 0. HUQUQIY SAVOLLAR (Konstitutsiya, kodekslar, IIO qonuni, PQ-155, PQ-59). Savol shaklida bo'lsa va
+    // haqiqiy favqulodda chaqiruv bo'lmasa, SOS dan oldin tekshiriladi ("bezorilik uchun qanday jazo?" SOS emas)
+    const legalAnswer = isLegalQuestion(raw) ? findLegalAnswer(raw) : null;
+    if (legalAnswer) {
+      return { answer: legalAnswer, source: 'local_brain' };
+    }
+
     // 1. SOS VA FAVQULODDA YORDAM (102)
     if (
       clean.includes('102') ||
       clean.includes('yordam') ||
-      clean.includes('xavf') ||
+      /xavf(?!siz)/.test(clean) || // "xavfsizlik" so'zi SOS emas
       clean.includes('bezori') ||
       clean.includes('ogri') ||
       clean.includes("o'g'ri") ||
@@ -137,7 +146,7 @@ class AiDialogService {
       };
     }
 
-    if (clean.includes('kim yaratgan') || clean.includes('muallif') || clean.includes('jamoa')) {
+    if (clean.includes('kim yaratgan') || clean.includes('muallif') || /jamoa(?!t)/.test(clean)) { // "jamoat" emas
       return {
         answer: "Men Navoiy iqtidorli talaba va muhandislari: Asilbek, Boburjon, Sarvar, Zulfiddin, Muhammadali va ustozlarimiz hamkorligida loyihalashtirilganman.",
         source: 'local_brain'
@@ -208,6 +217,12 @@ class AiDialogService {
         answer: "Xayr, salomat bo'ling! Jamoat tartibiga rioya qilishingizni so'raymiz.",
         source: 'local_brain'
       };
+    }
+
+    // 8.5. Savol shaklida bo'lmagan, lekin huquqiy mavzudagi gap (masalan, "shaxsiy ma'lumotlarim")
+    const legalLoose = findLegalAnswer(raw);
+    if (legalLoose) {
+      return { answer: legalLoose, source: 'local_brain' };
     }
 
     // 9. AGAR GEMINI API KALITI MAVJUD BO'LSA, LLM ORQALI KENGAYTIRILGAN JAVOB
