@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Lock, Unlock, Camera, CameraOff, Volume2, ShieldCheck } from 'lucide-react';
+import { Lock, Unlock, Camera, CameraOff, Volume2, ShieldCheck, Mic } from 'lucide-react';
+import { SpeechToSpeechModal } from './SpeechToSpeechModal';
 import { faceRecognitionService } from '../services/faceRecognitionService';
 import { tacticalAudio } from '../services/audioService';
 import { edgeTtsService } from '../services/edgeTtsService';
@@ -19,6 +20,7 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
   const [isFaceDetected, setIsFaceDetected] = useState<boolean>(false);
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
   const [speechSubtitle, setSpeechSubtitle] = useState<string>('');
+  const [s2sModalOpen, setS2sModalOpen] = useState<boolean>(false);
   const [recognizedPerson, setRecognizedPerson] = useState<{
     fullName: string;
     role: string;
@@ -276,7 +278,28 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
           <Volume2 className="w-4 h-4" />
           Ovozni sinash
         </button>
+
+        {/* O'zbekcha Speech-to-Speech Muloqot Tugmasi */}
+        <button
+          onClick={() => {
+            tacticalAudio.playCommandBeep();
+            setS2sModalOpen(true);
+          }}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-police-blue to-cyan-600 hover:from-blue-600 hover:to-cyan-500 text-white shadow-lg shadow-police-blue/20 transition-transform active:scale-95 border border-police-cyan/50 animate-pulse"
+        >
+          <Mic className="w-4 h-4 text-white" />
+          <span>Ovozli muloqot (S2S)</span>
+        </button>
       </div>
+
+      {/* UzbekVoice.ai Speech-to-Speech Interaktiv Modali */}
+      <SpeechToSpeechModal
+        isOpen={s2sModalOpen}
+        onClose={() => setS2sModalOpen(false)}
+        onSpeechActivity={(level) => {
+          eyeInputRef.current.speech = level;
+        }}
+      />
 
       {/* Admin (masofaviy) kirish tugmasi */}
       {onAdminRequest && (

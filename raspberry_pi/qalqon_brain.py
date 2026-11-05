@@ -282,6 +282,34 @@ def get_watchdog_status():
     """Raspberry Pi 4 va Arduino Serial Watchdog telemetriyasi (Memorandum 2.4-bandi)"""
     return watchdog.get_status()
 
+
+@app.post("/api/stt")
+async def proxy_stt(request: Request):
+    """UzbekVoice.ai STT (Speech-to-Text) Proksi Endpointi (CORS cheklovisiz)"""
+    auth = request.headers.get("Authorization", "")
+    content_type = request.headers.get("Content-Type", "")
+    body = await request.body()
+    
+    import urllib.request, ssl
+    req = urllib.request.Request(
+        "https://uzbekvoice.ai/api/v1/stt",
+        data=body,
+        headers={
+            "Authorization": auth,
+            "Content-Type": content_type
+        },
+        method="POST"
+    )
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    try:
+        with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
+            data = resp.read()
+            return Response(content=data, status_code=resp.status, media_type="application/json")
+    except Exception as e:
+        return Response(content=json.dumps({"error": str(e)}), status_code=500, media_type="application/json")
+
 @app.post("/api/failsafe/stop")
 @app.get("/api/failsafe/stop")
 def trigger_failsafe_stop(reason: str = "MANUAL_PANIC"):
