@@ -21,6 +21,10 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
   const [speechSubtitle, setSpeechSubtitle] = useState<string>('');
   const [s2sModalOpen, setS2sModalOpen] = useState<boolean>(false);
+  const [autoGreetEnabled, setAutoGreetEnabled] = useState<boolean>(true);
+  const [audioUnlocked, setAudioUnlocked] = useState<boolean>(false);
+  const lastGreetTimeRef = useRef<number>(0);
+  const lastGreetedIdRef = useRef<string | null>(null);
   const [recognizedPerson, setRecognizedPerson] = useState<{
     fullName: string;
     role: string;
@@ -28,7 +32,6 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
     isIdentified: boolean;
     confidence: number;
   } | null>(null);
-  const greetedRef = useRef<string | null>(null);
 
   // Ko'zlar shu ref dan o'qiydi (har kadrda React qayta chizilmaydi)
   const eyeInputRef = useRef<EyeInput>({ faceX: 0, faceY: 0, hasFace: false, speech: 0, happy: false });
@@ -55,7 +58,12 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
       eyeInputRef.current.speech = 0.5 + Math.sin(speakTick * 0.8) * 0.4 + Math.random() * 0.2;
     }, 50);
 
+    const safetyTimeout = window.setTimeout(() => {
+      finish();
+    }, 7500);
+
     const finish = () => {
+      window.clearTimeout(safetyTimeout);
       clearInterval(speechTimer);
       eyeInputRef.current.speech = 0;
       setIsSpeaking(false);
@@ -64,6 +72,14 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
 
     edgeTtsService.speak(phraseText, { voice: 'uz-UZ-SardorNeural', rate: 1.0 }, undefined, finish);
   }, [isSpeaking]);
+
+  const handleUnlockAudio = useCallback(() => {
+    setAudioUnlocked(true);
+    tacticalAudio.playClick();
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.resume();
+    }
+  }, []);
 
   const speakRef = useRef(speakDemoPhrase);
   useEffect(() => {
@@ -126,6 +142,8 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
               setIsFaceDetected(true);
 
               const matchResult = faceRecognitionService.matchFace(face.descriptor);
+              const nowMs = Date.now();
+
               if (matchResult.isIdentified && matchResult.person) {
                 input.happy = true;
                 setRecognizedPerson({
@@ -136,8 +154,10 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
                   confidence: matchResult.confidence
                 });
 
-                if (greetedRef.current !== matchResult.person.id) {
-                  greetedRef.current = matchResult.person.id;
+                // Kamera asosida tanilgan xodim bilan salomlashish
+                if (autoGreetEnabled && (lastGreetedIdRef.current !== matchResult.person.id || nowMs - lastGreetTimeRef.current > 18000)) {
+                  lastGreetedIdRef.current = matchResult.person.id;
+                  lastGreetTimeRef.current = nowMs;
                   const firstName = matchResult.person.fullName.split(' ')[0] || matchResult.person.fullName;
                   speakRef.current(`Assalomu alaykum ${firstName}! QALQON tizimi shaxsingizni tasdiqladi.`);
                 }
@@ -145,11 +165,18 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
                 input.happy = false;
                 setRecognizedPerson({
                   fullName: 'Piyoda / Fuqaro',
-                  role: 'Notanish shaxs',
+                  role: 'Jamoat xavfsizligi hududi',
                   color: '#5ad1e6',
                   isIdentified: false,
                   confidence: Math.min(0.98, Math.max(0.70, +face.score.toFixed(2)))
                 });
+
+                // Kamera asosida istalgan inson/piyoda ko'ringanda avtomatik salomlashish va og'iz qimirlashi
+                if (autoGreetEnabled && (lastGreetedIdRef.current !== 'stranger' || nowMs - lastGreetTimeRef.current > 18000)) {
+                  lastGreetedIdRef.current = 'stranger';
+                  lastGreetTimeRef.current = nowMs;
+                  speakRef.current("Assalomu alaykum! Men QALQON avtonom patrul robotiman. Jamoat xavfsizligini ta'minlashga tayyorman!");
+                }
               }
               return;
             }
@@ -159,6 +186,9 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
             input.happy = false;
             setIsFaceDetected(false);
             setRecognizedPerson(null);
+            if (Date.now() - lastGreetTimeRef.current > 6000) {
+              lastGreetedIdRef.current = null;
+            }
           } catch (e) {
             console.warn('[RobotFaceView] Yuz deteksiya siklida ogohlantirish:', e);
           } finally {
@@ -191,7 +221,7 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
     : "Kamera o'chiq, kursor va teginishga javob beradi";
 
   return (
-    <div className="relative w-full h-full bg-tactical-950 overflow-hidden select-none">
+    <div onClick={handleUnlockAudio} className="relative w-full h-full bg-tactical-950 overflow-hidden select-none">
       <RobotAvatar inputRef={eyeInputRef} />
 
       {/* Yuzni aniqlash uchun ko'rinmas kamera oqimi */}
@@ -244,10 +274,25 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
         )}
       </div>
 
-      {/* Nutq subtitri */}
+      {/* Ovozni faollashtirish eslatmasi (Autoplay ruxsati) */}
+      {!audioUnlocked && (
+        <button
+          onClick={handleUnlockAudio}
+          className="absolute top-16 left-1/2 -translate-x-1/2 z-30 px-4 py-1.5 rounded-full bg-police-blue/30 border border-police-cyan/60 text-police-cyan text-xs font-mono font-bold animate-pulse flex items-center space-x-1.5 shadow-lg backdrop-blur-md"
+        >
+          <Volume2 className="w-3.5 h-3.5" />
+          <span>Ovozni to'liq faollashtirish uchun ekranga bosing</span>
+        </button>
+      )}
+
+      {/* Nutq subtitri va og'iz animatsiyasi ko'rsatkichi */}
       {speechSubtitle && (
-        <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-20 max-w-lg px-5 py-2.5 rounded-xl bg-tactical-900 border border-tactical-700 text-center animate-fade-in">
-          <p className="text-sm font-medium text-slate-100">{speechSubtitle}</p>
+        <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-20 max-w-lg w-[90%] px-5 py-3 rounded-2xl bg-tactical-900/95 border border-police-cyan/60 text-center shadow-2xl backdrop-blur-md animate-fade-in flex flex-col items-center space-y-1">
+          <div className="flex items-center space-x-2 text-police-cyan font-mono text-[11px] font-bold">
+            <span className="w-2 h-2 rounded-full bg-police-cyan animate-ping"></span>
+            <span>QALQON GAPIRMOQDA (Sardor 1.0x):</span>
+          </div>
+          <p className="text-sm font-semibold text-white tracking-wide leading-relaxed">{speechSubtitle}</p>
         </div>
       )}
 
@@ -277,6 +322,23 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
         >
           <Volume2 className="w-4 h-4" />
           Ovozni sinash
+        </button>
+
+        {/* Kamera asosida avto-gapirish tugmasi */}
+        <button
+          onClick={() => {
+            tacticalAudio.playClick();
+            setAutoGreetEnabled(!autoGreetEnabled);
+          }}
+          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-transform active:scale-95 border ${
+            autoGreetEnabled
+              ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/50'
+              : 'bg-tactical-900 text-slate-400 border-tactical-700'
+          }`}
+          title="Kamera insonni ko'rganda avtomatik salomlashish va og'iz qimirlashi"
+        >
+          <span className={`w-2 h-2 rounded-full ${autoGreetEnabled ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`}></span>
+          <span>{autoGreetEnabled ? 'Avto-salom: FAOL' : "Avto-salom: O'CHIQ"}</span>
         </button>
 
         {/* O'zbekcha Speech-to-Speech Muloqot Tugmasi */}
