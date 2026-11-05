@@ -5,6 +5,7 @@ import { faceRecognitionService, type KnownPerson } from '../services/faceRecogn
 import { distanceEstimator } from '../services/distanceService';
 import type * as cocoSsd from '@tensorflow-models/coco-ssd';
 import { loadCocoModel } from '../services/aiPreload';
+import { createAnnotatedStream, type AnnotatedStream } from '../services/nvrOverlayCompositor';
 import { nvrRecordingService, type TimelineRange, type NvrChunk, type NvrStorageStats, type NvrDiskStatus, NVR_MAX_STORAGE_BYTES } from '../services/nvrRecordingService';
 import { FloatingPanel } from './FloatingPanel';
 import {
@@ -424,6 +425,11 @@ export const HUDView: React.FC = () => {
   const [aiModelLoaded, setAiModelLoaded] = useState(false);
   const [aiModelLoading, setAiModelLoading] = useState(false);
   const [aiEnabled, setAiEnabled] = useState(true);
+
+  // NVR yozuviga odam ramkalari ham tushishi uchun: kompozitor har kadrda shu ref'dan o'qiydi
+  const overlayStateRef = useRef({ objects: detectedObjects, ai: aiEnabled, mirror: mirrorVideo });
+  overlayStateRef.current = { objects: detectedObjects, ai: aiEnabled, mirror: mirrorVideo };
+  const annotatedRef = useRef<AnnotatedStream | null>(null);
   const [detectedCounts, setDetectedCounts] = useState({ people: 0, cars: 0, obstacles: 0, total: 0 });
 
   // Yuzlar bazasi modali va ro'yxati
@@ -533,6 +539,8 @@ export const HUDView: React.FC = () => {
   // =========================================================================
   const stopCameraStream = useCallback(() => {
     nvrRecordingService.stopRecording();
+    annotatedRef.current?.stop();
+    annotatedRef.current = null;
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
@@ -574,8 +582,31 @@ export const HUDView: React.FC = () => {
       }
       if (isStale()) return;
       setCameraLoading(false);
-      // Kamera tasviri avtomatik yoziladi (disk papkasi 1 GB yoki brauzer 100 MB, eng eskisi o'chadi)
-      nvrRecordingService.startRecording(stream);
+      // Kamera tasviri avtomatik yoziladi (disk papkasi 1 GB yoki brauzer 100 MB, eng eskisi o'chadi).
+      // Yozuvga kadr bilan birga odam identifikatsiya ramkalari, ism, masofa va sana-vaqt ham chiziladi
+      const annotated = videoRef.current
+        ? createAnnotatedStream(videoRef.current, {
+            title: 'QALQON HUD',
+            mirror: () => overlayStateRef.current.mirror,
+            getBoxes: () => {
+              const s = overlayStateRef.current;
+              if (!s.ai) return [];
+              return s.objects
+                .filter((o) => o.category === 'person')
+                .map((o) => ({
+                  x: o.box.x / 100,
+                  y: o.box.y / 100,
+                  w: o.box.width / 100,
+                  h: o.box.height / 100,
+                  color: o.color,
+                  label: o.isIdentifiedPerson ? `${o.label} ${(o.confidence * 100).toFixed(0)}%` : o.label,
+                  note: `${o.distanceUpperBound ? '<' : o.distanceApprox ? '~' : ''}${o.distance} m`
+                }));
+            }
+          })
+        : null;
+      annotatedRef.current = annotated;
+      nvrRecordingService.startRecording(annotated?.stream ?? stream);
       addLog('SYSTEM', 'success', "Frontal kamera oqimi tiniq rejimda ulandi.");
     } catch (err: unknown) {
       if (isStale()) return;
@@ -1458,8 +1489,8 @@ export const HUDView: React.FC = () => {
                   </div>
                 )}
 
-                {/* AI DETECTED OBJECTS OVERLAY */}
-                {aiEnabled &&
+                {/* AI DETECTED OBJECTS OVERLAY: faqat jonli rejimda. Qayta ko'rishda ramkalar yozuvning o'zida bor */}
+                {aiEnabled && viewMode === 'live' &&
                   detectedObjects
                     .filter((obj) => obj.category === 'person')
                     .map((obj) => (

@@ -8,6 +8,7 @@ import { aiDialogService } from '../services/aiDialogService';
 import { tacticalAudio } from '../services/audioService';
 import { edgeTtsService } from '../services/edgeTtsService';
 import { nvrRecordingService } from '../services/nvrRecordingService';
+import { createAnnotatedStream, type AnnotatedStream, type OverlayBox } from '../services/nvrOverlayCompositor';
 import { RobotAvatar, type EyeInput } from './RobotAvatar';
 
 interface RobotFaceViewProps {
@@ -170,6 +171,7 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
 
     let stream: MediaStream | null = null;
     let trackInterval: number | null = null;
+    let annotated: AnnotatedStream | null = null;
 
     const startCamera = async () => {
       try {
@@ -199,8 +201,18 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
           }
         }
 
-        // Kamera tasviri avtomatik yoziladi: tanlangan disk papkasiga (1 GB) yoki brauzer xotirasiga (100 MB)
-        nvrRecordingService.startRecording(stream);
+        // Kamera tasviri avtomatik yoziladi: tanlangan disk papkasiga (1 GB) yoki brauzer xotirasiga (100 MB).
+        // Yozuvga yuz identifikatsiya ramkalari (ism yoki "Piyoda") va sana-vaqt ham chiziladi
+        let recBoxes: { boxes: OverlayBox[]; t: number } = { boxes: [], t: 0 };
+        annotated = videoRef.current
+          ? createAnnotatedStream(videoRef.current, {
+              title: 'QALQON ROBOT',
+              mirror: () => false,
+              // 1.5 s dan eski natija chizilmaydi (odam ketgan bo'lsa ramka qolib ketmasin)
+              getBoxes: () => (Date.now() - recBoxes.t < 1500 ? recBoxes.boxes : [])
+            })
+          : null;
+        nvrRecordingService.startRecording(annotated?.stream ?? stream);
 
         // ------------------------------------------------------------------
         // Operator HUD dagi Face ID texnologiyasi (faceRecognitionService.identifyPeople):
@@ -230,6 +242,21 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
               { voteMissingFace: true }
             );
             const withFace = identities.filter((i) => i.faceFound);
+            recBoxes = {
+              t: Date.now(),
+              boxes: withFace
+                .filter((i) => i.faceBox)
+                .map((i) => ({
+                  x: i.faceBox!.x / vW,
+                  y: i.faceBox!.y / vH,
+                  w: i.faceBox!.width / vW,
+                  h: i.faceBox!.height / vH,
+                  color: i.person ? i.person.color : faceCycles >= STRANGER_AFTER_CYCLES ? '#f59e0b' : '#94a3b8',
+                  label: i.person
+                    ? `${i.person.fullName}${i.confidence ? ` ${(i.confidence * 100).toFixed(0)}%` : ''}`
+                    : faceCycles >= STRANGER_AFTER_CYCLES ? 'Piyoda' : 'Tekshirilmoqda'
+                }))
+            };
             // Bir nechta odam bo'lsa: avval tanilgan, keyin eng katta (eng yaqin) yuz
             const main = withFace.length
               ? withFace.reduce((a, b) => {
@@ -305,6 +332,7 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
       cancelled = true;
       if (trackInterval) clearInterval(trackInterval);
       nvrRecordingService.stopRecording();
+      annotated?.stop();
       if (stream) {
         stream.getTracks().forEach(t => t.stop());
       }
