@@ -13,9 +13,11 @@ import {
   Compass,
   Cpu,
   Battery,
-  MapPin,
   Sparkles,
-  Radio
+  Radio,
+  PenLine,
+  Check,
+  Undo2
 } from 'lucide-react';
 import { useRobot } from '../context/RobotContext';
 
@@ -136,77 +138,121 @@ export const GoogleMapsPatrolView: React.FC = () => {
     }
   }, []);
 
-  // Calculate street route with OSRM (avoid houses and barriers)
-  const calculateRoute = useCallback(async (pts: Waypoint[]) => {
-    if (!mapRef.current) return;
+  // ---------------------------------------------------------------------------
+  // OPERATOR MARSHRUT CHIZISHI: "Marshrut chizish" tugmasi bilan yoqiladi/o'chiriladi.
+  // 1-bosish: chiziq boshlanadi (sichqonchaga ergashuvchi punktir chiziq). Keyingi har bosishda chiziq shu nuqtada
+  // tugaydi va o'sha joydan yangi chiziq boshlanadi. Tugma qayta bosilsa (yoki Esc) chizish tugaydi.
+  // Robot aynan operator chizgan chiziq bo'ylab yuradi; oxiriga yetgach, xuddi shu yo'l bilan orqaga qaytadi.
+  // ---------------------------------------------------------------------------
+  const waypointsRef = useRef<Waypoint[]>([]);
+  const drawModeRef = useRef(false);
+  const previewLineRef = useRef<L.Polyline | null>(null);
+  const patrolDirRef = useRef<1 | -1>(1);
+  const [drawMode, setDrawMode] = useState(false);
 
-    if (pts.length < 2) {
-      detailedNodesRef.current = pts.map(p => [p.lat, p.lon]);
-      renderPolyline(detailedNodesRef.current);
-      setRoutingStatus(pts.length === 1 ? "Yana kamida 1 ta nuqta qo'ying" : "Nuqtalar qo'yilmagan");
-      return;
+  const routeLengthM = useCallback((pts: Waypoint[]) => {
+    let sum = 0;
+    for (let i = 1; i < pts.length; i++) {
+      sum += L.latLng(pts[i - 1].lat, pts[i - 1].lon).distanceTo(L.latLng(pts[i].lat, pts[i].lon));
     }
+    return sum;
+  }, []);
 
-    setRoutingStatus("⏳ Ko'chalar hisoblanmoqda (uylar chetlab o'tilmoqda)...");
+  const removePreview = useCallback(() => {
+    if (previewLineRef.current && mapRef.current) mapRef.current.removeLayer(previewLineRef.current);
+    previewLineRef.current = null;
+  }, []);
 
-    // Loop back to start
-    const loopPts = [...pts, pts[0]];
-    const coordPairs = loopPts.map(p => `${p.lon.toFixed(6)},${p.lat.toFixed(6)}`).join(';');
-    const osrmUrl = `https://router.project-osrm.org/route/v1/foot/${coordPairs}?overview=full&geometries=geojson`;
-
-    try {
-      const response = await fetch(osrmUrl);
-      const data = await response.json();
-      if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
-        const coords: [number, number][] = data.routes[0].geometry.coordinates.map(
-          (c: [number, number]) => [c[1], c[0]]
-        );
-        detailedNodesRef.current = coords;
-        currentPathIndexRef.current = 0;
-        renderPolyline(coords);
-        setRoutingStatus(`✅ Ko'chaga bog'landi (${coords.length} ta aniq burilish)`);
-        return;
-      }
-    } catch {
-      // Fallback
-    }
-
-    // Grid fallback
-    const fallback: [number, number][] = [];
-    for (let i = 0; i < loopPts.length - 1; i++) {
-      const p1 = loopPts[i];
-      const p2 = loopPts[i + 1];
-      fallback.push([p1.lat, p1.lon]);
-      fallback.push([p1.lat, p2.lon]);
-    }
-    fallback.push([loopPts[loopPts.length - 1].lat, loopPts[loopPts.length - 1].lon]);
-    detailedNodesRef.current = fallback;
+  /** Nuqtalar, chiziq va holat matnini waypointsRef bo'yicha qayta chizish */
+  const syncRoute = useCallback(() => {
+    const pts = waypointsRef.current;
+    setWaypoints([...pts]);
+    detailedNodesRef.current = pts.map(p => [p.lat, p.lon]);
     currentPathIndexRef.current = 0;
-    renderPolyline(fallback);
-    setRoutingStatus(`🛡️ Zaxira ko'cha marshruti (${fallback.length} nuqta)`);
-  }, [renderPolyline]);
+    patrolDirRef.current = 1;
+    renderPolyline(detailedNodesRef.current);
+    if (pts.length === 0) setRoutingStatus("Marshrut yo'q. \"Marshrut chizish\" tugmasini bosing.");
+    else if (pts.length === 1) setRoutingStatus('Boshlang\'ich nuqta qo\'yildi. Keyingi nuqtani bosing.');
+    else {
+      const m = routeLengthM(pts);
+      setRoutingStatus(`✅ ${pts.length - 1} ta chiziq, ${m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${Math.round(m)} m`}`);
+    }
+  }, [renderPolyline, routeLengthM]);
 
-  // Add a waypoint
+  const makeVertexMarker = (lat: number, lon: number, idx: number) =>
+    L.circleMarker([lat, lon], {
+      radius: idx === 1 ? 7 : 5,
+      fillColor: idx === 1 ? '#10b981' : '#00e5ff',
+      color: '#ffffff',
+      weight: 2,
+      fillOpacity: 0.95,
+      bubblingMouseEvents: false
+    }).bindTooltip(`${idx}-nuqta`, { direction: 'top', offset: [0, -6] });
+
+  // Chizish rejimida xaritaga bosilganda nuqta qo'shish (faqat ref'lar ishlatiladi: xarita bir marta sozlanadi)
   const addWaypoint = useCallback((lat: number, lon: number) => {
     if (!mapRef.current) return;
+    waypointsRef.current = [...waypointsRef.current, { lat, lon }];
+    const marker = makeVertexMarker(lat, lon, waypointsRef.current.length).addTo(mapRef.current);
+    waypointMarkersRef.current.push(marker);
+    removePreview();
+    syncRoute();
+  }, [removePreview, syncRoute]);
 
-    setWaypoints(prev => {
-      const updated = [...prev, { lat, lon }];
-      const idx = updated.length;
+  // Sichqoncha harakatida oxirgi nuqtadan kursorgacha punktir chiziq
+  const updatePreview = useCallback((latlng: L.LatLng) => {
+    const map = mapRef.current;
+    const last = waypointsRef.current[waypointsRef.current.length - 1];
+    if (!map || !drawModeRef.current || !last) return;
+    const pts: L.LatLngExpression[] = [[last.lat, last.lon], latlng];
+    if (previewLineRef.current) previewLineRef.current.setLatLngs(pts);
+    else {
+      previewLineRef.current = L.polyline(pts, {
+        color: '#fbbf24',
+        weight: 3,
+        opacity: 0.9,
+        dashArray: '6 6',
+        interactive: false
+      }).addTo(map);
+    }
+  }, []);
 
-      const marker = L.circleMarker([lat, lon], {
-        radius: 6,
-        fillColor: '#00e5ff',
-        color: '#ffffff',
-        weight: 2,
-        fillOpacity: 0.95
-      }).addTo(mapRef.current!).bindPopup(`<b>Waypoint ${idx}</b><br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}`);
+  const stopPatrolRef = useRef<() => void>(() => {});
 
-      waypointMarkersRef.current.push(marker);
-      calculateRoute(updated);
-      return updated;
-    });
-  }, [calculateRoute]);
+  const setDrawing = useCallback((on: boolean) => {
+    const map = mapRef.current;
+    drawModeRef.current = on;
+    setDrawMode(on);
+    if (!map) return;
+    const el = map.getContainer();
+    if (on) {
+      stopPatrolRef.current();
+      map.doubleClickZoom.disable(); // ikki marta tez bosish nuqta qo'yadi, xaritani kattalashtirmaydi
+      el.style.cursor = 'crosshair';
+      setRoutingStatus(
+        waypointsRef.current.length
+          ? 'Chizish davom etmoqda: keyingi nuqtani bosing.'
+          : "Chizish yoqildi: xaritada boshlang'ich nuqtani bosing."
+      );
+    } else {
+      removePreview();
+      map.doubleClickZoom.enable();
+      el.style.cursor = '';
+      syncRoute();
+    }
+  }, [removePreview, syncRoute]);
+
+  const toggleDrawMode = useCallback(() => setDrawing(!drawModeRef.current), [setDrawing]);
+
+  // Oxirgi nuqtani bekor qilish
+  const undoLastWaypoint = useCallback(() => {
+    if (!mapRef.current || waypointsRef.current.length === 0) return;
+    waypointsRef.current = waypointsRef.current.slice(0, -1);
+    const m = waypointMarkersRef.current.pop();
+    if (m) mapRef.current.removeLayer(m);
+    removePreview();
+    syncRoute();
+  }, [removePreview, syncRoute]);
 
   // Clear waypoints
   const clearWaypoints = useCallback(() => {
@@ -215,64 +261,26 @@ export const GoogleMapsPatrolView: React.FC = () => {
       patrolIntervalRef.current = null;
     }
     setIsPatrolling(false);
-    setWaypoints([]);
-    detailedNodesRef.current = [];
-    currentPathIndexRef.current = 0;
+    waypointsRef.current = [];
+    removePreview();
 
     if (mapRef.current) {
       waypointMarkersRef.current.forEach(m => mapRef.current?.removeLayer(m));
       waypointMarkersRef.current = [];
-      if (polylineRef.current) {
-        mapRef.current.removeLayer(polylineRef.current);
-        polylineRef.current = null;
-      }
     }
-    setRoutingStatus("Tozalandi. Xaritada nuqta tanlang.");
+    syncRoute();
     setTelemetry(prev => ({ ...prev, speed: 0 }));
-  }, []);
+  }, [removePreview, syncRoute]);
 
-  // Preset 1: G'alaba & Amir Temur
-  const loadGalabaAmirTemurPreset = useCallback(() => {
-    clearWaypoints();
-    if (!mapRef.current) return;
+  // Esc: chizishni tugatish
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && drawModeRef.current) setDrawing(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [setDrawing]);
 
-    mapRef.current.setView([40.099325, 65.379185], 18);
-
-    const points: Waypoint[] = [
-      { lat: 40.10185, lon: 65.37480 },
-      { lat: 40.09935, lon: 65.37890 },
-      { lat: 40.09680, lon: 65.38020 },
-      { lat: 40.09695, lon: 65.38060 },
-      { lat: 40.09950, lon: 65.37920 },
-      { lat: 40.10170, lon: 65.37510 },
-    ];
-
-    points.forEach((pt, i) => {
-      const marker = L.circleMarker([pt.lat, pt.lon], {
-        radius: 6,
-        fillColor: '#00e5ff',
-        color: '#ffffff',
-        weight: 2,
-        fillOpacity: 0.95
-      }).addTo(mapRef.current!).bindPopup(`<b>Waypoint ${i + 1}</b> (G'alaba)<br>Lat: ${pt.lat.toFixed(6)}<br>Lon: ${pt.lon.toFixed(6)}`);
-      waypointMarkersRef.current.push(marker);
-    });
-
-    setWaypoints(points);
-    calculateRoute(points);
-
-    setTelemetry(prev => ({
-      ...prev,
-      lat: 40.099325,
-      lon: 65.379185,
-      heading: 135,
-      speed: 0
-    }));
-    setRobotVisual(40.099325, 65.379185, 135);
-  }, [clearWaypoints, calculateRoute, setRobotVisual]);
-
-  // Preset 2: Navoiy ko'chasi
-  
   // Haqiqiy GPS ma'lumotlarini telemetriyaga sinxronlash
   useEffect(() => {
     if (gps.isReal) {
@@ -301,50 +309,13 @@ export const GoogleMapsPatrolView: React.FC = () => {
     }));
   }, [gps, startRealGPS, setRobotVisual]);
 
-  const loadNavoiyStreetPreset = useCallback(() => {
-    clearWaypoints();
-    if (!mapRef.current) return;
-
-    mapRef.current.setView(NAVOI_CENTER, 19);
-
-    const points: Waypoint[] = [
-      { lat: 40.10080, lon: 65.36765 },
-      { lat: 40.09975, lon: 65.36845 },
-      { lat: 40.09915, lon: 65.36890 },
-      { lat: 40.09930, lon: 65.36915 },
-      { lat: 40.10010, lon: 65.36855 },
-    ];
-
-    points.forEach((pt, i) => {
-      const marker = L.circleMarker([pt.lat, pt.lon], {
-        radius: 6,
-        fillColor: '#00e5ff',
-        color: '#ffffff',
-        weight: 2,
-        fillOpacity: 0.95
-      }).addTo(mapRef.current!).bindPopup(`<b>Waypoint ${i + 1}</b> (Navoiy k.)<br>Lat: ${pt.lat.toFixed(6)}<br>Lon: ${pt.lon.toFixed(6)}`);
-      waypointMarkersRef.current.push(marker);
-    });
-
-    setWaypoints(points);
-    calculateRoute(points);
-
-    setTelemetry(prev => ({
-      ...prev,
-      lat: NAVOI_CENTER[0],
-      lon: NAVOI_CENTER[1],
-      heading: 150,
-      speed: 0
-    }));
-    setRobotVisual(NAVOI_CENTER[0], NAVOI_CENTER[1], 150);
-  }, [clearWaypoints, calculateRoute, setRobotVisual]);
-
   // Start Demo Patrol Simulation Loop
   const startPatrol = useCallback(() => {
-    if (detailedNodesRef.current.length === 0) {
-      alert("Iltimos, avval xaritada ko'cha nuqtalarini qo'ying yoki tayyor ko'cha tugmalaridan birini bosing!");
+    if (detailedNodesRef.current.length < 2) {
+      setRoutingStatus("Avval \"Marshrut chizish\" tugmasini bosib, xaritada kamida 2 ta nuqta qo'ying.");
       return;
     }
+    if (drawModeRef.current) setDrawing(false);
 
     setIsPatrolling(true);
 
@@ -361,7 +332,13 @@ export const GoogleMapsPatrolView: React.FC = () => {
         const dist = Math.hypot(dLat, dLon);
 
         if (dist < 0.000015) {
-          currentPathIndexRef.current = (currentPathIndexRef.current + 1) % nodes.length;
+          // Chizilgan yo'l oxiriga yetganda o'sha yo'l bilan orqaga qaytadi (uylar ustidan to'g'ri kesib o'tmaydi)
+          let next = currentPathIndexRef.current + patrolDirRef.current;
+          if (next >= nodes.length || next < 0) {
+            patrolDirRef.current = patrolDirRef.current === 1 ? -1 : 1;
+            next = currentPathIndexRef.current + patrolDirRef.current;
+          }
+          currentPathIndexRef.current = Math.max(0, Math.min(nodes.length - 1, next));
           return prev;
         }
 
@@ -386,7 +363,7 @@ export const GoogleMapsPatrolView: React.FC = () => {
         };
       });
     }, 100);
-  }, [setRobotVisual]);
+  }, [setRobotVisual, setDrawing]);
 
   const stopPatrol = useCallback(() => {
     setIsPatrolling(false);
@@ -396,6 +373,7 @@ export const GoogleMapsPatrolView: React.FC = () => {
     }
     setTelemetry(prev => ({ ...prev, speed: 0 }));
   }, []);
+  stopPatrolRef.current = stopPatrol;
 
   // Raspberry Pi WebSocket Connection
   const togglePiConnection = useCallback(() => {
@@ -526,15 +504,16 @@ export const GoogleMapsPatrolView: React.FC = () => {
     robotMarkerRef.current = L.marker(NAVOI_CENTER, { icon: robotIcon }).addTo(map);
     mapRef.current = map;
 
-    // Handle map clicks in demo mode
+    // Faqat "Marshrut chizish" yoqilganda bosish nuqta qo'yadi
     map.on('click', (e: L.LeafletMouseEvent) => {
-      addWaypoint(e.latlng.lat, e.latlng.lng);
+      if (drawModeRef.current) addWaypoint(e.latlng.lat, e.latlng.lng);
     });
+    map.on('mousemove', (e: L.LeafletMouseEvent) => updatePreview(e.latlng));
+    map.on('mouseout', () => removePreview());
 
-    // Invalidate size to guarantee full container rendering
+    // Invalidate size to guarantee full container rendering (test marshruti endi avtomatik yuklanmaydi)
     setTimeout(() => {
       map.invalidateSize();
-      loadGalabaAmirTemurPreset();
     }, 200);
 
     return () => {
@@ -602,7 +581,7 @@ export const GoogleMapsPatrolView: React.FC = () => {
       </div>
 
       {/* RIGHT SIDEBAR CONTROLS & TELEMETRY */}
-      <div className="absolute right-3 top-14 bottom-3 w-84 z-20 flex flex-col gap-2.5 overflow-y-auto pr-1 pointer-events-auto">
+      <div className="absolute right-3 top-14 bottom-3 w-[21rem] max-w-[calc(100%-1.5rem)] z-20 flex flex-col gap-2.5 overflow-y-auto pr-1 pointer-events-auto">
         {/* REJIM TANLASH CARD */}
         <div className="bg-tactical-950/90 border border-tactical-800/80 backdrop-blur-md rounded-xl p-3 shadow-xl">
           <div className="text-[10px] font-mono font-bold text-police-cyan uppercase tracking-wider mb-2 flex items-center justify-between">
@@ -684,24 +663,36 @@ export const GoogleMapsPatrolView: React.FC = () => {
                 <span>🎯 Haqiqiy GPS Joylashuvim ({gps.latitude.toFixed(4)}, {gps.longitude.toFixed(4)})</span>
               </button>
 
-            <div className="flex flex-col gap-1.5 pt-1">
+            {/* Operator marshrut chizishi */}
+            <button
+              onClick={toggleDrawMode}
+              className={`w-full py-2 px-2 rounded font-mono text-xs font-bold flex items-center justify-center gap-1.5 border transition-all ${
+                drawMode
+                  ? 'bg-amber-500 hover:bg-amber-400 text-tactical-950 border-amber-300 shadow-[0_0_10px_rgba(251,191,36,0.6)]'
+                  : 'bg-police-blue/30 hover:bg-police-blue/50 text-white border-police-cyan/50'
+              }`}
+            >
+              {drawMode ? <Check className="w-3.5 h-3.5" /> : <PenLine className="w-3.5 h-3.5" />}
+              {drawMode ? 'Chizishni tugatish' : 'Marshrut chizish'}
+            </button>
+            {drawMode && (
+              <div className="text-[10px] font-mono text-amber-300 leading-snug">
+                Xaritaga bosing: har bosishda chiziq shu yerda tugaydi va yangisi boshlanadi. Tugatish: tugmani qayta bosing yoki Esc.
+              </div>
+            )}
+
+            <div className="flex gap-1.5 pt-1">
               <button
-                onClick={loadGalabaAmirTemurPreset}
-                className="w-full py-1.5 px-2 bg-tactical-900 hover:bg-police-blue/30 border border-police-blue/40 text-slate-200 hover:text-white rounded font-mono text-[11px] flex items-center gap-1.5 transition-all text-left truncate"
+                onClick={undoLastWaypoint}
+                disabled={waypoints.length === 0}
+                className="flex-1 py-1.5 px-2 bg-tactical-900 hover:bg-tactical-800 disabled:opacity-40 border border-tactical-700 text-slate-300 rounded font-mono text-xs flex items-center justify-center gap-1 transition-all"
               >
-                <MapPin className="w-3.5 h-3.5 text-police-cyan shrink-0" />
-                <span>1. G'alaba &amp; Amir Temur (Markaz)</span>
-              </button>
-              <button
-                onClick={loadNavoiyStreetPreset}
-                className="w-full py-1.5 px-2 bg-tactical-900 hover:bg-police-blue/30 border border-police-blue/40 text-slate-200 hover:text-white rounded font-mono text-[11px] flex items-center gap-1.5 transition-all text-left truncate"
-              >
-                <MapPin className="w-3.5 h-3.5 text-police-cyan shrink-0" />
-                <span>2. Navoiy ko'chasi (Qizilqum 13)</span>
+                <Undo2 className="w-3 h-3 text-amber-400" />
+                Oxirgisini o'chirish
               </button>
             </div>
 
-            <div className="flex gap-1.5 pt-1">
+            <div className="flex gap-1.5">
               <button
                 onClick={clearWaypoints}
                 className="flex-1 py-1.5 px-2 bg-tactical-900 hover:bg-tactical-800 border border-tactical-700 text-slate-300 rounded font-mono text-xs flex items-center justify-center gap-1 transition-all"
@@ -833,7 +824,7 @@ export const GoogleMapsPatrolView: React.FC = () => {
         <div className="bg-tactical-950/80 border-l-2 border-police-cyan rounded p-2 text-[10px] font-sans text-slate-400 leading-relaxed shadow-lg">
           <p className="font-semibold text-police-cyan mb-0.5">💡 Qo'llanma:</p>
           <ul className="list-disc list-inside space-y-0.5">
-            <li><b>Demo rejimida:</b> Xarita ustiga bosing — robot Google Maps ko'chalari bo'ylab avtonom harakatlanadi.</li>
+            <li><b>Demo rejimida:</b> "Marshrut chizish" tugmasini bosib, xaritada nuqtalarni ketma-ket bosing; robot aynan shu chiziq bo'ylab yuradi va oxiriga yetgach orqaga qaytadi.</li>
             <li><b>Real rejimda:</b> Raspberry Pi IP sini kiriting va planshetning aniq GPS koordinatasini jonli kuzating.</li>
           </ul>
         </div>
