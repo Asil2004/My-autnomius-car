@@ -33,21 +33,23 @@ const SKIN = '#c1987c';
 const MID_X = 511.5;
 const EYE_Y = 630; // ko'z qisish o'qi
 const EYE_CX = 382;
-const MOUTH_Y = 807; // lab burchaklari
-const MOUTH_MID_Y = 827; // yopiq lab chizig'ining o'rtasi
-const MOUTH_HALF = 92;
+const MOUTH_CY = 822; // og'iz chizig'ining o'rtasi (tinch holat)
+const MOUTH_HALF = 82; // og'iz yarim kengligi
 const POINTER_FOLLOW_MS = 2500;
 
-// Og'iz shakllari: open = ochilish (0..1), width = kenglik koeffitsiyenti
+// Og'iz shakllari: open = vertikal ochilish (0..1), width = kenglik (deyarli o'zgarmaydi:
+// og'iz yon tomonga cho'zilmaydi, lablar tepa-pastga ochilib yopiladi)
 const VISEMES = [
   { open: 1.0, width: 1.0 }, // A
-  { open: 0.45, width: 1.14 }, // E
-  { open: 0.3, width: 1.18 }, // I
-  { open: 0.8, width: 0.62 }, // O
-  { open: 0.5, width: 0.5 }, // U
-  { open: 0.0, width: 0.96 } // M, B, P
+  { open: 0.62, width: 0.98 }, // E
+  { open: 0.45, width: 0.97 }, // I
+  { open: 0.85, width: 0.86 }, // O
+  { open: 0.55, width: 0.84 }, // U
+  { open: 0.06, width: 1.0 } // M, B, P
 ];
-const MAX_H = 80; // eng katta ochilishda lab o'rtasidagi balandlik (px)
+const MAX_H = 58; // eng katta ochilishda lablar orasidagi masofa (px)
+const UPPER_SHARE = 0.3; // ochilishning qancha qismi yuqori labga (qolgani pastki jag')
+const Q = 4 / 3; // kubik egri: boshqaruv nuqtasi -> haqiqiy cho'qqi koeffitsiyenti
 
 // Chap ko'z shakli (bodom). O'ng ko'z shu shaklning ko'zgudagi aksi
 const EYE_UPPER = 'M 316 633 Q 384 538 452 628';
@@ -64,17 +66,18 @@ const GERB_H = (GERB_W * 563) / 577;
 
 // ---- Erkak lablari ----
 // Erkak lab ranglari: qizil emas, teriga yaqin jigarrang
-const LIP_UPPER = '#8a5a48';
-const LIP_LOWER = '#94634f';
-// Yopiq og'iz chizig'i animatsiyadagi yuqori lab bilan bir xil geometriyada (ochilishda sakrash bo'lmaydi)
-const CLOSED_HW = MOUTH_HALF * 0.96;
-const CLOSED_LIP = `M ${MID_X - CLOSED_HW} ${MOUTH_Y} Q ${MID_X} ${2 * MOUTH_MID_Y - MOUTH_Y} ${MID_X + CLOSED_HW} ${MOUTH_Y}`;
+const LIP_UPPER = '#7f5242';
+const LIP_LOWER = '#8f5d4a';
+const NOSE_SHADE = '#8d5f49';
 
-const BadgeAndLips: React.FC = () => (
+const BadgeNoseAndMouthBase: React.FC = () => (
   <g>
     <defs>
       <filter id="badgeSoft" x="-10%" y="-10%" width="120%" height="120%">
         <feGaussianBlur stdDeviation="2" />
+      </filter>
+      <filter id="faceSoft" x="-30%" y="-30%" width="160%" height="160%">
+        <feGaussianBlur stdDeviation="4" />
       </filter>
     </defs>
     {/* Furajkadagi eski gerbni yopish va O'zbekiston Respublikasi gerbini qo'yish */}
@@ -87,17 +90,17 @@ const BadgeAndLips: React.FC = () => (
       height={GERB_H}
       preserveAspectRatio="xMidYMid meet"
     />
-    {/* Rasmdagi qizil (ayolona) lab chizig'ini teri bilan yopib, o'rniga erkak lab chizig'i */}
-    <path d={CLOSED_LIP} fill="none" stroke={SKIN} strokeWidth="16" strokeLinecap="round" />
-    <path d={CLOSED_LIP} fill="none" stroke={LIP_UPPER} strokeWidth="4" strokeLinecap="round" />
-    <path
-      d={`M ${MID_X - 40} ${MOUTH_MID_Y + 14} Q ${MID_X} ${MOUTH_MID_Y + 24} ${MID_X + 40} ${MOUTH_MID_Y + 14}`}
-      fill="none"
-      stroke={LIP_LOWER}
-      strokeOpacity="0.35"
-      strokeWidth="3"
-      strokeLinecap="round"
-    />
+    {/* Rasmdagi tabassumli qizil lab chizig'i to'liq teri bilan yopiladi: gapirganda orqadan ko'rinmaydi.
+        Lablar endi faqat animatsiyali og'iz qatlamida chiziladi */}
+    <ellipse cx={MID_X} cy="816" rx="120" ry="30" fill={SKIN} />
+
+    {/* Burun: burun qirrasi soyasi, uchi, qanotlari va pastki soya */}
+    <path d="M 500 650 Q 494 692 489 728" fill="none" stroke={NOSE_SHADE} strokeOpacity="0.22" strokeWidth="10" strokeLinecap="round" filter="url(#faceSoft)" />
+    <ellipse cx={MID_X} cy="764" rx="30" ry="7" fill={NOSE_SHADE} opacity="0.28" filter="url(#faceSoft)" />
+    <ellipse cx={MID_X + 3} cy="742" rx="13" ry="9" fill="#fff" opacity="0.16" filter="url(#faceSoft)" />
+    <path d="M 489 734 Q 478 747 488 756 Q 492 759 497 758" fill="none" stroke={NOSE_SHADE} strokeOpacity="0.55" strokeWidth="4" strokeLinecap="round" />
+    <path d="M 534 734 Q 545 747 535 756 Q 531 759 526 758" fill="none" stroke={NOSE_SHADE} strokeOpacity="0.55" strokeWidth="4" strokeLinecap="round" />
+    <path d="M 503 761 Q 511.5 763.5 520 761" fill="none" stroke={NOSE_SHADE} strokeOpacity="0.3" strokeWidth="3" strokeLinecap="round" />
   </g>
 );
 
@@ -138,7 +141,7 @@ export const RobotAvatar: React.FC<RobotAvatarProps> = ({ inputRef }) => {
   const irisR = useRef<SVGGElement | null>(null);
   const lidL = useRef<SVGGElement | null>(null);
   const lidR = useRef<SVGGElement | null>(null);
-  const mouthRef = useRef<SVGGElement | null>(null);
+  const openRef = useRef<SVGGElement | null>(null);
   const cavityRef = useRef<SVGPathElement | null>(null);
   const clipPathRef = useRef<SVGPathElement | null>(null);
   const teethRef = useRef<SVGPathElement | null>(null);
@@ -165,9 +168,10 @@ export const RobotAvatar: React.FC<RobotAvatarProps> = ({ inputRef }) => {
     let pointerY = 0;
     // Og'iz
     let open = 0;
-    let width = 0.96;
+    let width = 1;
     let tOpen = 0;
-    let tWidth = 0.96;
+    let tWidth = 1;
+    let smile = 0;
     let visemeIdx = 5;
     let nextViseme = 0;
     let nod = 0;
@@ -179,39 +183,57 @@ export const RobotAvatar: React.FC<RobotAvatarProps> = ({ inputRef }) => {
     };
     window.addEventListener('pointermove', onPointerMove);
 
-    const setMouth = (o: number, w: number) => {
+    const f = (n: number) => n.toFixed(1);
+    /**
+     * o: vertikal ochilish 0..1, w: kenglik koeffitsiyenti, smile: 0..1 (faqat tanilgan shaxs oldida).
+     * Og'iz har doim shu yerda chiziladi (yopiq holatda ham), shuning uchun orqasida boshqa lab ko'rinmaydi.
+     */
+    const setMouth = (o: number, w: number, smile: number) => {
       const H = o * MAX_H;
-      const hw = MOUTH_HALF * w;
+      // Ochilganda burchaklar biroz ichkariga yig'iladi (yon tomonga cho'zilmaydi)
+      const hw = MOUTH_HALF * w * (1 - 0.1 * o);
       const lx = MID_X - hw;
       const rx = MID_X + hw;
-      if (H < 1.5) {
-        mouthRef.current?.setAttribute('display', 'none');
-        return;
-      }
-      mouthRef.current?.setAttribute('display', 'inline');
-      const upper = `M ${lx} ${MOUTH_Y} Q ${MID_X} ${2 * MOUTH_MID_Y - MOUTH_Y} ${rx} ${MOUTH_Y}`;
-      const lowerCtl = 2 * (MOUTH_MID_Y + H) - MOUTH_Y;
-      const lower = `Q ${MID_X} ${lowerCtl} ${lx} ${MOUTH_Y}`;
-      const shape = `${upper} ${lower} Z`;
-      cavityRef.current?.setAttribute('d', shape);
-      clipPathRef.current?.setAttribute('d', shape);
-      // Yuqori tishlar: yuqori chiziq bo'ylab oq tasma
-      const t = Math.min(15, H * 0.34);
-      teethRef.current?.setAttribute(
-        'd',
-        `M ${lx} ${MOUTH_Y - 2} Q ${MID_X} ${2 * MOUTH_MID_Y - MOUTH_Y} ${rx} ${MOUTH_Y - 2} L ${rx} ${MOUTH_Y + t} Q ${MID_X} ${2 * MOUTH_MID_Y - MOUTH_Y + 2 * t} ${lx} ${MOUTH_Y + t} Z`
-      );
-      const tongue = tongueRef.current;
-      if (tongue) {
-        tongue.setAttribute('cx', String(MID_X));
-        tongue.setAttribute('cy', String(MOUTH_MID_Y + H * 0.82));
-        tongue.setAttribute('rx', String(hw * 0.52));
-        tongue.setAttribute('ry', String(Math.max(2, H * 0.34)));
+      const cornerY = MOUTH_CY - 1 - smile * 7;
+      const restMid = MOUTH_CY + 2 + smile * 3; // tinch holatda deyarli to'g'ri chiziq
+      const upperMid = restMid - H * UPPER_SHARE;
+      const lowerMid = restMid + H * (1 - UPPER_SHARE);
+      const cU = cornerY + (upperMid - cornerY) * Q;
+      const cL = cornerY + (lowerMid - cornerY) * Q;
+      const kx = hw * 0.42;
+      const upper = `M ${f(lx)} ${f(cornerY)} C ${f(lx + kx)} ${f(cU)} ${f(rx - kx)} ${f(cU)} ${f(rx)} ${f(cornerY)}`;
+      const lowerBack = `C ${f(rx - kx)} ${f(cL)} ${f(lx + kx)} ${f(cL)} ${f(lx)} ${f(cornerY)}`;
+      const shape = `${upper} ${lowerBack} Z`;
+
+      const isOpen = H >= 1.2;
+      openRef.current?.setAttribute('display', isOpen ? 'inline' : 'none');
+      if (isOpen) {
+        cavityRef.current?.setAttribute('d', shape);
+        clipPathRef.current?.setAttribute('d', shape);
+        // Yuqori tishlar: yuqori lab ostida oq tasma, pastki cheti egri
+        const t = Math.min(11, H * 0.3);
+        teethRef.current?.setAttribute(
+          'd',
+          `M ${f(lx)} ${f(cornerY - 14)} L ${f(rx)} ${f(cornerY - 14)} L ${f(rx)} ${f(cornerY + t * 0.2)} ` +
+            `C ${f(rx - kx)} ${f(cU + t * Q)} ${f(lx + kx)} ${f(cU + t * Q)} ${f(lx)} ${f(cornerY + t * 0.2)} Z`
+        );
+        const tongue = tongueRef.current;
+        if (tongue) {
+          tongue.setAttribute('cx', String(MID_X));
+          tongue.setAttribute('cy', f(lowerMid - H * 0.08));
+          tongue.setAttribute('rx', f(hw * 0.55));
+          tongue.setAttribute('ry', f(Math.max(2, H * 0.3)));
+        }
       }
       upperLipRef.current?.setAttribute('d', upper);
-      lowerLipRef.current?.setAttribute('d', `M ${rx} ${MOUTH_Y} ${lower}`);
-      // Pastki lab ostidagi yengil soya (chuqurlik hissi)
-      shadowRef.current?.setAttribute('d', `M ${rx - 8} ${MOUTH_Y + 6} Q ${MID_X} ${lowerCtl + 10} ${lx + 8} ${MOUTH_Y + 6}`);
+      lowerLipRef.current?.setAttribute('d', `M ${f(rx)} ${f(cornerY)} ${lowerBack}`);
+      lowerLipRef.current?.setAttribute('stroke-width', f(3 + Math.min(1, H / 14) * 2.5));
+      // Pastki lab hajmi: lab ostidagi yumshoq soya jag' bilan birga pastga tushadi
+      const sy = lowerMid + 13;
+      shadowRef.current?.setAttribute(
+        'd',
+        `M ${f(MID_X - hw * 0.5)} ${f(sy - 3)} Q ${f(MID_X)} ${f(sy + 5)} ${f(MID_X + hw * 0.5)} ${f(sy - 3)}`
+      );
     };
 
     let raf = 0;
@@ -274,17 +296,22 @@ export const RobotAvatar: React.FC<RobotAvatarProps> = ({ inputRef }) => {
           nextViseme = now + 90 + Math.random() * 90;
         }
         const v = VISEMES[visemeIdx];
-        tOpen = v.open * (0.4 + 0.6 * Math.min(1, speech));
+        // Ochilish asosan ovoz balandligiga bog'liq (jim joylarda og'iz yopiladi), shakl esa visemadan
+        tOpen = v.open * (0.25 + 0.75 * Math.min(1, speech));
         tWidth = v.width;
       } else {
         tOpen = 0;
-        tWidth = 0.96;
+        tWidth = 1;
         nextViseme = 0;
       }
-      const km = 1 - Math.exp(-dt * 24);
+      // Ochilish tez, yopilish biroz sekinroq: tabiiy jag' harakati
+      const km = 1 - Math.exp(-dt * (tOpen > open ? 22 : 15));
       open += (tOpen - open) * km;
-      width += (tWidth - width) * km;
-      setMouth(open < 0.02 ? 0 : open, width);
+      width += (tWidth - width) * (1 - Math.exp(-dt * 14));
+      // Tabassum faqat tanilgan shaxs oldida va jim turganda
+      const tSmile = input.happy && speech <= 0.05 ? 1 : 0;
+      smile += (tSmile - smile) * (1 - Math.exp(-dt * 4));
+      setMouth(open < 0.02 ? 0 : open, width, smile);
 
       // ---- Bosh: nafas, burilish, nutq paytida yengil tebranish ----
       nod += ((speech > 0.05 ? Math.sin(now / 95) * speech * 0.7 : 0) - nod) * (1 - Math.exp(-dt * 12));
@@ -306,22 +333,24 @@ export const RobotAvatar: React.FC<RobotAvatarProps> = ({ inputRef }) => {
       <div ref={rootRef} style={{ height: 'min(94%, 1100px)', aspectRatio: '1024 / 1280', willChange: 'transform' }}>
         <svg viewBox="0 0 1024 1280" className="w-full h-full block" role="img">
           <image href={baseUrl} x="0" y="0" width="1024" height="1280" />
-          <BadgeAndLips />
+          <BadgeNoseAndMouthBase />
           <Eye id="eyeL" irisRef={irisL} lidRef={lidL} />
           <Eye id="eyeR" irisRef={irisR} lidRef={lidR} mirror />
-          {/* Og'iz bo'shlig'i, tishlar, til va lablar (yopiq paytda yashirin, asl lab chizig'i ko'rinadi) */}
-          <g ref={mouthRef} display="none">
-            <clipPath id="mouthClip">
-              <path ref={clipPathRef} d="" />
-            </clipPath>
-            <path ref={shadowRef} d="" fill="none" stroke="#8d5f49" strokeOpacity="0.35" strokeWidth="9" strokeLinecap="round" />
-            <path ref={cavityRef} d="" fill="#3a1418" />
-            <g clipPath="url(#mouthClip)">
-              <ellipse ref={tongueRef} cx={MID_X} cy={MOUTH_MID_Y} rx="40" ry="8" fill="#c2566a" />
-              <path ref={teethRef} d="" fill="#f4f1ea" />
+          {/* Og'iz: yagona animatsiyali qatlam (tinch holatdagi lab chizig'i ham shu yerda) */}
+          <g>
+            <path ref={shadowRef} d="" fill="none" stroke="#8d5f49" strokeOpacity="0.22" strokeWidth="7" strokeLinecap="round" filter="url(#badgeSoft)" />
+            <g ref={openRef} display="none">
+              <clipPath id="mouthClip">
+                <path ref={clipPathRef} d="" />
+              </clipPath>
+              <path ref={cavityRef} d="" fill="#2b0f12" />
+              <g clipPath="url(#mouthClip)">
+                <ellipse ref={tongueRef} cx={MID_X} cy={MOUTH_CY} rx="40" ry="8" fill="#b4505f" />
+                <path ref={teethRef} d="" fill="#f2eee6" />
+              </g>
             </g>
-            <path ref={upperLipRef} d="" fill="none" stroke={LIP_UPPER} strokeWidth="4" strokeLinecap="round" />
-            <path ref={lowerLipRef} d="" fill="none" stroke={LIP_LOWER} strokeWidth="4.5" strokeLinecap="round" />
+            <path ref={upperLipRef} d="" fill="none" stroke={LIP_UPPER} strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+            <path ref={lowerLipRef} d="" fill="none" stroke={LIP_LOWER} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
           </g>
         </svg>
       </div>

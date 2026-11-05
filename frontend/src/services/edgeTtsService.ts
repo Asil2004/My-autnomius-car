@@ -47,11 +47,75 @@ class EdgeTtsService {
   private currentAudio: HTMLAudioElement | null = null;
   private voices: SpeechSynthesisVoice[] = [];
 
+  // Lab sinxroni uchun haqiqiy ovoz balandligini o'lchash (Web Audio)
+  private audioCtx: AudioContext | null = null;
+  private analyser: AnalyserNode | null = null;
+  private levelBuf: Float32Array<ArrayBuffer> | null = null;
+  private analysedAudio: HTMLAudioElement | null = null;
+
   constructor() {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       this.initVoices();
       window.speechSynthesis.onvoiceschanged = () => this.initVoices();
     }
+    if (typeof window !== 'undefined') {
+      // AudioContext faqat foydalanuvchi harakatidan keyin ishlaydi
+      const unlock = () => {
+        this.ensureAudioCtx();
+        if (this.audioCtx?.state === 'running') {
+          window.removeEventListener('pointerdown', unlock, true);
+          window.removeEventListener('keydown', unlock, true);
+        }
+      };
+      window.addEventListener('pointerdown', unlock, true);
+      window.addEventListener('keydown', unlock, true);
+    }
+  }
+
+  private ensureAudioCtx(): void {
+    try {
+      if (!this.audioCtx) {
+        const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (!Ctx) return;
+        this.audioCtx = new Ctx();
+        this.analyser = this.audioCtx.createAnalyser();
+        this.analyser.fftSize = 1024;
+        this.analyser.smoothingTimeConstant = 0.2;
+        this.analyser.connect(this.audioCtx.destination);
+        this.levelBuf = new Float32Array(this.analyser.fftSize);
+      }
+      if (this.audioCtx.state === 'suspended') void this.audioCtx.resume();
+    } catch {
+      this.audioCtx = null;
+      this.analyser = null;
+    }
+  }
+
+  /** Audio elementni analizatorga ulash. Faqat AudioContext ishlayotgan bo'lsa (aks holda ovoz o'chib qolardi) */
+  private attachAnalyser(audio: HTMLAudioElement): void {
+    if (!this.audioCtx || !this.analyser || this.audioCtx.state !== 'running') return;
+    try {
+      this.audioCtx.createMediaElementSource(audio).connect(this.analyser);
+      this.analysedAudio = audio;
+    } catch {
+      this.analysedAudio = null;
+    }
+  }
+
+  /**
+   * Hozir ijro etilayotgan Sardor audiosining balandligi 0..1.
+   * null: o'lchab bo'lmaydi (masalan, Web Speech yo'li), unda chaqiruvchi o'zi taxminiy ritm beradi.
+   */
+  public getLevel(): number | null {
+    const audio = this.currentAudio;
+    if (!audio || audio !== this.analysedAudio || !this.analyser || !this.levelBuf) return null;
+    if (audio.paused) return 0;
+    this.analyser.getFloatTimeDomainData(this.levelBuf);
+    let sum = 0;
+    for (let i = 0; i < this.levelBuf.length; i++) sum += this.levelBuf[i] * this.levelBuf[i];
+    const rms = Math.sqrt(sum / this.levelBuf.length);
+    // Shovqin chegarasi va normallashtirish (nutq RMS ~0.03..0.25)
+    return Math.min(1, Math.max(0, (rms - 0.012) * 6));
   }
 
   private initVoices(): void {
@@ -109,6 +173,8 @@ class EdgeTtsService {
         const audio = new Audio(matchedAudioUrl);
         this.currentAudio = audio;
         audio.playbackRate = options?.rate ?? this.defaultRate; // 1.0x
+        this.ensureAudioCtx();
+        this.attachAnalyser(audio);
 
         audio.onplay = () => {
           this.isSpeaking = true;

@@ -55,12 +55,17 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
     let speakTick = 0;
     const speechTimer = window.setInterval(() => {
       speakTick++;
-      eyeInputRef.current.speech = 0.5 + Math.sin(speakTick * 0.8) * 0.4 + Math.random() * 0.2;
-    }, 50);
+      // Haqiqiy Sardor audiosining balandligi (jim joylarda og'iz yopiladi); o'lchab bo'lmasa taxminiy ritm
+      const level = edgeTtsService.getLevel();
+      eyeInputRef.current.speech = level !== null
+        ? level
+        : 0.5 + Math.sin(speakTick * 0.8) * 0.4 + Math.random() * 0.2;
+    }, 33);
 
+    // Uzun gaplar animatsiyasi audio tugamasdan uzilmasligi uchun matn uzunligiga qarab
     const safetyTimeout = window.setTimeout(() => {
       finish();
-    }, 7500);
+    }, Math.max(7500, phraseText.length * 95 + 2500));
 
     const finish = () => {
       window.clearTimeout(safetyTimeout);
