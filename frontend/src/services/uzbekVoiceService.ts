@@ -92,14 +92,24 @@ class UzbekVoiceService {
 
     const endpoint = this.getEndpoint();
     const formData = new FormData();
-    
-    // Fayl nomini mime-type ga mos ravishda uzatamiz
-    const filename = audioBlob.type.includes('wav') ? 'speech.wav' 
-      : audioBlob.type.includes('mp3') ? 'speech.mp3' 
-      : audioBlob.type.includes('ogg') ? 'speech.ogg' 
-      : 'speech.webm';
 
-    formData.append('file', audioBlob, filename);
+    // UzbekVoice.ai brauzer MediaRecorder yozgan WebM/Opus faylni qabul qilmaydi: 500 "Internal Server Error"
+    // qaytaradi va CORS sarlavhasi bo'lmagani uchun brauzer buni "Failed to fetch" deb ko'radi.
+    // Shuning uchun yozuv 16 kHz mono WAV (PCM16) ga o'giriladi. MP3/WAV bo'lsa o'zi yuboriladi.
+    const isMp3 = /mpeg|mp3/.test(audioBlob.type);
+    const isWav = /wav/.test(audioBlob.type);
+    let uploadBlob = audioBlob;
+    let filename = isWav ? 'speech.wav' : isMp3 ? 'speech.mp3' : 'speech.webm';
+    if (!isWav && !isMp3) {
+      try {
+        uploadBlob = await this.toWav16k(audioBlob);
+        filename = 'speech.wav';
+      } catch (convErr) {
+        console.warn('[UzbekVoice] WAV ga o\'girib bo\'lmadi, asl format yuboriladi:', convErr);
+      }
+    }
+
+    formData.append('file', uploadBlob, filename);
     formData.append('return_offsets', 'false');
     formData.append('run_diarization', 'false');
     formData.append('language', 'uz');
@@ -132,7 +142,9 @@ class UzbekVoiceService {
           },
           body: formData,
         });
-      } catch (proxyErr) {
+        // GitHub Pages'da /api/stt yo'q (404): asl tarmoq xatosini ko'rsatamiz
+        if (!response.ok) throw new Error('proxy unavailable');
+      } catch {
         throw new Error(
           "Ovozli serverga ulanishda xatolik yuz berdi. Internet yoki CORS cheklovini tekshiring: " +
           (fetchErr instanceof Error ? fetchErr.message : String(fetchErr))
@@ -140,19 +152,25 @@ class UzbekVoiceService {
       }
     }
 
-    if (!response.ok) {
-      let errDetail = `Status: ${response.status} ${response.statusText}`;
-      try {
-        const errJson = await response.json();
-        errDetail = errJson.message || errJson.error || JSON.stringify(errJson);
-      } catch {
-        const errText = await response.text();
-        if (errText) errDetail = errText.slice(0, 200);
-      }
-      throw new Error(`UzbekVoice.ai STT xatoligi (${response.status}): ${errDetail}`);
+    // Javob tanasi faqat BIR MARTA o'qiladi. Avval json(), xato bo'lsa text() chaqirilganda
+    // "Failed to execute 'text' on 'Response': body stream already read" xatosi chiqardi
+    // (masalan, server 401 da JSON emas, HTML sahifa qaytaradi).
+    const rawBody = await response.text().catch(() => '');
+    let parsed: unknown = null;
+    try {
+      parsed = rawBody ? JSON.parse(rawBody) : null;
+    } catch {
+      parsed = null;
     }
 
-    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(this.describeHttpError(response.status, parsed, rawBody));
+    }
+
+    if (parsed === null) {
+      throw new Error("UzbekVoice.ai serveridan tushunarsiz javob keldi (JSON emas).");
+    }
+    const data = parsed;
 
     // Javob formatini moslashtirish (turli API versiyalariga tolerant)
     let extractedText = '';
@@ -182,6 +200,68 @@ class UzbekVoiceService {
       text: extractedText,
       raw: data
     };
+  }
+
+  /** Har qanday brauzer audio yozuvini 16 kHz mono 16-bit WAV ga o'girish */
+  private async toWav16k(blob: Blob): Promise<Blob> {
+    const SR = 16000;
+    const decoder = new OfflineAudioContext(1, 1, SR);
+    const decoded = await decoder.decodeAudioData(await blob.arrayBuffer());
+    const length = Math.max(1, Math.ceil(decoded.duration * SR));
+    const offline = new OfflineAudioContext(1, length, SR);
+    const src = offline.createBufferSource();
+    src.buffer = decoded;
+    src.connect(offline.destination);
+    src.start();
+    const pcm = (await offline.startRendering()).getChannelData(0);
+
+    const buffer = new ArrayBuffer(44 + pcm.length * 2);
+    const view = new DataView(buffer);
+    const writeStr = (off: number, s: string) => {
+      for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i));
+    };
+    writeStr(0, 'RIFF');
+    view.setUint32(4, 36 + pcm.length * 2, true);
+    writeStr(8, 'WAVE');
+    writeStr(12, 'fmt ');
+    view.setUint32(16, 16, true); // fmt bo'lagi hajmi
+    view.setUint16(20, 1, true); // PCM
+    view.setUint16(22, 1, true); // mono
+    view.setUint32(24, SR, true);
+    view.setUint32(28, SR * 2, true); // bayt/soniya
+    view.setUint16(32, 2, true); // blok
+    view.setUint16(34, 16, true); // bit
+    writeStr(36, 'data');
+    view.setUint32(40, pcm.length * 2, true);
+    for (let i = 0; i < pcm.length; i++) {
+      const s = Math.max(-1, Math.min(1, pcm[i]));
+      view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    }
+    return new Blob([buffer], { type: 'audio/wav' });
+  }
+
+  /** Server xatosini foydalanuvchiga tushunarli o'zbekcha xabarga aylantirish */
+  private describeHttpError(status: number, parsed: unknown, rawBody: string): string {
+    const rec = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+    const serverMsg =
+      (rec && (typeof rec.error === 'string' ? rec.error : typeof rec.message === 'string' ? rec.message : null)) ||
+      // HTML sahifadan sarlavhani olamiz (<title>401 Unauthorized</title>)
+      rawBody.match(/<title>([^<]+)<\/title>/i)?.[1] ||
+      rawBody.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+
+    if (status === 401 || status === 403) {
+      return "UzbekVoice.ai API kaliti noto'g'ri yoki muddati tugagan (401). \"API\" tugmasi orqali to'g'ri kalitni kiriting.";
+    }
+    if (status === 400 && rec?.type === 'ffmpeg_failed') {
+      return "Yozilgan ovoz juda qisqa yoki buzilgan. Tugmani bosib, kamida 1-2 soniya gapiring.";
+    }
+    if (status === 402 || status === 429) {
+      return `UzbekVoice.ai limiti tugagan yoki so'rovlar juda ko'p (${status}). Keyinroq urinib ko'ring.`;
+    }
+    if (status === 404 || status === 405) {
+      return `Ovozni aniqlash manzili topilmadi (${status}). Sozlamalardagi endpointni tekshiring.`;
+    }
+    return `UzbekVoice.ai STT xatoligi (${status})${serverMsg ? `: ${serverMsg}` : ''}`;
   }
 
   /**
