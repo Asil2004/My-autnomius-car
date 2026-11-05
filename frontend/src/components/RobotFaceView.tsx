@@ -2,6 +2,9 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Lock, ShieldCheck } from 'lucide-react';
 import { faceRecognitionService } from '../services/faceRecognitionService';
 import { faceViewSettings } from '../services/faceViewSettings';
+import { HandsFreeListener } from '../services/handsFreeListener';
+import { uzbekVoiceService } from '../services/uzbekVoiceService';
+import { aiDialogService } from '../services/aiDialogService';
 import { tacticalAudio } from '../services/audioService';
 import { edgeTtsService } from '../services/edgeTtsService';
 import { nvrRecordingService } from '../services/nvrRecordingService';
@@ -20,6 +23,11 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
   // Kamera va avto-salom AI & Avtonom bo'limida sozlanadi (bosh sahifada boshqaruv elementlari yo'q)
   const [cameraActive, setCameraActive] = useState<boolean>(() => faceViewSettings.get().cameraEnabled);
   const isSpeakingRef = useRef(false);
+  // Qo'l tegizmasdan suhbat: mikrofon tinglovchisi, javob tayyorlanmoqdami, oxirgi suhbat vaqti
+  const listenerRef = useRef<HandsFreeListener | null>(null);
+  const processingRef = useRef(false);
+  const lastConversationRef = useRef(0);
+  const speakRef = useRef<(text: string, opts?: { force?: boolean; onDone?: () => void }) => void>(() => {});
   const lastGreetTimeRef = useRef<number>(0);
   const lastGreetedIdRef = useRef<string | null>(null);
 
@@ -47,9 +55,17 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
   // ==========================================================================
   // AI OVOZIGA MOS NUTQ (Edge TTS Sardor 1x). Ko'zlar nutq ritmiga javob beradi
   // ==========================================================================
-  const speakDemoPhrase = useCallback((phraseText: string) => {
-    if (isSpeakingRef.current) return;
+  const finishRef = useRef<(() => void) | null>(null);
+  const speakDemoPhrase = useCallback((phraseText: string, opts?: { force?: boolean; onDone?: () => void }) => {
+    if (isSpeakingRef.current) {
+      if (!opts?.force) return;
+      // Suhbat javobi salomlashuvdan muhimroq: joriy gapni to'xtatamiz
+      finishRef.current?.();
+      edgeTtsService.stop();
+    }
     isSpeakingRef.current = true;
+    // Robot gapirayotganda mikrofon o'z ovozini eshitib qolmasligi uchun tinglash to'xtatiladi
+    listenerRef.current?.setPaused(true);
     tacticalAudio.playCommandBeep();
 
     let speakTick = 0;
@@ -67,27 +83,76 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
       finish();
     }, Math.max(7500, phraseText.length * 95 + 2500));
 
+    let done = false;
     const finish = () => {
+      if (done) return;
+      done = true;
+      if (finishRef.current === finish) finishRef.current = null;
       window.clearTimeout(safetyTimeout);
       clearInterval(speechTimer);
       eyeInputRef.current.speech = 0;
       isSpeakingRef.current = false;
+      // Aks-sado so'nguncha biroz kutib, tinglashni qayta yoqamiz
+      window.setTimeout(() => {
+        if (!isSpeakingRef.current && !processingRef.current) listenerRef.current?.setPaused(false);
+      }, 500);
+      opts?.onDone?.();
     };
+    finishRef.current = finish;
 
     edgeTtsService.speak(phraseText, { voice: 'uz-UZ-SardorNeural', rate: 1.0 }, undefined, finish);
   }, []);
+
+  // ==========================================================================
+  // QO'L TEGIZMASDAN SUHBAT: mikrofon gapni sezadi -> UzbekVoice.ai matnga aylantiradi -> AI javob beradi -> Sardor o'qiydi
+  // ==========================================================================
+  const [listenEnabled, setListenEnabled] = useState<boolean>(() => faceViewSettings.get().listen);
+  useEffect(() => faceViewSettings.subscribe((s) => setListenEnabled(s.listen)), []);
+
+  useEffect(() => {
+    if (!listenEnabled) return;
+    const listener = new HandsFreeListener({
+      onUtterance: async (wav) => {
+        if (processingRef.current || isSpeakingRef.current) return;
+        processingRef.current = true;
+        lastConversationRef.current = Date.now();
+        listener.setPaused(true);
+        try {
+          const { text } = await uzbekVoiceService.transcribeAudio(wav);
+          if (text.replace(/[^\p{L}]/gu, '').length < 2) return; // shovqin yoki bitta tovush
+          console.info('[Suhbat] Fuqaro:', text);
+          const reply = await aiDialogService.respond(text);
+          console.info('[Suhbat] Robot:', reply.answer, `(${reply.source})`);
+          lastConversationRef.current = Date.now();
+          speakRef.current(reply.answer, { force: true, onDone: () => (lastConversationRef.current = Date.now()) });
+        } catch (err) {
+          // Bo'sh nutq yoki tarmoq xatosi: jim o'tamiz, keyingi gapni kutamiz
+          console.warn('[Suhbat] Nutqni aniqlab bo\'lmadi:', err instanceof Error ? err.message : err);
+        } finally {
+          processingRef.current = false;
+          if (!isSpeakingRef.current) listener.setPaused(false);
+        }
+      }
+    });
+    listenerRef.current = listener;
+    listener.start().catch((err) => console.warn('[Suhbat] Mikrofon ochilmadi:', err));
+    return () => {
+      listener.stop();
+      if (listenerRef.current === listener) listenerRef.current = null;
+    };
+  }, [listenEnabled]);
 
   // Ekranga birinchi bosish: brauzer ovoz va disk ruxsatini faqat foydalanuvchi harakatidan keyin beradi
   const handleUnlockAudio = useCallback(() => {
     // Yangi seansda D diskdagi NVR papkasiga yozish ruxsatini qayta tiklash (brauzer faqat bosishda so'raydi)
     void nvrRecordingService.resumeDiskAccess();
+    listenerRef.current?.resume();
     tacticalAudio.playClick();
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.resume();
     }
   }, []);
 
-  const speakRef = useRef(speakDemoPhrase);
   useEffect(() => {
     speakRef.current = speakDemoPhrase;
   }, [speakDemoPhrase]);
@@ -192,17 +257,17 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
                 input.happy = true;
 
                 // Kamera asosida tanilgan xodim bilan salomlashish
-                if (autoGreetRef.current && (lastGreetedIdRef.current !== main.person.id || nowMs - lastGreetTimeRef.current > 18000)) {
+                if (autoGreetRef.current && !processingRef.current && nowMs - lastConversationRef.current > 30000 && (lastGreetedIdRef.current !== main.person.id || nowMs - lastGreetTimeRef.current > 18000)) {
                   lastGreetedIdRef.current = main.person.id;
                   lastGreetTimeRef.current = nowMs;
-                  const firstName = main.person.fullName.split(' ')[0] || main.person.fullName;
-                  speakRef.current(`Assalomu alaykum ${firstName}! QALQON tizimi shaxsingizni tasdiqladi.`);
+                  // To'liq ism: "Qo'ldoshev Sarvar" da birinchi so'z familiya. Tayyor Sardor audiosi ism bo'yicha tanlanadi
+                  speakRef.current(`Assalomu alaykum ${main.person.fullName}! QALQON tizimi shaxsingizni tasdiqladi.`);
                 }
               } else if (faceCycles >= STRANGER_AFTER_CYCLES) {
                 input.happy = false;
 
                 // Kamera asosida istalgan inson/piyoda ko'ringanda avtomatik salomlashish va og'iz qimirlashi
-                if (autoGreetRef.current && (lastGreetedIdRef.current !== 'stranger' || nowMs - lastGreetTimeRef.current > 18000)) {
+                if (autoGreetRef.current && !processingRef.current && nowMs - lastConversationRef.current > 30000 && (lastGreetedIdRef.current !== 'stranger' || nowMs - lastGreetTimeRef.current > 18000)) {
                   lastGreetedIdRef.current = 'stranger';
                   lastGreetTimeRef.current = nowMs;
                   speakRef.current("Assalomu alaykum! Men QALQON avtonom patrul robotiman. Jamoat xavfsizligini ta'minlashga tayyorman!");

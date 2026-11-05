@@ -8,10 +8,12 @@ export interface FaceViewSettings {
   cameraEnabled: boolean;
   /** Kamera odamni ko'rganda avtomatik salom berish */
   autoGreet: boolean;
+  /** Bosh sahifada mikrofon orqali qo'l tegizmasdan tinglash va javob berish */
+  listen: boolean;
 }
 
 const KEY = 'qalqon.faceView.v1';
-const DEFAULTS: FaceViewSettings = { cameraEnabled: true, autoGreet: true };
+const DEFAULTS: FaceViewSettings = { cameraEnabled: true, autoGreet: true, listen: true };
 
 function load(): FaceViewSettings {
   try {

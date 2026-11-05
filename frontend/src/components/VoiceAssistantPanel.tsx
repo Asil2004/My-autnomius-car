@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { Mic, Key, Eye, EyeOff, Bot, Save, Volume2, CheckCircle2, Camera, CameraOff, Hand } from 'lucide-react';
+import { Mic, Key, Eye, EyeOff, Bot, Save, Volume2, CheckCircle2, Camera, CameraOff, Hand, Ear } from 'lucide-react';
 import { uzbekVoiceService } from '../services/uzbekVoiceService';
 import { aiDialogService } from '../services/aiDialogService';
 import { edgeTtsService } from '../services/edgeTtsService';
 import { tacticalAudio } from '../services/audioService';
 import { faceViewSettings, type FaceViewSettings } from '../services/faceViewSettings';
 import { SpeechToSpeechModal } from './SpeechToSpeechModal';
+import { answerCache } from '../services/answerCache';
+import { qaCount } from '../services/localKnowledge';
 
 /**
  * AI & Avtonom bo'limi: ovozli muloqot va robot yuzi (bosh sahifa) sozlamalari.
@@ -30,6 +32,24 @@ export const VoiceAssistantPanel: React.FC = () => {
     setSaved(true);
     tacticalAudio.playCommandBeep();
     setTimeout(() => setSaved(false), 2500);
+  };
+
+  // Lokal bilim bazasi va AI javoblari keshi
+  const knowledge = qaCount();
+  const [cacheSize, setCacheSize] = useState(() => answerCache.size());
+
+  // Kalitni saqlab, erkin savol bilan AI javobini sinash (Gemini ishlayaptimi yoki yo'qmi ko'rinadi)
+  const [brainTest, setBrainTest] = useState<string | null>(null);
+  const handleTestBrain = async () => {
+    aiDialogService.setGeminiKey(geminiApiKey);
+    setBrainTest('...');
+    const r = await aiDialogService.respond("Toshkent qaysi davlatning poytaxti? Bir gap bilan javob ber.", { skipCache: true });
+    setCacheSize(answerCache.size());
+    setBrainTest(
+      r.source === 'gemini_llm'
+        ? `✓ Gemini ishlayapti: ${r.answer}`
+        : `✗ Gemini javob bermadi${aiDialogService.lastLlmError ? ` (${aiDialogService.lastLlmError})` : ' (kalit kiritilmagan)'}. Lokal javob: ${r.answer}`
+    );
   };
 
   const handleTestVoice = () => {
@@ -80,6 +100,17 @@ export const VoiceAssistantPanel: React.FC = () => {
             {settings.autoGreet ? 'Avto-salom: faol' : "Avto-salom: o'chiq"}
           </button>
           <button
+            onClick={() => {
+              tacticalAudio.playClick();
+              faceViewSettings.set({ listen: !settings.listen });
+            }}
+            className={toggleBtn(settings.listen)}
+            title="Bosh sahifadagi robot mikrofon orqali gapingizni o'zi eshitadi va javob beradi"
+          >
+            <Ear className="w-4 h-4" />
+            {settings.listen ? 'Tinglash: faol' : "Tinglash: o'chiq"}
+          </button>
+          <button
             onClick={handleTestVoice}
             disabled={speaking}
             className="flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-mono font-bold bg-tactical-900 text-slate-200 border border-tactical-700 hover:bg-tactical-800 disabled:opacity-50"
@@ -99,7 +130,8 @@ export const VoiceAssistantPanel: React.FC = () => {
           </button>
         </div>
         <p className="text-[11px] font-mono text-slate-500">
-          Kamera va avto-salom sozlamalari bosh sahifadagi robot yuziga darhol qo'llanadi va eslab qolinadi.
+          Bosh sahifada robot gapingizni o'zi eshitadi: tugma bosish shart emas, gapiring va 1 soniya jim turing. Birinchi marta
+          ekranga bir bosish va mikrofonga ruxsat berish kerak. Sozlamalar darhol qo'llanadi va eslab qolinadi.
         </p>
       </div>
 
@@ -193,6 +225,15 @@ export const VoiceAssistantPanel: React.FC = () => {
               <Save className="w-4 h-4" />
               <span>AI KALITLARINI SAQLASH</span>
             </button>
+            <button
+              type="button"
+              onClick={handleTestBrain}
+              disabled={brainTest === '...'}
+              className="px-4 py-2.5 rounded-lg bg-tactical-800 hover:bg-tactical-700 border border-tactical-600 text-slate-200 font-mono flex items-center space-x-1.5 disabled:opacity-50"
+            >
+              <Bot className="w-4 h-4 text-amber-300" />
+              <span>AI miyasini tekshirish</span>
+            </button>
             {saved && (
               <div className="p-2 rounded bg-emerald-950 text-emerald-300 border border-emerald-700 flex items-center space-x-2 text-[11px] font-mono">
                 <CheckCircle2 className="w-4 h-4" />
@@ -200,6 +241,40 @@ export const VoiceAssistantPanel: React.FC = () => {
               </div>
             )}
           </div>
+          {brainTest && brainTest !== '...' && (
+            <div className="p-2.5 rounded-lg bg-tactical-950 border border-tactical-800 text-[11px] text-slate-200 leading-relaxed">
+              {brainTest}
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-3 p-2.5 rounded-lg bg-tactical-950 border border-tactical-800 text-[11px] text-slate-300">
+            <span>
+              Lokal bilim: <b className="text-white">{knowledge.topics}</b> mavzu ({knowledge.samples} savol shakli) + huquqiy baza
+            </span>
+            <span>
+              AI javoblari keshi: <b className="text-white">{cacheSize}</b> ta
+            </span>
+            {cacheSize > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  answerCache.clear();
+                  setCacheSize(0);
+                }}
+                className="px-2 py-1 rounded bg-tactical-800 hover:bg-tactical-700 border border-tactical-600 text-slate-300"
+              >
+                Keshni tozalash
+              </button>
+            )}
+            <span className="text-slate-500 w-full">
+              Gemini bir marta javob bergan savol keshda saqlanadi va keyin internetsiz ham darhol javob beriladi.
+            </span>
+          </div>
+          {!geminiApiKey.trim() && (
+            <p className="text-[11px] text-amber-300">
+              Gemini kalitisiz robot faqat tayyor mavzularga (xavfsizlik, huquq, 102, o'zi haqida) javob beradi. Kalitni
+              aistudio.google.com saytida bepul olish mumkin.
+            </p>
+          )}
         </form>
       </div>
 

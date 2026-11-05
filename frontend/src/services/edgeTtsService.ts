@@ -135,19 +135,14 @@ class EdgeTtsService {
       return PRE_RENDERED_SARDOR_AUDIO[clean];
     }
 
-    // Ismlar bo'yicha salomlashuv
-    if (clean.includes('sarvar')) return PRE_RENDERED_SARDOR_AUDIO['sarvar'];
-    if (clean.includes('asilbek')) return PRE_RENDERED_SARDOR_AUDIO['asilbek'];
-    if (clean.includes('boburjon')) return PRE_RENDERED_SARDOR_AUDIO['boburjon'];
-    if (clean.includes('zulfiddin')) return PRE_RENDERED_SARDOR_AUDIO['zulfiddin'];
-    if (clean.includes('muhammadali')) return PRE_RENDERED_SARDOR_AUDIO['muhammadali'];
-
-    if (clean.includes('patrul robotiman') || clean.includes('avtonom patrul')) {
-      return PRE_RENDERED_SARDOR_AUDIO["assalomu alaykum! men qalqon avtonom patrul robotiman. jamoat xavfsizligini ta'minlashga tayyorman!"];
-    }
-
-    if (clean.includes('shaxsingizni tasdiqladi')) {
-      return PRE_RENDERED_SARDOR_AUDIO["assalomu alaykum! qalqon tizimi shaxsingizni tasdiqladi."];
+    // Faqat aynan tayyor yozilgan gaplar: aks holda AI javobidagi har qanday "patrul robotiman" yoki ism
+    // (masalan, "Sarvar — frontend yetakchisi") o'rniga boshqa, tayyor salom audiosi o'ynab ketardi
+    const greet = /^assalomu alaykum ([^!]+)! qalqon tizimi shaxsingizni tasdiqladi\.?$/.exec(clean);
+    if (greet) {
+      const name = ['sarvar', 'asilbek', 'boburjon', 'zulfiddin', 'muhammadali'].find((n) => greet[1].includes(n));
+      return name
+        ? PRE_RENDERED_SARDOR_AUDIO[name]
+        : PRE_RENDERED_SARDOR_AUDIO["assalomu alaykum! qalqon tizimi shaxsingizni tasdiqladi."];
     }
 
     return null;
