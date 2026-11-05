@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useRobot } from '../context/RobotContext';
 import type { PatrolMode } from '../types/robot';
+import { VoiceAssistantPanel } from './VoiceAssistantPanel';
 import {
   Brain,
   Eye,
@@ -15,7 +16,7 @@ import {
 
 export const AIAutonomousView: React.FC = () => {
   const { patrolMode, setPatrolMode, detectedObjects, aiProcessingFps, sonars } = useRobot();
-  const [activeTab, setActiveTab] = useState<'vision' | 'fusion' | 'roadmap'>('vision');
+  const [activeTab, setActiveTab] = useState<'voice' | 'vision' | 'fusion' | 'roadmap'>('voice');
 
   const modes: { id: PatrolMode; name: string; desc: string; icon: React.ComponentType<{ className?: string }> }[] = [
     {
@@ -68,7 +69,15 @@ export const AIAutonomousView: React.FC = () => {
         </div>
 
         {/* Sub-tabs */}
-        <div className="flex bg-tactical-950 p-1 rounded-lg border border-tactical-700/60 font-mono text-xs">
+        <div className="flex flex-wrap bg-tactical-950 p-1 rounded-lg border border-tactical-700/60 font-mono text-xs">
+          <button
+            onClick={() => setActiveTab('voice')}
+            className={`px-3 py-1.5 rounded transition-all ${
+              activeTab === 'voice' ? 'bg-police-blue text-white font-bold' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            Ovozli muloqot & API
+          </button>
           <button
             onClick={() => setActiveTab('vision')}
             className={`px-3 py-1.5 rounded transition-all ${
@@ -95,6 +104,9 @@ export const AIAutonomousView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* TAB CONTENT: Ovozli muloqot, robot yuzi sozlamalari va API kalitlari (bosh sahifadan ko'chirilgan) */}
+      {activeTab === 'voice' && <VoiceAssistantPanel />}
 
       {/* Patrol Mode Switcher Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">

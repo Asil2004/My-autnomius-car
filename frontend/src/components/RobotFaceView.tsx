@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Lock, Unlock, Camera, CameraOff, Volume2, ShieldCheck, Mic } from 'lucide-react';
-import { SpeechToSpeechModal } from './SpeechToSpeechModal';
+import { Lock, ShieldCheck } from 'lucide-react';
 import { faceRecognitionService } from '../services/faceRecognitionService';
+import { faceViewSettings } from '../services/faceViewSettings';
 import { tacticalAudio } from '../services/audioService';
 import { edgeTtsService } from '../services/edgeTtsService';
 import { nvrRecordingService } from '../services/nvrRecordingService';
@@ -17,31 +17,25 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const [cameraActive, setCameraActive] = useState<boolean>(true);
-  const [isFaceDetected, setIsFaceDetected] = useState<boolean>(false);
-  const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
-  const [speechSubtitle, setSpeechSubtitle] = useState<string>('');
-  const [s2sModalOpen, setS2sModalOpen] = useState<boolean>(false);
-  const [autoGreetEnabled, setAutoGreetEnabled] = useState<boolean>(true);
-  const [audioUnlocked, setAudioUnlocked] = useState<boolean>(false);
+  // Kamera va avto-salom AI & Avtonom bo'limida sozlanadi (bosh sahifada boshqaruv elementlari yo'q)
+  const [cameraActive, setCameraActive] = useState<boolean>(() => faceViewSettings.get().cameraEnabled);
+  const isSpeakingRef = useRef(false);
   const lastGreetTimeRef = useRef<number>(0);
   const lastGreetedIdRef = useRef<string | null>(null);
-  const [recognizedPerson, setRecognizedPerson] = useState<{
-    fullName: string;
-    role: string;
-    color: string;
-    isIdentified: boolean;
-    confidence: number;
-  } | null>(null);
 
   // Ko'zlar shu ref dan o'qiydi (har kadrda React qayta chizilmaydi)
   const eyeInputRef = useRef<EyeInput>({ faceX: 0, faceY: 0, hasFace: false, speech: 0, happy: false });
 
   // Avto-salom holati detektsiya siklida eskirib qolmasligi uchun ref orqali o'qiladi
-  const autoGreetRef = useRef(autoGreetEnabled);
-  useEffect(() => {
-    autoGreetRef.current = autoGreetEnabled;
-  }, [autoGreetEnabled]);
+  const autoGreetRef = useRef(faceViewSettings.get().autoGreet);
+  useEffect(
+    () =>
+      faceViewSettings.subscribe((s) => {
+        autoGreetRef.current = s.autoGreet;
+        setCameraActive(s.cameraEnabled);
+      }),
+    []
+  );
 
   // Yuz bazasi, modellar va shader isitish: Operator HUD bilan bir xil tayyorgarlik (prepare)
   useEffect(() => {
@@ -54,9 +48,8 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
   // AI OVOZIGA MOS NUTQ (Edge TTS Sardor 1x). Ko'zlar nutq ritmiga javob beradi
   // ==========================================================================
   const speakDemoPhrase = useCallback((phraseText: string) => {
-    if (isSpeaking) return;
-    setIsSpeaking(true);
-    setSpeechSubtitle(phraseText);
+    if (isSpeakingRef.current) return;
+    isSpeakingRef.current = true;
     tacticalAudio.playCommandBeep();
 
     let speakTick = 0;
@@ -78,15 +71,14 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
       window.clearTimeout(safetyTimeout);
       clearInterval(speechTimer);
       eyeInputRef.current.speech = 0;
-      setIsSpeaking(false);
-      setSpeechSubtitle('');
+      isSpeakingRef.current = false;
     };
 
     edgeTtsService.speak(phraseText, { voice: 'uz-UZ-SardorNeural', rate: 1.0 }, undefined, finish);
-  }, [isSpeaking]);
+  }, []);
 
+  // Ekranga birinchi bosish: brauzer ovoz va disk ruxsatini faqat foydalanuvchi harakatidan keyin beradi
   const handleUnlockAudio = useCallback(() => {
-    setAudioUnlocked(true);
     // Yangi seansda D diskdagi NVR papkasiga yozish ruxsatini qayta tiklash (brauzer faqat bosishda so'raydi)
     void nvrRecordingService.resumeDiskAccess();
     tacticalAudio.playClick();
@@ -155,15 +147,8 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
         // ------------------------------------------------------------------
         let isBusyDetecting = false;
         let faceCycles = 0; // ketma-ket yuz ko'ringan kadrlar soni
-        let lastPersonKey = '';
         // Tanish ovozi to'planguncha begona deb e'lon qilmaymiz (bazadagi xodimga "Piyoda" deb salom bermaslik uchun)
         const STRANGER_AFTER_CYCLES = 6;
-
-        const setPerson = (key: string, value: typeof recognizedPerson) => {
-          if (key === lastPersonKey) return; // har kadrda qayta chizmaslik uchun
-          lastPersonKey = key;
-          setRecognizedPerson(value);
-        };
 
         trackInterval = window.setInterval(async () => {
           const video = videoRef.current;
@@ -201,19 +186,10 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
                 input.faceY = (normY - 0.5) * 2;
               }
               input.hasFace = true;
-              setIsFaceDetected(true);
               const nowMs = Date.now();
 
               if (main.person) {
                 input.happy = true;
-                const confidence = Math.round((main.confidence ?? 0) * 100) / 100;
-                setPerson(`${main.person.id}:${confidence}`, {
-                  fullName: main.person.fullName,
-                  role: main.person.role,
-                  color: main.person.color || '#4ade80',
-                  isIdentified: true,
-                  confidence
-                });
 
                 // Kamera asosida tanilgan xodim bilan salomlashish
                 if (autoGreetRef.current && (lastGreetedIdRef.current !== main.person.id || nowMs - lastGreetTimeRef.current > 18000)) {
@@ -224,14 +200,6 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
                 }
               } else if (faceCycles >= STRANGER_AFTER_CYCLES) {
                 input.happy = false;
-                const score = Math.min(0.98, Math.max(0.7, +(main.faceScore ?? 0.7).toFixed(2)));
-                setPerson('stranger', {
-                  fullName: 'Piyoda / Fuqaro',
-                  role: 'Jamoat xavfsizligi hududi',
-                  color: '#5ad1e6',
-                  isIdentified: false,
-                  confidence: score
-                });
 
                 // Kamera asosida istalgan inson/piyoda ko'ringanda avtomatik salomlashish va og'iz qimirlashi
                 if (autoGreetRef.current && (lastGreetedIdRef.current !== 'stranger' || nowMs - lastGreetTimeRef.current > 18000)) {
@@ -242,7 +210,6 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
               } else {
                 // Shaxs hali tekshirilmoqda (ovozlar to'planmoqda)
                 input.happy = false;
-                setPerson('checking', null);
               }
               return;
             }
@@ -251,8 +218,6 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
             faceCycles = 0;
             input.hasFace = false;
             input.happy = false;
-            setIsFaceDetected(false);
-            setPerson('none', null);
             if (Date.now() - lastGreetTimeRef.current > 6000) {
               lastGreetedIdRef.current = null;
             }
@@ -263,9 +228,8 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
           }
         }, 120);
       } catch (err) {
+        // Kamera yo'q yoki rad etilgan: robot yuzi kursor va teginishga javob berishda davom etadi
         console.warn("Front kamera ochilmadi (foydalanuvchi rad etgan yoki qurilmada yo'q):", err);
-        setCameraActive(false);
-        setIsFaceDetected(false);
       }
     };
 
@@ -284,12 +248,6 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
     };
   }, [cameraActive]);
 
-  const statusText = isFaceDetected
-    ? 'Yuz kuzatilmoqda'
-    : cameraActive
-    ? 'Atrof kuzatilmoqda'
-    : "Kamera o'chiq, kursor va teginishga javob beradi";
-
   return (
     <div onClick={handleUnlockAudio} className="relative w-full h-full bg-tactical-950 overflow-hidden select-none">
       <RobotAvatar inputRef={eyeInputRef} />
@@ -306,132 +264,8 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
         style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
       />
 
-      {/* Yuqori chap: holat yoki tanilgan shaxs */}
-      <div className="absolute top-4 left-4 z-20 flex flex-col gap-2">
-        {recognizedPerson ? (
-          <div className="flex items-center gap-3 pl-4 pr-3 py-2.5 rounded-xl bg-tactical-900 border border-tactical-700 animate-fade-in">
-            <div className="flex flex-col">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold text-white">{recognizedPerson.fullName}</span>
-                {recognizedPerson.isIdentified && (
-                  <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-police-green/15 text-police-green">
-                    Tasdiqlandi
-                  </span>
-                )}
-              </div>
-              <span className="text-xs text-slate-400">
-                {recognizedPerson.role}
-                {recognizedPerson.confidence ? `, ${(recognizedPerson.confidence * 100).toFixed(0)}%` : ''}
-              </span>
-            </div>
-            {recognizedPerson.isIdentified && (
-              <button
-                onClick={() => {
-                  tacticalAudio.playCommandBeep();
-                  onUnlockRequest();
-                }}
-                className="px-3 py-1.5 rounded-lg bg-police-cyan text-tactical-950 text-xs font-semibold flex items-center gap-1.5 transition-transform active:scale-95"
-              >
-                <Unlock className="w-3.5 h-3.5" />
-                <span>Panelga kirish</span>
-              </button>
-            )}
-          </div>
-        ) : (
-          <div className="px-3 py-1.5 rounded-xl bg-tactical-900 border border-tactical-700 text-xs text-slate-300">
-            {statusText}
-          </div>
-        )}
-      </div>
-
-      {/* Ovozni faollashtirish eslatmasi (Autoplay ruxsati) */}
-      {!audioUnlocked && (
-        <button
-          onClick={handleUnlockAudio}
-          className="absolute top-16 left-1/2 -translate-x-1/2 z-30 px-4 py-1.5 rounded-full bg-police-blue/30 border border-police-cyan/60 text-police-cyan text-xs font-mono font-bold animate-pulse flex items-center space-x-1.5 shadow-lg backdrop-blur-md"
-        >
-          <Volume2 className="w-3.5 h-3.5" />
-          <span>Ovozni to'liq faollashtirish uchun ekranga bosing</span>
-        </button>
-      )}
-
-      {/* Nutq subtitri va og'iz animatsiyasi ko'rsatkichi */}
-      {speechSubtitle && (
-        <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-20 max-w-lg w-[90%] px-5 py-3 rounded-2xl bg-tactical-900/95 border border-police-cyan/60 text-center shadow-2xl backdrop-blur-md animate-fade-in flex flex-col items-center space-y-1">
-          <div className="flex items-center space-x-2 text-police-cyan font-mono text-[11px] font-bold">
-            <span className="w-2 h-2 rounded-full bg-police-cyan animate-ping"></span>
-            <span>QALQON GAPIRMOQDA (Sardor 1.0x):</span>
-          </div>
-          <p className="text-sm font-semibold text-white tracking-wide leading-relaxed">{speechSubtitle}</p>
-        </div>
-      )}
-
-      {/* Pastki tugmalar: kamera va ovozni sinash */}
-      <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2">
-        <button
-          onClick={() => {
-            tacticalAudio.playClick();
-            setCameraActive(!cameraActive);
-          }}
-          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-transform active:scale-95 border ${
-            cameraActive
-              ? 'bg-police-blue text-white border-police-blue'
-              : 'bg-tactical-900 text-slate-300 border-tactical-700 hover:bg-tactical-800'
-          }`}
-        >
-          {cameraActive ? <Camera className="w-4 h-4" /> : <CameraOff className="w-4 h-4" />}
-          {cameraActive ? 'Kamera yoqilgan' : "Kamera o'chirilgan"}
-        </button>
-
-        <button
-          onClick={() => {
-            speakDemoPhrase("Assalomu alaykum! Men QALQON avtonom patrul robotiman. Jamoat xavfsizligini ta'minlashga tayyorman!");
-          }}
-          disabled={isSpeaking}
-          className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold bg-tactical-900 text-slate-200 border border-tactical-700 hover:bg-tactical-800 transition-transform active:scale-95 disabled:opacity-50"
-        >
-          <Volume2 className="w-4 h-4" />
-          Ovozni sinash
-        </button>
-
-        {/* Kamera asosida avto-gapirish tugmasi */}
-        <button
-          onClick={() => {
-            tacticalAudio.playClick();
-            setAutoGreetEnabled(!autoGreetEnabled);
-          }}
-          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-transform active:scale-95 border ${
-            autoGreetEnabled
-              ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/50'
-              : 'bg-tactical-900 text-slate-400 border-tactical-700'
-          }`}
-          title="Kamera insonni ko'rganda avtomatik salomlashish va og'iz qimirlashi"
-        >
-          <span className={`w-2 h-2 rounded-full ${autoGreetEnabled ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`}></span>
-          <span>{autoGreetEnabled ? 'Avto-salom: FAOL' : "Avto-salom: O'CHIQ"}</span>
-        </button>
-
-        {/* O'zbekcha Speech-to-Speech Muloqot Tugmasi */}
-        <button
-          onClick={() => {
-            tacticalAudio.playCommandBeep();
-            setS2sModalOpen(true);
-          }}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-police-blue to-cyan-600 hover:from-blue-600 hover:to-cyan-500 text-white shadow-lg shadow-police-blue/20 transition-transform active:scale-95 border border-police-cyan/50 animate-pulse"
-        >
-          <Mic className="w-4 h-4 text-white" />
-          <span>Ovozli muloqot (S2S)</span>
-        </button>
-      </div>
-
-      {/* UzbekVoice.ai Speech-to-Speech Interaktiv Modali */}
-      <SpeechToSpeechModal
-        isOpen={s2sModalOpen}
-        onClose={() => setS2sModalOpen(false)}
-        onSpeechActivity={(level) => {
-          eyeInputRef.current.speech = level;
-        }}
-      />
+      {/* Bosh sahifada faqat robot yuzi va ikkita kirish tugmasi. Kamera, avto-salom, ovozni sinash va
+          ovozli muloqot AI & Avtonom bo'limida */}
 
       {/* Admin (masofaviy) kirish tugmasi */}
       {onAdminRequest && (

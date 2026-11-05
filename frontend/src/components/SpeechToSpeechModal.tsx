@@ -1,11 +1,9 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   Mic,
   MicOff,
   Volume2,
-  Key,
   X,
-  CheckCircle2,
   AlertTriangle,
   Loader2,
   Bot
@@ -33,10 +31,6 @@ export const SpeechToSpeechModal: React.FC<SpeechToSpeechModalProps> = ({
   onClose,
   onSpeechActivity
 }) => {
-  const [apiKey, setApiKey] = useState<string>('');
-  const [showKeyInput, setShowKeyInput] = useState<boolean>(false);
-  const [keySaved, setKeySaved] = useState<boolean>(false);
-
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
@@ -53,26 +47,7 @@ export const SpeechToSpeechModal: React.FC<SpeechToSpeechModalProps> = ({
 
   const speechAnimationRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    if (isOpen) {
-      setApiKey(uzbekVoiceService.getApiKey());
-      // Agar kalit bo'lmasa, dastlabki kirishda kalit kiritish maydonini ochamiz
-      if (!uzbekVoiceService.hasApiKey()) {
-        setShowKeyInput(true);
-      }
-    }
-  }, [isOpen]);
-
-  const handleSaveApiKey = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    uzbekVoiceService.setApiKey(apiKey);
-    setKeySaved(true);
-    tacticalAudio.playCommandBeep();
-    setTimeout(() => {
-      setKeySaved(false);
-      if (apiKey.trim()) setShowKeyInput(false);
-    }, 1500);
-  };
+  // API kalitlari endi AI & Avtonom bo'limidagi "API kalitlari" kartasida kiritiladi
 
   // ==========================================================================
   // SPEECH-TO-SPEECH (S2S) PIPELINE
@@ -80,8 +55,7 @@ export const SpeechToSpeechModal: React.FC<SpeechToSpeechModalProps> = ({
   const startListening = async () => {
     setErrorMessage(null);
     if (!uzbekVoiceService.hasApiKey()) {
-      setShowKeyInput(true);
-      setErrorMessage("Avval UzbekVoice.ai API kalitini kiriting.");
+      setErrorMessage("Avval AI & Avtonom bo'limidagi \"API kalitlari\" kartasida UzbekVoice.ai kalitini kiriting.");
       return;
     }
 
@@ -190,19 +164,6 @@ export const SpeechToSpeechModal: React.FC<SpeechToSpeechModalProps> = ({
 
           <div className="flex items-center space-x-2">
             <button
-              onClick={() => setShowKeyInput(!showKeyInput)}
-              className={`p-2 rounded-lg border text-xs font-mono transition-all flex items-center space-x-1 ${
-                uzbekVoiceService.hasApiKey()
-                  ? 'bg-tactical-800 border-tactical-600 text-police-cyan hover:bg-tactical-700'
-                  : 'bg-amber-500/20 border-amber-500/50 text-amber-300 animate-pulse'
-              }`}
-              title="API Kalitni sozlash"
-            >
-              <Key className="w-4 h-4" />
-              <span className="hidden sm:inline">API</span>
-            </button>
-
-            <button
               onClick={onClose}
               className="p-2 rounded-lg bg-tactical-800 hover:bg-tactical-700 border border-tactical-600 text-slate-300 hover:text-white transition-all"
             >
@@ -210,44 +171,6 @@ export const SpeechToSpeechModal: React.FC<SpeechToSpeechModalProps> = ({
             </button>
           </div>
         </div>
-
-        {/* API Key Kiritish Joyi (So'ralgan asosiy talab) */}
-        {showKeyInput && (
-          <form onSubmit={handleSaveApiKey} className="p-4 bg-tactical-950 border-b border-tactical-800 space-y-3 animate-fade-in">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-mono font-bold text-police-cyan flex items-center space-x-1.5">
-                <Key className="w-3.5 h-3.5" />
-                <span>UZBEKVOICE.AI API KALITI (STT UCHUN):</span>
-              </label>
-              <span className="text-[10px] font-mono text-slate-400">
-                https://uzbekvoice.ai
-              </span>
-            </div>
-
-            <div className="flex space-x-2">
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="[API_KEY] ni shu yerga kiriting..."
-                className="flex-1 bg-tactical-900 border border-tactical-700 rounded-lg px-3 py-2 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-police-cyan"
-              />
-              <button
-                type="submit"
-                className="px-4 py-2 bg-police-blue hover:bg-blue-600 text-white rounded-lg text-xs font-mono font-bold transition-all flex items-center space-x-1.5"
-              >
-                <span>Saqlash</span>
-              </button>
-            </div>
-
-            {keySaved && (
-              <div className="text-[11px] font-mono text-emerald-400 flex items-center space-x-1.5 animate-fade-in">
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                <span>API Kalit xotiraga muvaffaqiyatli saqlandi!</span>
-              </div>
-            )}
-          </form>
-        )}
 
         {/* Xabarlar oynasi */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-[220px] max-h-[350px]">
