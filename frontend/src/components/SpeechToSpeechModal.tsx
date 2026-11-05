@@ -104,7 +104,7 @@ export const SpeechToSpeechModal: React.FC<SpeechToSpeechModalProps> = ({
       };
       setMessages(prev => [...prev, robotMsg]);
 
-      // 4. TTS (Text-to-Speech) - Sardor 1x orqali ovoz chiqarish
+      // 4. TTS: tayyor gaplar Sardor mp3, qolgani uzbekvoice.ai TTS (ruscha ovozga o'tmaydi)
       setIsProcessing(false);
       speakRobotResponse(robotAnswer);
     } catch (err) {
@@ -157,7 +157,7 @@ export const SpeechToSpeechModal: React.FC<SpeechToSpeechModalProps> = ({
                 </span>
               </div>
               <p className="text-[11px] font-mono text-slate-400">
-                O'zbekcha STT & Edge TTS uz-UZ-SardorNeural (1.0x)
+                UzbekVoice.ai STT & TTS (o'zbekcha ovoz)
               </p>
             </div>
           </div>
@@ -207,7 +207,7 @@ export const SpeechToSpeechModal: React.FC<SpeechToSpeechModalProps> = ({
           {isSpeaking && (
             <div className="flex items-center space-x-2 text-emerald-400 font-mono text-xs p-2">
               <Volume2 className="w-4 h-4 animate-bounce" />
-              <span>Qalqon javob bermoqda (uz-UZ-SardorNeural)...</span>
+              <span>Qalqon javob bermoqda...</span>
             </div>
           )}
         </div>

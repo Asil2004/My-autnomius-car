@@ -63,6 +63,32 @@ export const VoiceAssistantPanel: React.FC = () => {
     );
   };
 
+  // AI javoblari ovozi (uzbekvoice.ai TTS): qaysi ovoz haqiqatda ishlatilganini ko'rsatamiz
+  const [aiVoiceInfo, setAiVoiceInfo] = useState<string | null>(null);
+  const handleTestAiVoice = () => {
+    if (speaking) return;
+    uzbekVoiceService.setApiKey(uvApiKey);
+    uzbekVoiceService.lastTts = null;
+    setSpeaking(true);
+    setAiVoiceInfo('...');
+    edgeTtsService.speak(
+      `Hurmatli fuqaro, men sizga yordam berishga tayyorman. Hozir soat ${new Date().toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}.`,
+      { rate: 1.0 },
+      undefined,
+      () => {
+        setSpeaking(false);
+        const t = uzbekVoiceService.lastTts;
+        setAiVoiceInfo(
+          t
+            ? t.used === t.requested
+              ? `✓ uzbekvoice.ai ovozi: ${t.used}`
+              : `✓ uzbekvoice.ai ovozi: ${t.used} ("${t.requested}" kalitingiz tarifida yoqilmagan, server almashtirdi)`
+            : "Brauzerdagi o'zbekcha ovoz ishlatildi (Edge brauzerida Sardor)"
+        );
+      }
+    );
+  };
+
   const toggleBtn = (on: boolean) =>
     `flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-mono font-bold border transition-all ${
       on ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/50' : 'bg-tactical-900 text-slate-400 border-tactical-700'
@@ -119,6 +145,15 @@ export const VoiceAssistantPanel: React.FC = () => {
             {speaking ? 'Gapirmoqda...' : 'Ovozni sinash'}
           </button>
           <button
+            onClick={handleTestAiVoice}
+            disabled={speaking}
+            title="AI javoblari uzbekvoice.ai TTS orqali o'qiladi"
+            className="flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-mono font-bold bg-tactical-900 text-slate-200 border border-tactical-700 hover:bg-tactical-800 disabled:opacity-50"
+          >
+            <Volume2 className="w-4 h-4 text-police-cyan" />
+            AI javob ovozi
+          </button>
+          <button
             onClick={() => {
               tacticalAudio.playCommandBeep();
               setS2sOpen(true);
@@ -129,6 +164,7 @@ export const VoiceAssistantPanel: React.FC = () => {
             Ovozli muloqot (S2S)
           </button>
         </div>
+        {aiVoiceInfo && <p className="text-[11px] font-mono text-police-cyan">{aiVoiceInfo}</p>}
         <p className="text-[11px] font-mono text-slate-500">
           Bosh sahifada robot gapingizni o'zi eshitadi: tugma bosish shart emas, gapiring va 1 soniya jim turing. Birinchi marta
           ekranga bir bosish va mikrofonga ruxsat berish kerak. Sozlamalar darhol qo'llanadi va eslab qolinadi.

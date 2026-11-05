@@ -4,8 +4,11 @@
  * 
  * Bu xizmat:
  * 1. Oldindan sintez qilingan haqiqiy uz-UZ-SardorNeural audio fayllarini (100% tabiiy ovoz) ijro etadi.
- * 2. Dinamik matnlar uchun brauzerdagi uz-UZ-SardorNeural yoki o'zbek ovozini tanlaydi (rus yoki ingliz ovoziga o'tmaydi).
+ * 2. Dinamik matnlar (AI javoblari): Edge brauzerida Sardor, boshqa brauzerlarda uzbekvoice.ai TTS,
+ *    so'ng brauzerdagi o'zbekcha ovoz. Rus yoki ingliz ovoziga hech qachon o'tmaydi.
  */
+
+import { uzbekVoiceService } from './uzbekVoiceService';
 
 export interface EdgeTtsOptions {
   voice?: string;
@@ -46,6 +49,7 @@ class EdgeTtsService {
   private isSpeaking = false;
   private currentAudio: HTMLAudioElement | null = null;
   private voices: SpeechSynthesisVoice[] = [];
+  private generation = 0;
 
   // Lab sinxroni uchun haqiqiy ovoz balandligini o'lchash (Web Audio)
   private audioCtx: AudioContext | null = null;
@@ -160,57 +164,102 @@ class EdgeTtsService {
     if (!text || !text.trim()) return;
 
     this.stop();
+    const gen = this.generation;
 
-    // 1-USUL: Haqiqiy tayyorlangan Microsoft Edge TTS uz-UZ-SardorNeural audioni o'ynatish
+    // 1-USUL: oldindan tayyorlangan Sardor audiosi (salom, tanishuv kabi doimiy gaplar)
     const matchedAudioUrl = this.matchPreRenderedAudio(text);
     if (matchedAudioUrl) {
-      try {
-        const audio = new Audio(matchedAudioUrl);
-        this.currentAudio = audio;
-        audio.playbackRate = options?.rate ?? this.defaultRate; // 1.0x
-        this.ensureAudioCtx();
-        this.attachAnalyser(audio);
+      this.playAudioUrl(matchedAudioUrl, gen, options, onStart, onEnd, () => {
+        console.warn('[EdgeTTS] Sardor audio fayli ochilmadi:', matchedAudioUrl);
+        this.speakDynamic(text, gen, options, onStart, onEnd);
+      });
+      return;
+    }
 
-        audio.onplay = () => {
-          this.isSpeaking = true;
-          if (onStart) onStart();
-        };
+    this.speakDynamic(text, gen, options, onStart, onEnd);
+  }
 
-        const handleDone = () => {
+  /**
+   * AI javoblari kabi o'zgaruvchan matn:
+   * 2-USUL: brauzerda Sardor ovozi bo'lsa (Microsoft Edge brauzeri) — Sardor.
+   * 3-USUL: uzbekvoice.ai TTS (jasur so'raladi; tarifda bo'lmasa server o'zbekcha "lola" beradi).
+   * 4-USUL: brauzerdagi boshqa o'zbekcha ovoz. Rus yoki boshqa til ovoziga hech qachon o'tmaydi.
+   */
+  private speakDynamic(text: string, gen: number, options?: EdgeTtsOptions, onStart?: () => void, onEnd?: () => void): void {
+    if (this.findSardorVoice()) {
+      this.speakViaSpeechSynthesis(text, options, onStart, onEnd);
+      return;
+    }
+    uzbekVoiceService
+      .synthesize(text)
+      .then((url) => {
+        if (gen !== this.generation) return; // orada stop() yoki yangi gap boshlandi
+        this.playAudioUrl(url, gen, options, onStart, onEnd, () => this.speakViaSpeechSynthesis(text, options, onStart, onEnd));
+      })
+      .catch((err) => {
+        if (gen !== this.generation) return;
+        console.warn('[EdgeTTS] UzbekVoice TTS ishlamadi:', err);
+        this.speakViaSpeechSynthesis(text, options, onStart, onEnd);
+      });
+  }
+
+  /** Audio faylni ijro etish (lab sinxroni analizatori bilan). onFail: fayl ochilmasa */
+  private playAudioUrl(
+    url: string,
+    gen: number,
+    options: EdgeTtsOptions | undefined,
+    onStart: (() => void) | undefined,
+    onEnd: (() => void) | undefined,
+    onFail: () => void
+  ): void {
+    try {
+      const audio = new Audio();
+      // Boshqa domendagi (uzbekvoice CDN) audio analizatorga faqat CORS bilan ulanadi, aks holda ovoz o'chib qoladi
+      if (/^https?:/i.test(url) && !url.startsWith(window.location.origin)) audio.crossOrigin = 'anonymous';
+      audio.src = url;
+      this.currentAudio = audio;
+      audio.playbackRate = options?.rate ?? this.defaultRate; // 1.0x
+      this.ensureAudioCtx();
+      this.attachAnalyser(audio);
+
+      audio.onplay = () => {
+        this.isSpeaking = true;
+        if (onStart) onStart();
+      };
+      audio.onended = () => {
+        this.isSpeaking = false;
+        this.currentAudio = null;
+        if (onEnd) onEnd();
+      };
+      audio.onerror = () => {
+        if (gen !== this.generation) return;
+        this.currentAudio = null;
+        onFail();
+      };
+
+      audio.play().catch((err: unknown) => {
+        const name = err instanceof Error ? err.name : '';
+        if (name === 'NotAllowedError') {
+          // Brauzer foydalanuvchi teginmaguncha ovozni bloklaydi: boshqa ovozga o'tmaymiz,
+          // audio birinchi teginish/tugma bosilishida ijro etiladi.
           this.isSpeaking = false;
           this.currentAudio = null;
           if (onEnd) onEnd();
-        };
-
-        audio.onended = handleDone;
-        audio.onerror = () => {
-          // Fayl ochilmasa fallbackga o'tamiz
-          console.warn('[EdgeTTS] Sardor audio fayli ochilmadi:', matchedAudioUrl);
-          this.speakViaSpeechSynthesis(text, options, onStart, onEnd);
-        };
-
-        audio.play().catch((err: unknown) => {
-          const name = err instanceof Error ? err.name : '';
-          if (name === 'NotAllowedError') {
-            // Brauzer foydalanuvchi teginmaguncha ovozni bloklaydi. Boshqa (ayol) ovozga o'tmaymiz:
-            // Sardor audiosi birinchi teginish/tugma bosilishida ijro etiladi.
-            this.isSpeaking = false;
-            this.currentAudio = null;
-            if (onEnd) onEnd();
-            this.playOnFirstGesture(audio);
-            return;
-          }
-          if (name === 'AbortError') return; // stop() chaqirilgan
-          this.speakViaSpeechSynthesis(text, options, onStart, onEnd);
-        });
-        return;
-      } catch {
-        // Fallback
-      }
+          this.playOnFirstGesture(audio);
+          return;
+        }
+        if (name === 'AbortError' || gen !== this.generation) return; // stop() chaqirilgan
+        onFail();
+      });
+    } catch {
+      onFail();
     }
+  }
 
-    // 2-USUL: Web Speech API orqali qat'iy o'zbekcha / Sardor ovozini qidirish
-    this.speakViaSpeechSynthesis(text, options, onStart, onEnd);
+  private findSardorVoice(): SpeechSynthesisVoice | undefined {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return undefined;
+    if (this.voices.length === 0) this.voices = window.speechSynthesis.getVoices();
+    return this.voices.find((v) => /sardor/i.test(`${v.name} ${v.voiceURI}`));
   }
 
   private speakViaSpeechSynthesis(
@@ -245,9 +294,14 @@ class EdgeTtsService {
       );
       const chosen = sardorVoice || uzMaleVoice;
 
-      if (chosen) {
-        utterance.voice = chosen;
+      if (!chosen) {
+        // O'zbekcha ovoz yo'q: brauzer standart (ko'pincha ruscha ayol) ovoziga o'tib ketmasin, gapirmaymiz
+        console.warn("[EdgeTTS] Brauzerda o'zbekcha ovoz yo'q, javob ovozsiz qoldi:", text);
+        this.isSpeaking = false;
+        if (onEnd) onEnd();
+        return;
       }
+      utterance.voice = chosen;
       if (!sardorVoice) {
         // Sardor topilmasa ovozni pastroq qilib erkak tembriga yaqinlashtiramiz
         utterance.pitch = options?.pitch ?? 0.8;
@@ -298,6 +352,7 @@ class EdgeTtsService {
   }
 
   public stop(): void {
+    this.generation++; // kutilayotgan TTS so'rovi natijasi endi ijro etilmaydi
     this.pendingGestureAudio = null;
     if (this.currentAudio) {
       try {
