@@ -16,6 +16,7 @@ import { findLegalAnswer, isLegalQuestion, looksLikeQuestion, LEGAL_ENTRIES } fr
 import { findQa, isRightsEntry } from './localKnowledge';
 import { answerCache } from './answerCache';
 import { OFFICER_CONDUCT, RIGHTS_QA } from './rightsKnowledge';
+import { situationService } from './situationService';
 
 // Favqulodda holat (102) belgilari
 const EMERGENCY_RE = /\b102\b|yordam\s*(ber|kerak|qiling)|qutqar|hujum|o'g'ri|ogri\b|o'g'irla|bezori|pichoq|qurol|urishyapti|xavf ostida|xavfdaman/;
@@ -118,6 +119,10 @@ class AiDialogService {
       };
     }
 
+    // 1b. Vaqt, sana, ob-havo, joylashuv: real vaqtdagi ma'lumot (situationService)
+    const situational = this.situational(t);
+    if (situational) return { answer: greet + situational, source: 'local_brain' };
+
     // 2a. Fuqaro va xodim huquq-burchlari (IIO qonuni, Konstitutsiya). "Qurol ishlatishi mumkinmi" kabi savol
     // SOS emas: savol shaklida bo'lsa yoki favqulodda so'z bo'lmasa, aniq mos kelgan huquqiy javob beriladi.
     const qa = findQa(t);
@@ -210,7 +215,30 @@ class AiDialogService {
     };
   }
 
-  /** Robot, jamoa, vaqt kabi aniq faktlar (faqat aniq iboralarda) */
+  /** Vaqt, sana, hafta kuni, ob-havo, manzil va koordinata savollari */
+  private situational(t: string): string | null {
+    const s = situationService;
+    if (has(t, /koordinata|\bgps\b|kenglik|uzunlik/)) return s.coordsAnswer();
+    if (has(t, /adashib qoldim|adashdim|yo'lni topa olmayapman|yo'limni yo'qotdim/) && s.get().address && s.get().fix?.real) {
+      return `Xavotir olmang. ${s.locationAnswer()} Qayerga bormoqchi ekaningizni ayting yoki telefoningizda xaritani oching. Kerak bo'lsa 102 ga qo'ng'iroq qiling.`;
+    }
+    if (
+      has(t, /qayerdamiz|qayerdaman|qayerdasan|qayerdasiz|qayerda turibmiz|qayerda turibman|bu (qaysi|qanaqa) (ko'cha|joy|mahalla|tuman|shahar|hudud)|qaysi ko'chadamiz|qaysi ko'chada|bu yerning manzili|bu yer qayer|manzilni ayt|manzil qanday|hozirgi manzil|joylashuv/)
+    ) {
+      return s.locationAnswer();
+    }
+    if (has(t, /ob[\s-]?havo|havo (qanday|qanaqa|issiq|sovuq|bulut|yaxshi|ochiq)|harorat|necha daraja|nechchi daraja|yomg'ir yog|qor yog|shamol (bormi|kuchli|qanday)|issiqmi|sovuqmi|soyabon/)) {
+      return s.weatherAnswer(/ertaga|ertangi/.test(t));
+    }
+    if (has(t, /soat ne\w*|vaqt ne\w*|hozir soat|soat qancha|nechchi bo'ldi|vaqt qancha/)) return s.timeAnswer();
+    if (has(t, /haftaning qaysi kuni|bugun qaysi kun|bugun (dushanba|seshanba|chorshanba|payshanba|juma|shanba|yakshanba)mi/)) {
+      return s.weekdayAnswer();
+    }
+    if (has(t, /bugun (nechanchi|sana)|sana ne\w*|bugungi sana|qaysi sana|qaysi oy|nechanchi yil|bugun necha/)) return s.dateAnswer();
+    return null;
+  }
+
+  /** Robot, jamoa kabi aniq faktlar (faqat aniq iboralarda) */
   private localFacts(t: string): DialogResponse | null {
     const r = (answer: string, action?: DialogResponse['action']): DialogResponse => ({ answer, action, source: 'local_brain' });
 
@@ -233,14 +261,6 @@ class AiDialogService {
     if (has(t, /\b(batareya\w*|akkumulyator\w*|lidar|tizim holati|holating|holatingiz)\b/)) {
       return r("Barcha tizimlar barqaror: quvvat yetarli, LiDAR skaneri va to'rtta ultratovush datchigi faol.", 'STATUS_CHECK');
     }
-    if (has(t, /\b(soat ne\w*|vaqt ne\w*|hozir soat)\b/)) {
-      const timeStr = new Date().toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' });
-      return r(`Hozir soat ${timeStr}.`);
-    }
-    if (has(t, /\b(bugun (nechanchi|qaysi kun|sana)|sana ne\w*|bugungi sana)\b/)) {
-      const dateStr = new Date().toLocaleDateString('uz-UZ', { day: 'numeric', month: 'long', year: 'numeric' });
-      return r(`Bugun ${dateStr}.`);
-    }
     if (has(t, /^(rahmat|katta rahmat|tashakkur|barakalla)\b/) && t.split(' ').length <= 4) {
       return r("Arzimaydi! Xavfsizligingiz — bizning bosh maqsadimiz.");
     }
@@ -262,6 +282,7 @@ class AiDialogService {
       "3. Favqulodda holatda darhol 102 ga qo'ng'iroq qilishni maslahat ber.\n" +
       "4. Huquqiy savollarda faqat quyidagi tekshirilgan ma'lumotlarga tayan, boshqa modda raqamlarini o'ylab topma; aniq holat uchun advokat yoki lex.uz ni tavsiya qil.\n" +
       `${OFFICER_CONDUCT}\n` +
+      `Joriy holat (vaqt, joy, ob-havo so'ralsa shundan foydalan): ${situationService.contextForAi()}\n` +
       `Tekshirilgan huquqiy ma'lumotlar:\n${legalRef}`;
 
     const contents = [

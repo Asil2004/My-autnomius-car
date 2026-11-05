@@ -186,11 +186,6 @@ const BASE_QA: QaEntry[] = [
 
   // ---------------- Kundalik suhbat ----------------
   {
-    id: 'ob-havo',
-    q: ['bugun havo qanday', 'ob havo qanday', 'yomgir yogadimi', 'havo issiqmi', 'sovuqmi'],
-    a: "Afsuski, menda ob-havo ma'lumoti yo'q. Telefoningizdagi ob-havo ilovasini ko'ring. Issiqda ko'proq suv iching, sovuqda issiq kiyining."
-  },
-  {
     id: 'hazil',
     q: ['hazil ayt', 'latifa ayt', 'meni kuldir', 'qiziq narsa ayt'],
     a: "Robotlar nima uchun hech qachon adashmaydi? Chunki bizda LiDAR bor! Lekin baribir, yo'l so'rashdan uyalmang."

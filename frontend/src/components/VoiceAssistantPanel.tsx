@@ -8,6 +8,7 @@ import { faceViewSettings, type FaceViewSettings } from '../services/faceViewSet
 import { SpeechToSpeechModal } from './SpeechToSpeechModal';
 import { answerCache } from '../services/answerCache';
 import { qaCount } from '../services/localKnowledge';
+import { situationService, weatherText } from '../services/situationService';
 
 /**
  * AI & Avtonom bo'limi: ovozli muloqot va robot yuzi (bosh sahifa) sozlamalari.
@@ -62,6 +63,15 @@ export const VoiceAssistantPanel: React.FC = () => {
       () => setSpeaking(false)
     );
   };
+
+  // Joriy holat: vaqt, GPS manzil, ob-havo (robot shundan javob beradi)
+  const [situation, setSituation] = useState(() => situationService.get());
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => situationService.subscribe(setSituation), []);
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
 
   // AI javoblari ovozi (uzbekvoice.ai TTS): qaysi ovoz haqiqatda ishlatilganini ko'rsatamiz
   const [aiVoiceInfo, setAiVoiceInfo] = useState<string | null>(null);
@@ -168,6 +178,60 @@ export const VoiceAssistantPanel: React.FC = () => {
         <p className="text-[11px] font-mono text-slate-500">
           Bosh sahifada robot gapingizni o'zi eshitadi: tugma bosish shart emas, gapiring va 1 soniya jim turing. Birinchi marta
           ekranga bir bosish va mikrofonga ruxsat berish kerak. Sozlamalar darhol qo'llanadi va eslab qolinadi.
+        </p>
+      </div>
+
+      {/* Joriy holat: robot "soat necha", "ob-havo qanday", "qayerdamiz" savollariga shundan javob beradi */}
+      <div className="hud-panel rounded-xl p-4 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="font-mono text-sm font-bold text-white">JORIY HOLAT (VAQT, JOY, OB-HAVO)</h3>
+          <button
+            onClick={() => void situationService.refresh(true)}
+            className="px-3 py-1.5 rounded-lg text-[11px] font-mono font-bold bg-tactical-900 text-slate-300 border border-tactical-700 hover:bg-tactical-800"
+          >
+            Yangilash
+          </button>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs font-mono">
+          <div className="bg-tactical-900/60 rounded-lg p-2.5 border border-tactical-700">
+            <div className="text-slate-500 text-[10px]">VAQT VA SANA</div>
+            <div className="text-white font-bold">{new Date(now).toLocaleTimeString('uz-UZ', { hour12: false })}</div>
+            <div className="text-slate-300">{situationService.dateText(new Date(now))}</div>
+          </div>
+          <div className="bg-tactical-900/60 rounded-lg p-2.5 border border-tactical-700">
+            <div className="text-slate-500 text-[10px]">MANZIL (GPS)</div>
+            {situation.fix?.real ? (
+              <>
+                <div className="text-white">{situation.address?.short ?? 'Manzil aniqlanmoqda...'}</div>
+                <div className="text-slate-500 text-[10px]">
+                  {situation.fix.lat.toFixed(5)}, {situation.fix.lon.toFixed(5)}
+                  {situation.fix.accuracy ? ` ±${Math.round(situation.fix.accuracy)} m` : ''}
+                </div>
+              </>
+            ) : (
+              <div className="text-amber-300">{situation.gpsError ?? 'GPS qidirilmoqda...'} — taxminan Navoiy</div>
+            )}
+          </div>
+          <div className="bg-tactical-900/60 rounded-lg p-2.5 border border-tactical-700">
+            <div className="text-slate-500 text-[10px]">OB-HAVO</div>
+            {situation.weather ? (
+              <>
+                <div className="text-white font-bold">
+                  {Math.round(situation.weather.temp)}°C, {weatherText(situation.weather.code)}
+                </div>
+                <div className="text-slate-500 text-[10px]">
+                  shamol {Math.round(situation.weather.wind)} m/s · namlik {situation.weather.humidity}% · yangilangan{' '}
+                  {new Date(situation.weather.t).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit', hour12: false })}
+                </div>
+              </>
+            ) : (
+              <div className="text-amber-300">Ob-havo yuklanmoqda...</div>
+            )}
+          </div>
+        </div>
+        <p className="text-[11px] font-mono text-slate-500">
+          Robotdan so'rang: "Soat necha?", "Bugun nechanchi?", "Ob-havo qanday?", "Ertaga havo qanday?", "Biz qayerdamiz?".
+          Manzil har 80 m siljishda, ob-havo har 15 daqiqada yangilanadi va internetsiz ham oxirgisi aytiladi.
         </p>
       </div>
 

@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { situationService } from './services/situationService';
 import { RobotProvider, useRobot } from './context/RobotContext';
 import { Navbar } from './components/Navbar';
 import { TabNavigation } from './components/TabNavigation';
@@ -28,6 +29,8 @@ const MainContent: React.FC = () => {
 };
 
 const AppShell: React.FC = () => {
+  // Vaqt, GPS manzil va ob-havoni ilova ochilgandan boshlab kuzatib, saqlab boradi (robot savollarga javob berishi uchun)
+  useEffect(() => situationService.start(), []);
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   // Masofaviy admin: ikkinchi planshet saytni #admin bilan ochsa, kirish oynasi darhol chiqadi
