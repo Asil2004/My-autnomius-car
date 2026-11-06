@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Lock, ShieldCheck } from 'lucide-react';
+import { Lock, ShieldCheck, Gamepad2 } from 'lucide-react';
 import { faceRecognitionService } from '../services/faceRecognitionService';
 import { faceViewSettings } from '../services/faceViewSettings';
 import { HandsFreeListener } from '../services/handsFreeListener';
@@ -20,9 +20,11 @@ interface RobotFaceViewProps {
   onUnlockRequest: () => void;
   /** Ikkinchi planshetdan masofaviy admin kirishi */
   onAdminRequest?: () => void;
+  /** ESP32 masofaviy boshqaruv pultini ochish */
+  onControllerRequest?: () => void;
 }
 
-export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, onAdminRequest }) => {
+export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, onAdminRequest, onControllerRequest }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -382,6 +384,21 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
 
       {/* Bosh sahifada faqat robot yuzi va ikkita kirish tugmasi. Kamera, avto-salom, ovozni sinash va
           ovozli muloqot AI & Avtonom bo'limida */}
+
+      {/* ESP32 Masofaviy Boshqaruv pulti tugmasi */}
+      {onControllerRequest && (
+        <button
+          onClick={() => {
+            tacticalAudio.playClick();
+            onControllerRequest();
+          }}
+          title="ESP32 Masofaviy Boshqaruv Pulti"
+          aria-label="ESP32 Masofaviy Boshqaruv Pulti"
+          className="absolute top-4 right-28 z-30 p-2.5 rounded-xl bg-tactical-900 border border-teal-500/50 text-teal-400 hover:text-white hover:bg-teal-900/60 transition-transform active:scale-90 shadow-[0_0_10px_rgba(20,184,166,0.25)]"
+        >
+          <Gamepad2 className="w-4 h-4" />
+        </button>
+      )}
 
       {/* Admin (masofaviy) kirish tugmasi */}
       {onAdminRequest && (

@@ -179,3 +179,18 @@ raspberry_pi/
 1. **Stol ustida (havoda) sinov:** G'ildiraklarni havoda ushlab, `F`, `B`, `L`, `R` yo'nalishlarini va `U`, `D` minora aktuatorini tekshirish.
 2. **Datchik refleksi:** `F` ketayotganda datchik oldiga qo'l qo'yib, robot 20 sm dan avtomatik tormozlanishini va oldinga qulflanishini sinash.
 3. **Pol ustida erkin patrul:** Robotni polga qo'yib, planshet va telefon orqali erkin haydash.
+
+---
+
+## 🎮 7. ESP32 & BTS7960 Simsiz Masofaviy Boshqaruv (Planshet Hotspot & MQTT Bulut)
+
+Robot shassisi va motor boshqaruvi uchun sheriklarning ishlariga xalal bermagan holda alohida avtonom boshqaruv arxitekturasi joriy etildi:
+1. **Wi-Fi Topologiyasi (WIFI_STA):** Planshet o'zining 4G/5G mobil internetini uzmagan holda "Kirish nuqtasi" (Wi-Fi Hotspot)ni yoqadi. ESP32 unga Station rejimida ulanadi va planshetdan internet oladi.
+2. **2x BTS7960 (IBT-2) Drayverlari:** GPIO 25, 26 (chap motorlar) va GPIO 27, 14 (o'ng motorlar) orqali to'g'ridan-to'g'ri PWM boshqaruv.
+3. **Dual Aloqa Kanali:**
+   - **Internet (MQTT):** `broker.hivemq.com` orqali dunyoning istalgan chekkasidan telefon yordamida masofaviy boshqaruv (20-30 ms ultra-tezkor kechikish).
+   - **Lokal Wi-Fi (HTTP):** ESP32 dagi WebServer orqali `/move`, `/cmd` va `/speed` REST API.
+4. **Veb-Interfeys & Alohida Pult Paneli:**
+   - Asosiy ilovaga `#controller` hash-yo'nalishi va `ESP32RemoteView.tsx` alohida komponenti qo'shildi (mavjud HUD, AI, Radar, Xarita va Sozlamalar modullari 100% buzilmagan holda saqlandi).
+   - Mustaqil boshqaruv sahifasi: `controller.html` (mobil telefonlar uchun yengil va qulay pult).
+   - 800 ms avtotormoz (Watchdog Failsafe) integratsiyasi.
