@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <title>1m Diametrli Sharni 8 Bo'lakka Yoyish — Lazer Kesim Chizmasi</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0b0f17; color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 24px; line-height: 1.5; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    header { border-bottom: 1px solid #1e293b; padding-bottom: 20px; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; }
+    h1 { font-size: 24px; color: #38bdf8; }
+    .btn { background: #0284c7; color: #fff; padding: 10px 18px; border-radius: 6px; text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; transition: 0.2s; }
+    .btn:hover { background: #0369a1; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }
+    @media (max-width: 850px) { .grid-2 { grid-template-columns: 1fr; } }
+    .card { background: #111827; border: 1px solid #1f2937; border-radius: 8px; padding: 20px; }
+    .card h2 { font-size: 18px; color: #f8fafc; margin-bottom: 14px; border-bottom: 1px solid #334155; padding-bottom: 8px; }
+    .param-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #1e293b; font-size: 14px; }
+    .param-label { color: #94a3b8; }
+    .param-val { font-weight: 700; color: #38bdf8; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }
+    th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #1e293b; }
+    th { background: #1e293b; color: #94a3b8; }
+    tr:hover { background: #1e293b; }
+    .formula-box { background: #1e293b; border-left: 4px solid #38bdf8; padding: 14px; border-radius: 4px; font-family: monospace; font-size: 14px; margin: 12px 0; color: #7dd3fc; }
+    .svg-box { background: #020617; border: 1px solid #334155; border-radius: 8px; padding: 16px; overflow: auto; text-align: center; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1>📐 1m Diametrli Sharni 8 Bo'lakka Yoyish Chizmasi</h1>
+        <p style="color: #94a3b8; font-size: 14px; margin-top: 4px;">Shar diametri: 1000 mm (Radiusi R = 500 mm) | Sektorlar soni: 8 ta lepestok</p>
+      </div>
+      <div style="display: flex; gap: 10px;">
+        <a class="btn" href="sphere_1m_8_gores.dxf" download>💾 DXF Yuklab Olish (Lazer)</a>
+        <a class="btn" href="sphere_1m_8_gores.svg" download style="background:#334155;">📐 SVG Ko'rish</a>
+      </div>
+    </header>
+
+    <div class="grid-2">
+      <div class="card">
+        <h2>📊 Asosiy Matematik Parametrlar</h2>
+        <div class="param-row"><span class="param-label">Shar Diametri (D)</span><span class="param-val">1000.0 mm (1.0 metr)</span></div>
+        <div class="param-row"><span class="param-label">Shar Radiusi (R)</span><span class="param-val">500.0 mm</span></div>
+        <div class="param-row"><span class="param-label">Ekvator Perimetri (C = π × D)</span><span class="param-val">3141.59 mm (3.14 metr)</span></div>
+        <div class="param-row"><span class="param-label">Bo'laklar soni (N)</span><span class="param-val">8 dona</span></div>
+        <div class="param-row"><span class="param-label">Har bir bo'lakning ekvatordagi maksimal eni</span><span class="param-val" style="color:#22c55e;">392.70 mm</span></div>
+        <div class="param-row"><span class="param-label">Yarim shar (gumbaz) bo'yi (yoy uzunligi)</span><span class="param-val">785.40 mm</span></div>
+        <div class="param-row"><span class="param-label">To'liq shar bo'yi (qutbdan qutbgacha)</span><span class="param-val">1570.80 mm</span></div>
+
+        <h3 style="font-size: 14px; color: #cbd5e1; margin-top: 18px;">Hisoblash Formulalari:</h3>
+        <div class="formula-box">
+          Kenglik burchagi: φ = y / R (radian)<br>
+          Eni (y masofada): W(y) = 392.70 × cos(y / 500)<br>
+          Markaziy o'qdan yarim eni: X(y) = ± 196.35 × cos(y / 500)
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>📋 Bosqichma-bosqich Nuqtalar Koordinatasi</h2>
+        <p style="color:#94a3b8; font-size:12px; margin-bottom:8px;">Qo'lda chizish yoki tekshirish uchun har 50 mm dagi eni va markazdan siljishi:</p>
+        <div style="max-height: 380px; overflow-y: auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>Balandlik (y)</th>
+                <th>Burchak (φ)</th>
+                <th>To'liq Eni (W)</th>
+                <th>Yarim Eni (±X)</th>
+              </tr>
+            </thead>
+            <tbody>
+              
+          <tr>
+            <td style="font-weight:600; color:#38bdf8;">0.0 mm</td>
+            <td>0.0°</td>
+            <td style="color:#22c55e; font-weight:700;">392.70 mm</td>
+            <td>± 196.35 mm</td>
+          </tr>
+        
+          <tr>
+            <td style="font-weight:600; color:#38bdf8;">50.0 mm</td>
+            <td>5.7°</td>
+            <td style="color:#22c55e; font-weight:700;">390.74 mm</td>
+            <td>± 195.37 mm</td>
+          </tr>
+        
+          <tr>
+            <td style="font-weight:600; color:#38bdf8;">100.0 mm</td>
+            <td>11.5°</td>
+            <td style="color:#22c55e; font-weight:700;">384.87 mm</td>
+            <td>± 192.44 mm</td>
+          </tr>
+        
+          <tr>
+            <td style="font-weight:600; color:#38bdf8;">150.0 mm</td>
+            <td>17.2°</td>
+            <td style="color:#22c55e; font-weight:700;">375.16 mm</td>
+            <td>± 187.58 mm</td>
+          </tr>
+        
+          <tr>
+            <td style="font-weight:600; color:#38bdf8;">200.0 mm</td>
+            <td>22.9°</td>
+            <td style="color:#22c55e; font-weight:700;">361.70 mm</td>
+            <td>± 180.85 mm</td>
+          </tr>
+        
+          <tr>
+            <td style="font-weight:600; color:#38bdf8;">250.0 mm</td>
+            <td>28.6°</td>
+            <td style="color:#22c55e; font-weight:700;">344.63 mm</td>
+            <td>± 172.31 mm</td>
+          </tr>
+        
+          <tr>
+            <td style="font-weight:600; color:#38bdf8;">300.0 mm</td>
+            <td>34.4°</td>
+            <td style="color:#22c55e; font-weight:700;">324.11 mm</td>
+            <td>± 162.05 mm</td>
+          </tr>
+        
+          <tr>
+            <td style="font-weight:600; color:#38bdf8;">350.0 mm</td>
+            <td>40.1°</td>
+            <td style="color:#22c55e; font-weight:700;">300.35 mm</td>
+            <td>± 150.18 mm</td>
+          </tr>
+        
+          <tr>
+            <td style="font-weight:600; color:#38bdf8;">400.0 mm</td>
+            <td>45.8°</td>
+            <td style="color:#22c55e; font-weight:700;">273.60 mm</td>
+            <td>± 136.80 mm</td>
+          </tr>
+        
+          <tr>
+            <td style="font-weight:600; color:#38bdf8;">450.0 mm</td>
+            <td>51.6°</td>
+            <td style="color:#22c55e; font-weight:700;">244.11 mm</td>
+            <td>± 122.05 mm</td>
+          </tr>
+        
+          <tr>
+            <td style="font-weight:600; color:#38bdf8;">500.0 mm</td>
+            <td>57.3°</td>
+            <td style="color:#22c55e; font-weight:700;">212.18 mm</td>
+            <td>± 106.09 mm</td>
+          </tr>
+        
+          <tr>
+            <td style="font-weight:600; color:#38bdf8;">550.0 mm</td>
+            <td>63.0°</td>
+            <td style="color:#22c55e; font-weight:700;">178.13 mm</td>
+            <td>± 89.06 mm</td>
+          </tr>
+        
+          <tr>
+            <td style="font-weight:600; color:#38bdf8;">600.0 mm</td>
+            <td>68.8°</td>
+            <td style="color:#22c55e; font-weight:700;">142.30 mm</td>
+            <td>± 71.15 mm</td>
+          </tr>
+        
+          <tr>
+            <td style="font-weight:600; color:#38bdf8;">650.0 mm</td>
+            <td>74.5°</td>
+            <td style="color:#22c55e; font-weight:700;">105.05 mm</td>
+            <td>± 52.52 mm</td>
+          </tr>
+        
+          <tr>
+            <td style="font-weight:600; color:#38bdf8;">700.0 mm</td>
+            <td>80.2°</td>
+            <td style="color:#22c55e; font-weight:700;">66.75 mm</td>
+            <td>± 33.37 mm</td>
+          </tr>
+        
+          <tr>
+            <td style="font-weight:600; color:#38bdf8;">750.0 mm</td>
+            <td>85.9°</td>
+            <td style="color:#22c55e; font-weight:700;">27.78 mm</td>
+            <td>± 13.89 mm</td>
+          </tr>
+        
+          <tr>
+            <td style="font-weight:600; color:#38bdf8;">785.4 mm</td>
+            <td>90.0°</td>
+            <td style="color:#22c55e; font-weight:700;">-0.00 mm</td>
+            <td>± -0.00 mm</td>
+          </tr>
+        
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>💡 Yig'ish va Tayyorlash Bo'yicha Tavsiyalar</h2>
+      <ul style="padding-left: 20px; color: #cbd5e1; font-size: 14px; line-height: 1.7;">
+        <li><strong>Material tanlash:</strong> Metall list (0.8–1.5 mm po'lat / alyuminiy), Fomiks (3–5 mm PVX), yoki Organik shisha (akril).</li>
+        <li><strong>Egish usuli:</strong> Bo'laklar uzunlik bo'yicha markaziy o'qidan tashqariga sferik yoy (R = 500 mm) shaklida egiladi. Fomiks yoki akril bo'lsa, 110-130°C qurilish feni bilan qizdiriladi.</li>
+        <li><strong>Choklar (Birikma):</strong> 
+          Agar svarka yoki yelim chokma-chok (стык в стык) bo'lsa, chizmadagi aniq kontur bo'yicha kesiladi. Agar ustma-ust (внахлест / klepka) ulanadigan bo'lsa, har bir bo'lakning bir tarafiga 10-15 mm qo'shimcha faska (bortik) qo'shiladi.</li>
+        <li><strong>Qutb tutashuvi:</strong> Sharning eng tepasida (va pastida) 8 ta bo'lak bir nuqtada birlashadi. Yig'ishni qulaylashtirish uchun qutbga Ø80-100 mm doiraviy qopqoq (shayba/flanes) qo'yish tavsiya etiladi.</li>
+      </ul>
+    </div>
+
+    <div class="svg-box">
+      <h3 style="color:#38bdf8; margin-bottom:12px;">1:1 Vektor Ko'rinishi (Qisqartirilgan masshtabda)</h3>
+      <img src="sphere_1m_8_gores.svg" alt="1m Shar 8 bo'lak chizmasi" style="max-width:100%; height:auto; border-radius:4px;" />
+    </div>
+  </div>
+</body>
+</html>
