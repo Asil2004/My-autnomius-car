@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <title>Geodezik Gumbaz 2V — D=1000mm Lazer Kesim Chizmasi</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0b0f17; color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    .top-bar { background: #111827; border-bottom: 1px solid #1e293b; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+    .top-bar h1 { font-size: 20px; color: #38bdf8; }
+    .badge { background: #0284c7; color: #fff; font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 4px; text-transform: uppercase; }
+    .btns { display: flex; gap: 10px; }
+    .btn { background: #1e293b; color: #38bdf8; border: 1px solid #334155; padding: 8px 14px; border-radius: 6px; font-size: 13px; text-decoration: none; font-weight: 600; transition: 0.2s; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+    .btn:hover { background: #0284c7; color: #fff; border-color: #0284c7; }
+
+    .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 0; height: calc(100vh - 65px); }
+    @media (max-width: 1000px) { .layout { grid-template-columns: 1fr; height: auto; } }
+
+    .panel-3d { position: relative; background: #020617; border-right: 1px solid #1e293b; overflow: hidden; min-height: 500px; }
+    canvas { display: block; width: 100%; height: 100%; }
+    .panel-info { overflow-y: auto; padding: 24px; }
+
+    .card { background: #111827; border: 1px solid #1f2937; border-radius: 8px; padding: 18px; margin-bottom: 18px; }
+    .card h2 { font-size: 16px; color: #f8fafc; margin-bottom: 14px; border-bottom: 1px solid #334155; padding-bottom: 8px; }
+    .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .stat { background: #1e293b; border-radius: 6px; padding: 10px 14px; }
+    .stat .label { font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
+    .stat .value { font-size: 20px; font-weight: 700; color: #38bdf8; margin-top: 2px; }
+    .stat .value.red { color: #ef4444; }
+    .stat .value.green { color: #22c55e; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #1e293b; }
+    th { background: #1e293b; color: #64748b; font-size: 11px; text-transform: uppercase; }
+    tr:hover { background: #1e293b; }
+
+    .step-list { list-style: none; counter-reset: s; padding: 0; }
+    .step-list li { position: relative; padding-left: 30px; margin-bottom: 12px; color: #cbd5e1; line-height: 1.5; font-size: 13px; }
+    .step-list li::before { content: counter(s); counter-increment: s; position: absolute; left: 0; top: 0; width: 22px; height: 22px; background: #0369a1; color: #fff; border-radius: 50%; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  </style>
+</head>
+<body>
+  <div class="top-bar">
+    <div style="display:flex; align-items:center; gap:12px;">
+      <span class="badge">Geodezik 2V</span>
+      <h1>Geodezik Gumbaz — D=1000 mm Lazer Kesim Chizmasi</h1>
+    </div>
+    <div class="btns">
+      <a class="btn" href="geodesic_dome_2v.dxf" download>DXF Yuklab Olish (Lazer)</a>
+      <a class="btn" href="geodesic_dome_2v.svg" download>SVG Ko'rish (CorelDraw)</a>
+    </div>
+  </div>
+
+  <div class="layout">
+    <div class="panel-3d">
+      <canvas id="domeCanvas"></canvas>
+      <div style="position:absolute; bottom:12px; left:12px; color:#475569; font-size:11px;">Sichqoncha bilan aylantiring | Scroll bilan kattalashtiring</div>
+    </div>
+
+    <div class="panel-info">
+      <div class="card">
+        <h2>Asosiy Parametrlar</h2>
+        <div class="stat-grid">
+          <div class="stat"><div class="label">Shar Diametri (D)</div><div class="value">1000 mm</div></div>
+          <div class="stat"><div class="label">Shar Radiusi (R)</div><div class="value">500 mm</div></div>
+          <div class="stat"><div class="label">Chastota (Frequency)</div><div class="value">2V</div></div>
+          <div class="stat"><div class="label">Jami Panellar</div><div class="value red">44 dona</div></div>
+          <div class="stat"><div class="label">Panel Tiplari</div><div class="value green">2 xil</div></div>
+          <div class="stat"><div class="label">Umumiy Sirt Yuzasi</div><div class="value">165.8 dm&sup2;</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Uchburchak Tiplari va O'lchamlari</h2>
+        <table>
+          <thead>
+            <tr><th>Tip</th><th>Soni</th><th>Qirra 1</th><th>Qirra 2</th><th>Qirra 3</th><th>Yuza (1 ta)</th><th>Jami Yuza</th></tr>
+          </thead>
+          <tbody>
+            
+        <tr>
+          <td><span style="color:#ef4444; font-weight:800; font-size:18px;">A</span></td>
+          <td style="font-weight:700;">32 dona</td>
+          <td>276.79 mm</td>
+          <td>276.79 mm</td>
+          <td>314.16 mm</td>
+          <td>35798.0 mm&sup2;</td>
+          <td style="color:#38bdf8;">114.55 dm&sup2;</td>
+        </tr>
+        
+        <tr>
+          <td><span style="color:#3b82f6; font-weight:800; font-size:18px;">B</span></td>
+          <td style="font-weight:700;">12 dona</td>
+          <td>314.16 mm</td>
+          <td>314.16 mm</td>
+          <td>314.16 mm</td>
+          <td>42736.6 mm&sup2;</td>
+          <td style="color:#38bdf8;">51.28 dm&sup2;</td>
+        </tr>
+        
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>Yig'ish Yo'riqnomasi</h2>
+        <ol class="step-list">
+          <li><strong>Lazerda kesish:</strong> DXF fayldagi QIZIL konturlar bo'yicha barcha uchburchak panellarni kesib oling. Sariq chiziqlar — montaj quloqlari (tab) chiziqlari.</li>
+          <li><strong>Panellarni guruhlash:</strong> Har bir panelda Tip harfi va raqam (masalan, A1, A2... B1, B2...) yozilgan. Shu belgi bo'yicha guruhlang.</li>
+          <li><strong>Tepadan (qutb) boshlash:</strong> 5 ta A tipidagi uchburchakni pentagonsimon qilib orasiga 5 ta B tipidagilarni qo'yib, yuqoridan pasga qarab spiral shaklda yig'ing.</li>
+          <li><strong>Biriktirish usuli:</strong> Tab-Slot: quloqlarni qo'shni panelning ichiga bukib yelim yoki vint bilan mahkamlang. Metall bo'lsa — pop-rivets yoki jihoz vintlari.</li>
+          <li><strong>Ekvator halqasi:</strong> Eng pastki qatordagi panellarning pastki qirrasiga tekis baza halqasi (doiraviy yoki beshburchak flanes) ulang.</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 3D Geodezik Gumbaz Interaktiv Vizualizatsiyasi (Canvas 2D Projection)
+    const verts = [{"x": -262.87, "y": 425.33, "z": 0.0}, {"x": -404.51, "y": 250.0, "z": 154.51}, {"x": -154.51, "y": 404.51, "z": 250.0}, {"x": -425.33, "y": 0.0, "z": 262.87}, {"x": -250.0, "y": 154.51, "z": 404.51}, {"x": -404.51, "y": 250.0, "z": 154.51}, {"x": 0.0, "y": 262.87, "z": 425.33}, {"x": -154.51, "y": 404.51, "z": 250.0}, {"x": -250.0, "y": 154.51, "z": 404.51}, {"x": -404.51, "y": 250.0, "z": 154.51}, {"x": -250.0, "y": 154.51, "z": 404.51}, {"x": -154.51, "y": 404.51, "z": 250.0}, {"x": -262.87, "y": 425.33, "z": 0.0}, {"x": -154.51, "y": 404.51, "z": 250.0}, {"x": 0.0, "y": 500.0, "z": 0.0}, {"x": 0.0, "y": 262.87, "z": 425.33}, {"x": 154.51, "y": 404.51, "z": 250.0}, {"x": -154.51, "y": 404.51, "z": 250.0}, {"x": 262.87, "y": 425.33, "z": 0.0}, {"x": 0.0, "y": 500.0, "z": 0.0}, {"x": 154.51, "y": 404.51, "z": 250.0}, {"x": -154.51, "y": 404.51, "z": 250.0}, {"x": 154.51, "y": 404.51, "z": 250.0}, {"x": 0.0, "y": 500.0, "z": 0.0}, {"x": -262.87, "y": 425.33, "z": 0.0}, {"x": -404.51, "y": 250.0, "z": -154.51}, {"x": -404.51, "y": 250.0, "z": 154.51}, {"x": -425.33, "y": 0.0, "z": 262.87}, {"x": -404.51, "y": 250.0, "z": 154.51}, {"x": -500.0, "y": 0.0, "z": 0.0}, {"x": -404.51, "y": 250.0, "z": -154.51}, {"x": -500.0, "y": 0.0, "z": 0.0}, {"x": -404.51, "y": 250.0, "z": 154.51}, {"x": 262.87, "y": 425.33, "z": 0.0}, {"x": 154.51, "y": 404.51, "z": 250.0}, {"x": 404.51, "y": 250.0, "z": 154.51}, {"x": 0.0, "y": 262.87, "z": 425.33}, {"x": 250.0, "y": 154.51, "z": 404.51}, {"x": 154.51, "y": 404.51, "z": 250.0}, {"x": 425.33, "y": 0.0, "z": 262.87}, {"x": 404.51, "y": 250.0, "z": 154.51}, {"x": 250.0, "y": 154.51, "z": 404.51}, {"x": 154.51, "y": 404.51, "z": 250.0}, {"x": 250.0, "y": 154.51, "z": 404.51}, {"x": 404.51, "y": 250.0, "z": 154.51}, {"x": 0.0, "y": 262.87, "z": 425.33}, {"x": -250.0, "y": 154.51, "z": 404.51}, {"x": 0.0, "y": 0.0, "z": 500.0}, {"x": -425.33, "y": 0.0, "z": 262.87}, {"x": -250.0, "y": -154.51, "z": 404.51}, {"x": -250.0, "y": 154.51, "z": 404.51}, {"x": 0.0, "y": -262.87, "z": 425.33}, {"x": 0.0, "y": 0.0, "z": 500.0}, {"x": -250.0, "y": -154.51, "z": 404.51}, {"x": -250.0, "y": 154.51, "z": 404.51}, {"x": -250.0, "y": -154.51, "z": 404.51}, {"x": 0.0, "y": 0.0, "z": 500.0}, {"x": -425.33, "y": 0.0, "z": 262.87}, {"x": -500.0, "y": 0.0, "z": 0.0}, {"x": -404.51, "y": -250.0, "z": 154.51}, {"x": -262.87, "y": -425.33, "z": 0.0}, {"x": -404.51, "y": -250.0, "z": 154.51}, {"x": -404.51, "y": -250.0, "z": -154.51}, {"x": -500.0, "y": 0.0, "z": 0.0}, {"x": -404.51, "y": -250.0, "z": -154.51}, {"x": -404.51, "y": -250.0, "z": 154.51}, {"x": 262.87, "y": -425.33, "z": 0.0}, {"x": 404.51, "y": -250.0, "z": 154.51}, {"x": 154.51, "y": -404.51, "z": 250.0}, {"x": 425.33, "y": 0.0, "z": 262.87}, {"x": 250.0, "y": -154.51, "z": 404.51}, {"x": 404.51, "y": -250.0, "z": 154.51}, {"x": 0.0, "y": -262.87, "z": 425.33}, {"x": 154.51, "y": -404.51, "z": 250.0}, {"x": 250.0, "y": -154.51, "z": 404.51}, {"x": 404.51, "y": -250.0, "z": 154.51}, {"x": 250.0, "y": -154.51, "z": 404.51}, {"x": 154.51, "y": -404.51, "z": 250.0}, {"x": 262.87, "y": -425.33, "z": 0.0}, {"x": 154.51, "y": -404.51, "z": 250.0}, {"x": 0.0, "y": -500.0, "z": 0.0}, {"x": 0.0, "y": -262.87, "z": 425.33}, {"x": -154.51, "y": -404.51, "z": 250.0}, {"x": 154.51, "y": -404.51, "z": 250.0}, {"x": -262.87, "y": -425.33, "z": 0.0}, {"x": 0.0, "y": -500.0, "z": 0.0}, {"x": -154.51, "y": -404.51, "z": 250.0}, {"x": 154.51, "y": -404.51, "z": 250.0}, {"x": -154.51, "y": -404.51, "z": 250.0}, {"x": 0.0, "y": -500.0, "z": 0.0}, {"x": 262.87, "y": -425.33, "z": 0.0}, {"x": 404.51, "y": -250.0, "z": -154.51}, {"x": 404.51, "y": -250.0, "z": 154.51}, {"x": 425.33, "y": 0.0, "z": 262.87}, {"x": 404.51, "y": -250.0, "z": 154.51}, {"x": 500.0, "y": 0.0, "z": 0.0}, {"x": 404.51, "y": -250.0, "z": -154.51}, {"x": 500.0, "y": 0.0, "z": 0.0}, {"x": 404.51, "y": -250.0, "z": 154.51}, {"x": 0.0, "y": -262.87, "z": 425.33}, {"x": 250.0, "y": -154.51, "z": 404.51}, {"x": 0.0, "y": 0.0, "z": 500.0}, {"x": 425.33, "y": 0.0, "z": 262.87}, {"x": 250.0, "y": 154.51, "z": 404.51}, {"x": 250.0, "y": -154.51, "z": 404.51}, {"x": 0.0, "y": 262.87, "z": 425.33}, {"x": 0.0, "y": 0.0, "z": 500.0}, {"x": 250.0, "y": 154.51, "z": 404.51}, {"x": 250.0, "y": -154.51, "z": 404.51}, {"x": 250.0, "y": 154.51, "z": 404.51}, {"x": 0.0, "y": 0.0, "z": 500.0}, {"x": -262.87, "y": -425.33, "z": 0.0}, {"x": -154.51, "y": -404.51, "z": 250.0}, {"x": -404.51, "y": -250.0, "z": 154.51}, {"x": 0.0, "y": -262.87, "z": 425.33}, {"x": -250.0, "y": -154.51, "z": 404.51}, {"x": -154.51, "y": -404.51, "z": 250.0}, {"x": -425.33, "y": 0.0, "z": 262.87}, {"x": -404.51, "y": -250.0, "z": 154.51}, {"x": -250.0, "y": -154.51, "z": 404.51}, {"x": -154.51, "y": -404.51, "z": 250.0}, {"x": -250.0, "y": -154.51, "z": 404.51}, {"x": -404.51, "y": -250.0, "z": 154.51}, {"x": 425.33, "y": 0.0, "z": 262.87}, {"x": 500.0, "y": 0.0, "z": 0.0}, {"x": 404.51, "y": 250.0, "z": 154.51}, {"x": 262.87, "y": 425.33, "z": 0.0}, {"x": 404.51, "y": 250.0, "z": 154.51}, {"x": 404.51, "y": 250.0, "z": -154.51}, {"x": 500.0, "y": 0.0, "z": 0.0}, {"x": 404.51, "y": 250.0, "z": -154.51}, {"x": 404.51, "y": 250.0, "z": 154.51}];
+    const faces = [{"a": 0, "b": 1, "c": 2, "type": "A"}, {"a": 3, "b": 4, "c": 5, "type": "A"}, {"a": 6, "b": 7, "c": 8, "type": "A"}, {"a": 9, "b": 10, "c": 11, "type": "B"}, {"a": 12, "b": 13, "c": 14, "type": "A"}, {"a": 15, "b": 16, "c": 17, "type": "A"}, {"a": 18, "b": 19, "c": 20, "type": "A"}, {"a": 21, "b": 22, "c": 23, "type": "B"}, {"a": 24, "b": 25, "c": 26, "type": "A"}, {"a": 27, "b": 28, "c": 29, "type": "A"}, {"a": 30, "b": 31, "c": 32, "type": "B"}, {"a": 33, "b": 34, "c": 35, "type": "A"}, {"a": 36, "b": 37, "c": 38, "type": "A"}, {"a": 39, "b": 40, "c": 41, "type": "A"}, {"a": 42, "b": 43, "c": 44, "type": "B"}, {"a": 45, "b": 46, "c": 47, "type": "A"}, {"a": 48, "b": 49, "c": 50, "type": "A"}, {"a": 51, "b": 52, "c": 53, "type": "A"}, {"a": 54, "b": 55, "c": 56, "type": "B"}, {"a": 57, "b": 58, "c": 59, "type": "A"}, {"a": 60, "b": 61, "c": 62, "type": "A"}, {"a": 63, "b": 64, "c": 65, "type": "B"}, {"a": 66, "b": 67, "c": 68, "type": "A"}, {"a": 69, "b": 70, "c": 71, "type": "A"}, {"a": 72, "b": 73, "c": 74, "type": "A"}, {"a": 75, "b": 76, "c": 77, "type": "B"}, {"a": 78, "b": 79, "c": 80, "type": "A"}, {"a": 81, "b": 82, "c": 83, "type": "A"}, {"a": 84, "b": 85, "c": 86, "type": "A"}, {"a": 87, "b": 88, "c": 89, "type": "B"}, {"a": 90, "b": 91, "c": 92, "type": "A"}, {"a": 93, "b": 94, "c": 95, "type": "A"}, {"a": 96, "b": 97, "c": 98, "type": "B"}, {"a": 99, "b": 100, "c": 101, "type": "A"}, {"a": 102, "b": 103, "c": 104, "type": "A"}, {"a": 105, "b": 106, "c": 107, "type": "A"}, {"a": 108, "b": 109, "c": 110, "type": "B"}, {"a": 111, "b": 112, "c": 113, "type": "A"}, {"a": 114, "b": 115, "c": 116, "type": "A"}, {"a": 117, "b": 118, "c": 119, "type": "A"}, {"a": 120, "b": 121, "c": 122, "type": "B"}, {"a": 123, "b": 124, "c": 125, "type": "A"}, {"a": 126, "b": 127, "c": 128, "type": "A"}, {"a": 129, "b": 130, "c": 131, "type": "B"}];
+    const canvas = document.getElementById('domeCanvas');
+    const ctx = canvas.getContext('2d');
+    let rotY = -0.4, rotX = 0.5, scale = 0.6, dragging = false, lastX = 0, lastY = 0;
+
+    function resize() {
+      canvas.width = canvas.parentElement.clientWidth;
+      canvas.height = canvas.parentElement.clientHeight;
+      draw();
+    }
+    window.addEventListener('resize', resize);
+
+    function project(v) {
+      // Rotate Y
+      let x = v.x * Math.cos(rotY) - v.z * Math.sin(rotY);
+      let z = v.x * Math.sin(rotY) + v.z * Math.cos(rotY);
+      let y = v.y;
+      // Rotate X
+      let y2 = y * Math.cos(rotX) - z * Math.sin(rotX);
+      let z2 = y * Math.sin(rotX) + z * Math.cos(rotX);
+      let s = canvas.width * scale / 1200;
+      return { x: canvas.width / 2 + x * s, y: canvas.height / 2 - y2 * s, z: z2 };
+    }
+
+    function draw() {
+      ctx.fillStyle = '#020617';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Yuzalarni chizish (Z-sort)
+      let tris = faces.map((f, i) => {
+        let pa = project(verts[f.a]), pb = project(verts[f.b]), pc = project(verts[f.c]);
+        let avgZ = (pa.z + pb.z + pc.z) / 3;
+        return { pa, pb, pc, type: f.type, z: avgZ };
+      });
+      tris.sort((a, b) => a.z - b.z);
+
+      for (let t of tris) {
+        ctx.beginPath();
+        ctx.moveTo(t.pa.x, t.pa.y);
+        ctx.lineTo(t.pb.x, t.pb.y);
+        ctx.lineTo(t.pc.x, t.pc.y);
+        ctx.closePath();
+        let brightness = Math.max(0.15, Math.min(0.7, 0.3 + t.z / 800));
+        if (t.type === 'A') {
+          ctx.fillStyle = `rgba(239, 68, 68, ${brightness})`;
+          ctx.strokeStyle = `rgba(239, 68, 68, ${brightness + 0.3})`;
+        } else {
+          ctx.fillStyle = `rgba(59, 130, 246, ${brightness})`;
+          ctx.strokeStyle = `rgba(59, 130, 246, ${brightness + 0.3})`;
+        }
+        ctx.lineWidth = 1.2;
+        ctx.fill();
+        ctx.stroke();
+      }
+
+      // Legenda
+      ctx.font = '13px "Segoe UI", sans-serif';
+      ctx.fillStyle = '#ef4444';
+      ctx.fillRect(16, 16, 14, 14);
+      ctx.fillStyle = '#e2e8f0';
+      ctx.fillText('Tip A', 36, 28);
+      ctx.fillStyle = '#3b82f6';
+      ctx.fillRect(16, 38, 14, 14);
+      ctx.fillStyle = '#e2e8f0';
+      ctx.fillText('Tip B', 36, 50);
+    }
+
+    canvas.addEventListener('mousedown', e => { dragging = true; lastX = e.clientX; lastY = e.clientY; });
+    canvas.addEventListener('mousemove', e => {
+      if (!dragging) return;
+      rotY += (e.clientX - lastX) * 0.008;
+      rotX += (e.clientY - lastY) * 0.008;
+      rotX = Math.max(-1.2, Math.min(1.2, rotX));
+      lastX = e.clientX; lastY = e.clientY;
+      draw();
+    });
+    canvas.addEventListener('mouseup', () => dragging = false);
+    canvas.addEventListener('mouseleave', () => dragging = false);
+    canvas.addEventListener('wheel', e => {
+      e.preventDefault();
+      scale = Math.max(0.2, Math.min(2.0, scale - e.deltaY * 0.001));
+      draw();
+    }, { passive: false });
+
+    // Touch support
+    canvas.addEventListener('touchstart', e => {
+      if (e.touches.length === 1) { dragging = true; lastX = e.touches[0].clientX; lastY = e.touches[0].clientY; }
+    });
+    canvas.addEventListener('touchmove', e => {
+      if (!dragging || e.touches.length !== 1) return;
+      e.preventDefault();
+      rotY += (e.touches[0].clientX - lastX) * 0.008;
+      rotX += (e.touches[0].clientY - lastY) * 0.008;
+      rotX = Math.max(-1.2, Math.min(1.2, rotX));
+      lastX = e.touches[0].clientX; lastY = e.touches[0].clientY;
+      draw();
+    }, { passive: false });
+    canvas.addEventListener('touchend', () => dragging = false);
+
+    // Auto rotate
+    let autoRot = setInterval(() => { if (!dragging) { rotY += 0.006; draw(); } }, 30);
+    resize();
+  </script>
+</body>
+</html>
