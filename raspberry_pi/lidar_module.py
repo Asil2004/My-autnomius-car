@@ -125,14 +125,18 @@ class LidarModule:
             return env_port
         if not HAS_SERIAL:
             return None
+        arduino_port = os.environ.get('ARDUINO_PORT', '')
         import glob
         for p in glob.glob('/dev/ttyUSB*') + glob.glob('/dev/serial0') + glob.glob('/dev/ttyAMA0'):
-            return p
+            if p != arduino_port:
+                return p
         if list_ports:
             for p in list_ports.comports():
+                if arduino_port and p.device == arduino_port:
+                    continue
                 desc = f"{p.description} {p.manufacturer or ''} {getattr(p, 'hwid', '')}".lower()
-                # LDROBOT STL-19P (CP2102: VID 10C4, PID EA60) va boshqa USB-UART adapterlar
-                if any(k in desc for k in ("cp210", "ch340", "ftdi", "silicon labs", "usb-serial", "lidar", "stl-19", "ld19", "10c4:ea60", "stl19p")):
+                # LDROBOT STL-19P (CP2102: VID 10C4, PID EA60), RPLIDAR va boshqa USB-UART adapterlar
+                if any(k in desc for k in ("cp210", "ch340", "ftdi", "silicon labs", "usb-serial", "lidar", "stl-19", "ld19", "10c4:ea60", "stl19p", "rplidar")):
                     return p.device
         return None
 

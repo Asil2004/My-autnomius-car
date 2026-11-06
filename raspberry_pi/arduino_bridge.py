@@ -77,15 +77,21 @@ class ArduinoBridge:
             return env_port
         if not HAS_SERIAL:
             return None
+        lidar_port = os.environ.get('LIDAR_PORT', '')
         # Linux / RPi portlari (ACM avval tekshiriladi)
-        ports = glob.glob('/dev/ttyACM*') + glob.glob('/dev/ttyUSB*')
-        if ports:
-            return ports[0]
+        acm_ports = glob.glob('/dev/ttyACM*')
+        if acm_ports:
+            return acm_ports[0]
+        usb_ports = [p for p in glob.glob('/dev/ttyUSB*') if p != lidar_port]
+        if usb_ports:
+            return usb_ports[0]
         # Windows portlari
         if list_ports:
             for p in list_ports.comports():
-                desc = f"{p.description} {p.manufacturer or ''}".lower()
-                if any(k in desc for k in ("arduino", "ch340", "uno", "mega", "usb serial", "ftdi")):
+                if lidar_port and p.device == lidar_port:
+                    continue
+                desc = f"{p.description} {p.manufacturer or ''} {getattr(p, 'hwid', '')}".lower()
+                if any(k in desc for k in ("arduino", "ch340", "uno", "mega", "usb-serial", "usb serial", "ftdi")):
                     return p.device
         return None
 

@@ -168,6 +168,20 @@ def select_active_camera(source: int):
     ok = camera.select_camera(source)
     return {"status": "ok" if ok else "error", "active_source": camera.active_source}
 
+@app.get("/video_feed/quad")
+@app.get("/stream.mjpg/quad")
+def video_feed_quad():
+    """4 ta kameraning (Oldi, Orqa, Chap, O'ng) 2x2 birlashgan multi-kamera oqimi"""
+    def generate():
+        while True:
+            jpeg = camera.get_quad_jpeg()
+            if jpeg:
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + jpeg + b'\r\n')
+            time.sleep(0.05)
+    return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+
 @app.get("/video_feed/{cam_id}")
 @app.get("/stream.mjpg/{cam_id}")
 def video_feed_by_id(cam_id: int):
@@ -368,6 +382,7 @@ def trigger_failsafe_stop(reason: str = "MANUAL_PANIC"):
     return {"status": "TRIGGERED", "reason": reason}
 
 
+@app.get("/api/status")
 @app.get("/api/telemetry")
 def get_telemetry():
     """To'liq telemetriya JSON (Web UI va mobil ilova uchun)"""
