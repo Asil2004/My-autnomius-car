@@ -304,8 +304,9 @@ export const RobotAvatar: React.FC<RobotAvatarProps> = ({ inputRef }) => {
         tWidth = 1;
         nextViseme = 0;
       }
-      // Ochilish tez, yopilish biroz sekinroq: tabiiy jag' harakati
-      const km = 1 - Math.exp(-dt * (tOpen > open ? 22 : 15));
+      // Ochilish tez, so'z ichida yopilish biroz sekinroq (tabiiy jag' harakati);
+      // ovoz to'xtaganda (speech = 0) og'iz ~60 ms ichida darhol yopiladi
+      const km = 1 - Math.exp(-dt * (tOpen > open ? 22 : speech <= 0.05 ? 45 : 15));
       open += (tOpen - open) * km;
       width += (tWidth - width) * (1 - Math.exp(-dt * 14));
       // Tabassum faqat tanilgan shaxs oldida va jim turganda

@@ -77,19 +77,27 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
     tacticalAudio.playCommandBeep();
 
     let speakTick = 0;
+    // Og'iz faqat ovoz HAQIQATAN eshitilayotganda qimirlaydi (edgeTtsService.isAudible: audio 'playing' dan
+    // 'ended' gacha). TTS so'rovi va audio yuklanayotgan paytda (1-5 s) og'iz yopiq turadi
     const speechTimer = window.setInterval(() => {
+      if (!edgeTtsService.isAudible()) {
+        eyeInputRef.current.speech = 0;
+        return;
+      }
       speakTick++;
-      // Haqiqiy Sardor audiosining balandligi (jim joylarda og'iz yopiladi); o'lchab bo'lmasa taxminiy ritm
+      // Haqiqiy audio balandligi (jim joylarda og'iz yopiladi); o'lchab bo'lmasa (Web Speech) taxminiy ritm
       const level = edgeTtsService.getLevel();
       eyeInputRef.current.speech = level !== null
         ? level
         : 0.5 + Math.sin(speakTick * 0.8) * 0.4 + Math.random() * 0.2;
-    }, 33);
+    }, 16);
 
-    // Uzun gaplar animatsiyasi audio tugamasdan uzilmasligi uchun matn uzunligiga qarab
-    const safetyTimeout = window.setTimeout(() => {
-      finish();
-    }, Math.max(7500, phraseText.length * 95 + 2500));
+    // Ehtiyot taymeri: ovoz umuman boshlanmasa 25 s da, boshlangach esa matn uzunligiga qarab (ijro boshidan) tugatadi
+    let safetyTimeout = window.setTimeout(() => finish(), 25000);
+    const onAudioStart = () => {
+      window.clearTimeout(safetyTimeout);
+      safetyTimeout = window.setTimeout(() => finish(), Math.max(7500, phraseText.length * 95 + 2500));
+    };
 
     let done = false;
     const finish = () => {
@@ -108,7 +116,7 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
     };
     finishRef.current = finish;
 
-    edgeTtsService.speak(phraseText, { voice: 'uz-UZ-SardorNeural', rate: 1.0 }, undefined, finish);
+    edgeTtsService.speak(phraseText, { voice: 'uz-UZ-SardorNeural', rate: 1.0 }, onAudioStart, finish);
   }, []);
 
   // ==========================================================================
