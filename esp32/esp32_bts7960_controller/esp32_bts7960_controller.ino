@@ -119,17 +119,24 @@ void toxta() {
   harakatda = false;
 }
 
+// Silliq burilish nisbati (ichki g'ildiraklar kuchi, 40-55% oralig'i)
+// 4 ta DC motorli skid-steer shassilarda motorlar qotib (stall) qolmasligi uchun 48% optimal
+int burilishNisbati = 48; // %
+
 // Barcha buyruqlarni qayta ishlovchi markaziy funksiya
 void buyruqniBajar(char xarf) {
+  int ichkiKuch = (tezlik * burilishNisbati) / 100;
+  if (tezlik > 80 && ichkiKuch < 65) ichkiKuch = 65; // Minimal aylanma moment chegarasi
+
   switch (xarf) {
-    case 'F': oldingaYur(tezlik, tezlik); break;        // Oldinga
-    case 'B': orqagaYur(tezlik, tezlik); break;         // Orqaga
-    case 'L': joyidaChapga(tezlik); break;              // Chapga burilish
-    case 'R': joyidaOngga(tezlik); break;               // O'ngga burilish
-    case 'G': oldingaYur(tezlik / 3, tezlik); break;    // Oldinga-chapga egri
-    case 'I': oldingaYur(tezlik, tezlik / 3); break;    // Oldinga-o'ngga egri
-    case 'H': orqagaYur(tezlik / 3, tezlik); break;     // Orqaga-chapga egri
-    case 'J': orqagaYur(tezlik, tezlik / 3); break;     // Orqaga-o'ngga egri
+    case 'F': oldingaYur(tezlik, tezlik); break;        // To'g'ri oldinga
+    case 'B': orqagaYur(tezlik, tezlik); break;         // To'g'ri orqaga
+    case 'L': joyidaChapga(tezlik); break;              // Joyida tank-burilish
+    case 'R': joyidaOngga(tezlik); break;               // Joyida tank-burilish
+    case 'G': oldingaYur(ichkiKuch, tezlik); break;     // Oldinga-chapga silliq egri burilish
+    case 'I': oldingaYur(tezlik, ichkiKuch); break;     // Oldinga-o'ngga silliq egri burilish
+    case 'H': orqagaYur(ichkiKuch, tezlik); break;      // Orqaga-chapga egri burilish
+    case 'J': orqagaYur(tezlik, ichkiKuch); break;      // Orqaga-o'ngga egri burilish
     case 'S': toxta(); break;                           // To'xtash
     default:  toxta(); break;
   }
