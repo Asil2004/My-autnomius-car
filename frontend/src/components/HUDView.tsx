@@ -51,6 +51,10 @@ type PanelId = 'control' | 'sensors' | 'ai' | 'ptz' | 'log';
 type CamId = 'face' | 'ptz' | 'front' | 'rear' | 'right';
 
 // Robotdagi jami 5 ta kamera (1 tasi 360° PTZ). Qaysi biri kattalashtirilsa, qolgan 4 tasi chap tomonda kichik ko'rinadi
+// Kursorga bog'langan zoom chegaralari
+const ZOOM_MIN = 1;
+const ZOOM_MAX = 8;
+
 const ALL_CAMERAS: { id: CamId; short: string; long: string }[] = [
   { id: 'face', short: 'Face ID', long: 'Face ID (Planshet)' },
   { id: 'ptz', short: 'PTZ', long: 'PTZ 360° kamera' },
@@ -198,7 +202,13 @@ export const HUDView: React.FC = () => {
   };
 
   // Zoom va Fullscreen holati
-  const [zoomLevel, setZoomLevel] = useState<number>(1);
+  // Zoom: s - masshtab (1x..8x), x/y - kadr siljishi (piksel)
+  const [zoom, setZoom] = useState<{ s: number; x: number; y: number }>({ s: 1, x: 0, y: 0 });
+  const zoomLevel = zoom.s;
+  const [activeCam, setActiveCam] = useState<CamId>('face');
+  const zoomFrameRef = useRef<HTMLDivElement | null>(null);
+  const cameraAreaRef = useRef<HTMLDivElement | null>(null);
+  const cameraOverlayRef = useRef<HTMLDivElement | null>(null);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
 
   // Live vs Playback (Qayta ko'rish) rejimi
@@ -306,14 +316,131 @@ export const HUDView: React.FC = () => {
     }, 5000);
   }, []);
 
+  // ---------------------------------------------------------------------------
+  // KURSORGA BOG'LANGAN ZOOM: g'ildirak va ikki marta bosish kursor turgan nuqtani kattalashtiradi.
+  // Kadr: transform-origin 0 0, transform = translate(x, y) scale(s). Kursor ostidagi nuqta joyida qoladi:
+  //   p = (q - t) / s  ->  t' = q - s' * p   (q: kursor, kadr chap-yuqori burchagiga nisbatan)
+  // Siljish kadr chetidan chiqib ketmasligi uchun cheklanadi; o'zgarish CSS transition bilan silliq.
+  // ---------------------------------------------------------------------------
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+
+  /** Hozir ko'rinib turgan (zoom qilinadigan) kadr ramkasi */
+  const getZoomFrame = useCallback((): HTMLElement | null => {
+    return activeCam === 'face' ? zoomFrameRef.current : cameraAreaRef.current;
+  }, [activeCam]);
+
+  const clampZoom = (s: number, x: number, y: number, w: number, h: number) => {
+    const scale = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, s));
+    // Kadr ramkani to'liq qoplab tursin: x  [w - s*w, 0]
+    return {
+      s: scale,
+      x: Math.min(0, Math.max(w - scale * w, x)),
+      y: Math.min(0, Math.max(h - scale * h, y))
+    };
+  };
+
+  /** Kursor (clientX, clientY) atrofida zoom; nuqta berilmasa kadr markazi */
+  const zoomAt = useCallback(
+    (nextScale: number, clientX?: number, clientY?: number) => {
+      const frame = getZoomFrame();
+      const z = zoomRef.current;
+      if (!frame) return;
+      const r = frame.getBoundingClientRect();
+      const qx = clientX === undefined ? r.width / 2 : Math.min(r.width, Math.max(0, clientX - r.left));
+      const qy = clientY === undefined ? r.height / 2 : Math.min(r.height, Math.max(0, clientY - r.top));
+      const s2 = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, nextScale));
+      const px = (qx - z.x) / z.s;
+      const py = (qy - z.y) / z.s;
+      setZoom(clampZoom(s2, qx - s2 * px, qy - s2 * py, r.width, r.height));
+    },
+    [getZoomFrame]
+  );
+
+  const resetZoom = useCallback(() => setZoom({ s: 1, x: 0, y: 0 }), []);
+
   const handleZoomIn = () => {
-    setZoomLevel((z) => Math.min(3, +(z + 0.25).toFixed(2)));
+    zoomAt(zoomRef.current.s * 1.5);
     resetOverlayTimer();
   };
 
   const handleZoomOut = () => {
-    setZoomLevel((z) => Math.max(1, +(z - 0.25).toFixed(2)));
+    zoomAt(zoomRef.current.s / 1.5);
     resetOverlayTimer();
+  };
+
+  // Sichqoncha g'ildiragi: kursor ostidagi nuqtaga yaqinlashish/uzoqlashish (native listener: preventDefault uchun passive emas)
+  useEffect(() => {
+    const el = cameraOverlayRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      // Tugmalar paneli ustida g'ildirak sahifani aylantirsin
+      if ((e.target as HTMLElement).closest('button, input, [data-no-zoom]')) return;
+      e.preventDefault();
+      const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
+      zoomAt(zoomRef.current.s * Math.exp(-dy * 0.0015), e.clientX, e.clientY);
+      resetOverlayTimer();
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [zoomAt, resetOverlayTimer]);
+
+  // Ikki marta bosish: kursor nuqtasini 2 barobar yaqinlashtirish; maksimal zoomda esa 1x ga qaytish
+  const handleCameraDoubleClick = useCallback(
+    (e: React.MouseEvent) => {
+      if ((e.target as HTMLElement).closest('button, input, [data-no-zoom]')) return;
+      const s = zoomRef.current.s;
+      if (s >= ZOOM_MAX - 0.01) resetZoom();
+      else zoomAt(s * 2, e.clientX, e.clientY);
+    },
+    [zoomAt, resetZoom]
+  );
+
+  // Kattalashtirilgan kadrni sichqoncha bilan sudrab surish (bosish emas, sudrash bo'lsa panel ochilmaydi)
+  const dragRef = useRef<{ x: number; y: number; zx: number; zy: number; moved: boolean } | null>(null);
+  const [isPanning, setIsPanning] = useState(false);
+  const handleCameraPointerDown = useCallback((e: React.PointerEvent) => {
+    if (e.button !== 0 || zoomRef.current.s <= 1) return;
+    if ((e.target as HTMLElement).closest('button, input, [data-no-zoom]')) return;
+    dragRef.current = { x: e.clientX, y: e.clientY, zx: zoomRef.current.x, zy: zoomRef.current.y, moved: false };
+  }, []);
+  const handleCameraPanMove = useCallback(
+    (e: React.PointerEvent) => {
+      const d = dragRef.current;
+      const frame = getZoomFrame();
+      if (!d || !frame || (e.buttons & 1) === 0) return;
+      const dx = e.clientX - d.x;
+      const dy = e.clientY - d.y;
+      if (!d.moved && Math.hypot(dx, dy) < 4) return;
+      if (!d.moved) {
+        d.moved = true;
+        setIsPanning(true);
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      }
+      const r = frame.getBoundingClientRect();
+      setZoom(clampZoom(zoomRef.current.s, d.zx + dx, d.zy + dy, r.width, r.height));
+    },
+    [getZoomFrame]
+  );
+  const handleCameraPointerUp = useCallback(() => {
+    setIsPanning(false);
+    // Sudrash tugagach keladigan "click" panelni ochib-yopmasin
+    if (dragRef.current?.moved) suppressClickRef.current = true;
+    dragRef.current = null;
+  }, []);
+  const suppressClickRef = useRef(false);
+
+  // Kamera almashganda zoom 1x ga qaytadi
+  useEffect(() => {
+    resetZoom();
+  }, [activeCam, resetZoom]);
+
+  /** Kadr va undagi ramkalar uchun umumiy transform */
+  const zoomTransform = `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.s})`;
+  const zoomStyle: React.CSSProperties = {
+    transform: zoomTransform,
+    transformOrigin: '0 0',
+    transition: isPanning ? 'none' : 'transform 160ms ease-out'
   };
 
   const handleToggleFullscreen = () => {
@@ -322,6 +449,10 @@ export const HUDView: React.FC = () => {
   };
 
   const handleCameraClick = useCallback(() => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
+    }
     setShowOverlay((prev) => {
       if (overlayTimerRef.current) clearTimeout(overlayTimerRef.current);
       if (!prev) {
@@ -357,7 +488,6 @@ export const HUDView: React.FC = () => {
     return () => window.removeEventListener('keydown', onKey);
   }, [isFullscreen]);
 
-  const [activeCam, setActiveCam] = useState<CamId>('face');
   // Old kamera = robotning RPi oqimi. Ulanmagan bo'lsa "Signal yo'q" ko'rsatiladi va vaqti-vaqti bilan qayta uriniladi
   const [rpiOk, setRpiOk] = useState(false);
   const [rpiRetry, setRpiRetry] = useState(0);
@@ -1404,6 +1534,7 @@ export const HUDView: React.FC = () => {
             {/* Viewport: justify-start orqali kadr chapga oxirigacha taqalgan */}
             <div ref={viewportWrapRef} className="bg-black flex-1 min-h-0 w-full h-full flex items-center justify-start overflow-hidden relative">
               <div
+                ref={zoomFrameRef}
                 className="relative bg-black flex items-center justify-center overflow-hidden"
                 style={{
                   aspectRatio: String(videoAspect),
@@ -1418,10 +1549,8 @@ export const HUDView: React.FC = () => {
                     <video
                       ref={playbackVideoRef}
                       playsInline
-                      className={`w-full h-full object-contain transition-transform origin-center ${
-                        currentPlaybackChunk ? 'block' : 'hidden'
-                      }`}
-                      style={{ transform: `scale(${zoomLevel})` }}
+                      className={`w-full h-full object-contain ${currentPlaybackChunk ? 'block' : 'hidden'}`}
+                      style={zoomStyle}
                     />
                     
                     {!currentPlaybackChunk && (
@@ -1454,10 +1583,7 @@ export const HUDView: React.FC = () => {
 
                 {/* 1-REJIM: FRONTAL WEBCAM (FACE ID) */}
                 {cameraSource === 'FRONTAL' && (
-                  <div
-                    className="absolute inset-0 bg-black transition-transform duration-200 origin-center"
-                    style={{ transform: `scale(${zoomLevel})` }}
-                  >
+                  <div className="absolute inset-0 bg-black" style={zoomStyle}>
                     <video
                       ref={videoRef}
                       autoPlay
@@ -1499,10 +1625,11 @@ export const HUDView: React.FC = () => {
                         className="absolute border-2 rounded-sm transition-all duration-150 pointer-events-none z-20"
                         style={{
                           borderColor: obj.color,
-                          left: `${obj.box.x}%`,
-                          top: `${obj.box.y}%`,
-                          width: `${obj.box.width}%`,
-                          height: `${obj.box.height}%`
+                          // Zoom qilinganda ramka kadr bilan birga siljiydi (yozuv o'lchami kattalashmaydi)
+                          left: `calc(${zoom.x}px + ${obj.box.x * zoom.s}%)`,
+                          top: `calc(${zoom.y}px + ${obj.box.y * zoom.s}%)`,
+                          width: `${obj.box.width * zoom.s}%`,
+                          height: `${obj.box.height * zoom.s}%`
                         }}
                       >
                         <div
@@ -1527,11 +1654,11 @@ export const HUDView: React.FC = () => {
 
           {/* AGAR ASOSIY OYNA FACE ID BO'LMASA */}
           {activeCam !== 'face' && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-tactical-950 text-center px-6 overflow-hidden">
-              <div
-                className="w-full h-full flex items-center justify-center transition-transform duration-200 origin-center"
-                style={{ transform: `scale(${zoomLevel})` }}
-              >
+            <div
+              ref={cameraAreaRef}
+              className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-tactical-950 text-center overflow-hidden"
+            >
+              <div className="w-full h-full flex items-center justify-center px-6" style={zoomStyle}>
                 {activeCam === 'front' && rpiOk ? (
                   <img
                     src={`http://${system.rpiIp}:${system.rpiPort}/stream.mjpg?r=${rpiRetry}`}
@@ -1585,9 +1712,20 @@ export const HUDView: React.FC = () => {
           {/* NVR KAMERA EKRANI ICHIDAGI HUD OVERLAY (5S AUTO-HIDE, TAP/MOVE BILAN BOSHQARILADI) */}
           {/* ========================================================================= */}
           <div
-            onPointerMove={handleCameraPointerMove}
+            ref={cameraOverlayRef}
+            onPointerMove={(e) => {
+              handleCameraPointerMove();
+              handleCameraPanMove(e);
+            }}
+            onPointerDown={handleCameraPointerDown}
+            onPointerUp={handleCameraPointerUp}
+            onPointerCancel={handleCameraPointerUp}
             onClick={handleCameraClick}
-            className="absolute inset-0 z-30 flex flex-col justify-between p-3 pointer-events-auto cursor-pointer"
+            onDoubleClick={handleCameraDoubleClick}
+            title="G'ildirak yoki ikki marta bosish: kursor nuqtasini yaqinlashtirish. Kattalashtirilganda sudrab suring"
+            className={`absolute inset-0 z-30 flex flex-col justify-between p-3 pointer-events-auto select-none ${
+              zoom.s > 1 ? (isPanning ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'
+            }`}
           >
             {/* YUQORI QATOR: NVR SANA-VAQT (DIFFERENCE REJIMI) + REJIMLAR + ZOOM + FULLSCREEN */}
             <div
@@ -1657,7 +1795,7 @@ export const HUDView: React.FC = () => {
                 {/* Reset Zoom */}
                 {zoomLevel > 1 && (
                   <button
-                    onClick={() => { setZoomLevel(1); resetOverlayTimer(); }}
+                    onClick={() => { resetZoom(); resetOverlayTimer(); }}
                     title="1x ga qaytarish"
                     className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-tactical-800 text-police-cyan hover:bg-tactical-700"
                   >
