@@ -17,6 +17,7 @@ import { findQa, isRightsEntry } from './localKnowledge';
 import { answerCache } from './answerCache';
 import { OFFICER_CONDUCT, RIGHTS_QA } from './rightsKnowledge';
 import { situationService } from './situationService';
+import { newsAnswer, newsContextForAi } from './newsKnowledge';
 
 // Favqulodda holat (102) belgilari
 const EMERGENCY_RE = /\b102\b|yordam\s*(ber|kerak|qiling)|qutqar|hujum|o'g'ri|ogri\b|o'g'irla|bezori|pichoq|qurol|urishyapti|xavf ostida|xavfdaman/;
@@ -122,6 +123,10 @@ class AiDialogService {
     // 1b. Vaqt, sana, ob-havo, joylashuv: real vaqtdagi ma'lumot (situationService)
     const situational = this.situational(t);
     if (situational) return { answer: greet + situational, source: 'local_brain' };
+
+    // 1c. Yangiliklar (kun.uz keshi): "dunyoda nima yangiliklar", "sport yangiliklari", "Tramp haqida nima gap"
+    const news = newsAnswer(t);
+    if (news) return { answer: greet + news, source: 'local_brain' };
 
     // 2a. Fuqaro va xodim huquq-burchlari (IIO qonuni, Konstitutsiya). "Qurol ishlatishi mumkinmi" kabi savol
     // SOS emas: savol shaklida bo'lsa yoki favqulodda so'z bo'lmasa, aniq mos kelgan huquqiy javob beriladi.
@@ -242,7 +247,7 @@ class AiDialogService {
   private localFacts(t: string): DialogResponse | null {
     const r = (answer: string, action?: DialogResponse['action']): DialogResponse => ({ answer, action, source: 'local_brain' });
 
-    if (has(t, /\b(qalaysiz|qandaysiz|qandaysan|ishlar qalay|yaxshimisiz)\b/) && t.split(' ').length <= 4) {
+    if (has(t, /\b(qalaysiz|qalaysan|qandaysiz|qandaysan|ishlar qalay|yaxshimisiz|yaxshimisan|nima gap|nima gaplar)\b/) && t.split(' ').length <= 4) {
       return r("Rahmat, yaxshi! Hududda tinchlik. Sizga qanday yordam bera olaman?");
     }
     if (has(t, /\b(kimsan|kimsiz|sen kim|siz kim|o'zing haqingda|o'zingiz haqingizda|vazifang|vazifangiz|nima qila olasan|nima qila olasiz|maqsading)\b/)) {
@@ -283,6 +288,7 @@ class AiDialogService {
       "4. Huquqiy savollarda faqat quyidagi tekshirilgan ma'lumotlarga tayan, boshqa modda raqamlarini o'ylab topma; aniq holat uchun advokat yoki lex.uz ni tavsiya qil.\n" +
       `${OFFICER_CONDUCT}\n` +
       `Joriy holat (vaqt, joy, ob-havo so'ralsa shundan foydalan): ${situationService.contextForAi()}\n` +
+      `Yangiliklar so'ralsa faqat shu ro'yxatga tayan, boshqa yangilik to'qib chiqarma, manba kun.uz ekanini ayt.\n${newsContextForAi()}\n` +
       `Tekshirilgan huquqiy ma'lumotlar:\n${legalRef}`;
 
     const contents = [
