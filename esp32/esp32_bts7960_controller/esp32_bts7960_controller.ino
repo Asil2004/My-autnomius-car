@@ -133,8 +133,10 @@ void buyruqniBajar(char xarf) {
     case 'B': orqagaYur(tezlik, tezlik); break;         // To'g'ri orqaga
     case 'L': joyidaChapga(tezlik); break;              // Joyida tank-burilish
     case 'R': joyidaOngga(tezlik); break;               // Joyida tank-burilish
-    case 'G': oldingaYur(ichkiKuch, tezlik); break;     // Oldinga-chapga silliq egri burilish
-    case 'I': oldingaYur(tezlik, ichkiKuch); break;     // Oldinga-o'ngga silliq egri burilish
+    case 'G':
+    case 'Q': oldingaYur(ichkiKuch, tezlik); break;     // Oldinga-chapga silliq egri burilish (Q va G)
+    case 'I':
+    case 'E': oldingaYur(tezlik, ichkiKuch); break;     // Oldinga-o'ngga silliq egri burilish (E va I)
     case 'H': orqagaYur(ichkiKuch, tezlik); break;      // Orqaga-chapga egri burilish
     case 'J': orqagaYur(tezlik, ichkiKuch); break;      // Orqaga-o'ngga egri burilish
     case 'S': toxta(); break;                           // To'xtash

@@ -32,7 +32,9 @@ const MainContent: React.FC = () => {
 const AppShell: React.FC = () => {
   // Vaqt, GPS manzil va ob-havoni ilova ochilgandan boshlab kuzatib, saqlab boradi (robot savollarga javob berishi uchun)
   useEffect(() => situationService.start(), []);
-  const [isUnlocked, setIsUnlocked] = useState(false);
+  const [isUnlocked, setIsUnlocked] = useState(() =>
+    window.location.hash === '#hud' || localStorage.getItem('qalqon_auto_unlock') === 'true'
+  );
   const [authModalOpen, setAuthModalOpen] = useState(false);
   // Masofaviy admin: ikkinchi planshet saytni #admin bilan ochsa, kirish oynasi darhol chiqadi
   const [adminLoginOpen, setAdminLoginOpen] = useState(() => window.location.hash === '#admin');
@@ -47,6 +49,8 @@ const AppShell: React.FC = () => {
         setControllerOpen(true);
       } else if (window.location.hash === '#admin') {
         setAdminLoginOpen(true);
+      } else if (window.location.hash === '#hud') {
+        setIsUnlocked(true);
       }
     };
     window.addEventListener('hashchange', handleHash);
@@ -92,6 +96,7 @@ const AppShell: React.FC = () => {
           isOpen={authModalOpen}
           onClose={() => setAuthModalOpen(false)}
           onSuccess={() => {
+            localStorage.setItem('qalqon_auto_unlock', 'true');
             setAuthModalOpen(false);
             setIsUnlocked(true);
           }}
@@ -103,7 +108,7 @@ const AppShell: React.FC = () => {
   // UNLOCKED VIEW: Full Operator Command Center
   return (
     <div className="flex flex-col h-screen w-screen bg-tactical-950 text-slate-100 overflow-hidden font-sans select-none">
-      <Navbar onLockScreen={() => setIsUnlocked(false)} onOpenController={() => setControllerOpen(true)} />
+      <Navbar onLockScreen={() => { localStorage.removeItem('qalqon_auto_unlock'); setIsUnlocked(false); }} onOpenController={() => setControllerOpen(true)} />
       <MainContent />
       <TabNavigation />
     </div>

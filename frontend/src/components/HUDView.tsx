@@ -44,7 +44,10 @@ import {
   Rewind,
   Calendar,
   Radio,
-  Film
+  Film,
+  Volume2,
+  Lightbulb,
+  Square
 } from 'lucide-react';
 
 type PanelId = 'control' | 'sensors' | 'ai' | 'ptz' | 'log';
@@ -174,7 +177,15 @@ export const HUDView: React.FC = () => {
     toggleGPSMode,
     addLog,
     remote,
-    setRemoteAllowed
+    setRemoteAllowed,
+    speedLevel,
+    setSpeedLevel,
+    esp32Status,
+    esp32Connected,
+    hornActive,
+    lightActive,
+    toggleHorn,
+    toggleLight
   } = useRobot();
 
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -1249,18 +1260,22 @@ export const HUDView: React.FC = () => {
     }
 
     const deg = (angle * 180) / Math.PI;
-    if (deg >= -120 && deg <= -60) {
-      sendMecanumCommand('F'); // Oldinga
-    } else if (deg > -160 && deg < -120) {
-      sendMecanumCommand('Q'); // Chap-oldinga yonlama
-    } else if (deg > -60 && deg < -20) {
-      sendMecanumCommand('E'); // O'ng-oldinga yonlama
-    } else if (deg >= -20 && deg <= 35) {
-      sendMecanumCommand('R'); // O'ngga burilish
-    } else if (deg >= 45 && deg <= 135) {
-      sendMecanumCommand('B'); // Orqaga
-    } else if (deg > 135 || deg < -160) {
-      sendMecanumCommand('L'); // Chapga burilish
+    if (deg >= -115 && deg <= -65) {
+      sendMecanumCommand('F'); // To'g'ri oldinga
+    } else if (deg > -155 && deg < -115) {
+      sendMecanumCommand('G'); // Oldinga-chapga silliq burilish
+    } else if (deg > -65 && deg < -25) {
+      sendMecanumCommand('I'); // Oldinga-o'ngga silliq burilish
+    } else if (deg >= -25 && deg <= 35) {
+      sendMecanumCommand('R'); // O'ngga tank-burilish
+    } else if (deg >= 65 && deg <= 115) {
+      sendMecanumCommand('B'); // To'g'ri orqaga
+    } else if (deg > 35 && deg < 65) {
+      sendMecanumCommand('J'); // Orqaga-o'ngga burilish
+    } else if (deg > 115 && deg < 145) {
+      sendMecanumCommand('H'); // Orqaga-chapga burilish
+    } else if (deg >= 145 || deg <= -155) {
+      sendMecanumCommand('L'); // Chapga tank-burilish
     }
   };
 
@@ -2042,90 +2057,264 @@ export const HUDView: React.FC = () => {
             </div>
           )}
 
-          {/* Sarlavha va oxirgi komanda holati */}
-          <div className="w-full flex items-center justify-between mb-1">
-            <span className="text-xs font-bold text-white flex items-center gap-1.5">
-              <Gauge className="w-4 h-4 text-police-cyan" /> Robot Harakati
-            </span>
-            <span
-              className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold border transition-colors ${
-                lastCommand === 'S'
-                  ? 'bg-police-red/15 border-police-red/50 text-police-red'
-                  : 'bg-police-blue/30 border-police-cyan/60 text-police-cyan animate-pulse'
-              }`}
-            >
-              {lastCommand === 'S' ? 'STOP' : `CMD: ${lastCommand}`}
-            </span>
+          {/* Sarlavha, ESP32 statusi va oxirgi komanda */}
+          <div className="w-full flex flex-col gap-1.5 mb-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                <Gauge className="w-4 h-4 text-police-cyan" /> Robot Harakati
+              </span>
+              <span
+                className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold border transition-colors ${
+                  lastCommand === 'S'
+                    ? 'bg-police-red/15 border-police-red/50 text-police-red'
+                    : 'bg-police-blue/30 border-police-cyan/60 text-police-cyan animate-pulse'
+                }`}
+              >
+                {lastCommand === 'S' ? 'STOP' : `CMD: ${lastCommand}`}
+              </span>
+            </div>
+
+            {/* ESP32 Sim-siz aloqa statusi */}
+            <div className="flex items-center justify-between text-[11px] bg-tactical-950/80 px-2 py-1 rounded border border-tactical-700 font-mono">
+              <div className="flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full ${esp32Connected ? 'bg-police-green animate-pulse' : 'bg-police-amber'}`} />
+                <span className="text-slate-300">ESP32:</span>
+              </div>
+              <span className={`font-bold ${esp32Connected ? 'text-police-green' : 'text-police-amber'}`}>
+                {esp32Status}
+              </span>
+            </div>
+
+            {/* Tezlik darajalari: 1 (50%), 2 (75%), 3 (100%) */}
+            <div className="grid grid-cols-3 gap-1 mt-0.5">
+              {[
+                { lvl: 1 as const, label: '1 (50%)' },
+                { lvl: 2 as const, label: '2 (75%)' },
+                { lvl: 3 as const, label: '3 (100%)' }
+              ].map(({ lvl, label }) => (
+                <button
+                  key={lvl}
+                  type="button"
+                  onClick={() => setSpeedLevel(lvl)}
+                  className={`py-1 rounded text-[10px] font-bold font-mono transition-colors border ${
+                    speedLevel === lvl
+                      ? 'bg-police-cyan/20 border-police-cyan text-police-cyan shadow-[0_0_8px_rgba(0,229,255,0.3)]'
+                      : 'bg-tactical-850 border-tactical-700 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
 
-          {/* VIRTUAL HARAKAT JOYSTIGI (Kameralarga joy ochish uchun ozgina ixchamlashtirilgan) */}
-          <div className="relative my-auto flex flex-col items-center">
+          {/* VIRTUAL HARAKAT JOYSTIGI */}
+          <div className="relative my-1 flex flex-col items-center">
             <div
               ref={driveBaseRef}
               onPointerDown={handleDriveDown}
               onPointerMove={handleDriveMove}
               onPointerUp={handleDriveUp}
               onPointerCancel={handleDriveUp}
-              className="relative w-36 h-36 sm:w-40 sm:h-40 rounded-full bg-tactical-950 border-2 border-police-cyan/50 shadow-[0_0_25px_rgba(0,229,255,0.2)] flex items-center justify-center cursor-grab active:cursor-grabbing touch-none select-none my-1"
+              className="relative w-32 h-32 sm:w-36 sm:h-36 rounded-full bg-tactical-950 border-2 border-police-cyan/50 shadow-[0_0_20px_rgba(0,229,255,0.2)] flex items-center justify-center cursor-grab active:cursor-grabbing touch-none select-none"
             >
               {/* Yo'nalish belgilari */}
-              <div className="absolute top-1.5 text-[10px] font-bold text-slate-400 flex flex-col items-center">
-                <ArrowUp className="w-3.5 h-3.5 text-police-cyan" />
-                <span className="text-[8px] font-mono">F</span>
+              <div className="absolute top-1 text-[9px] font-bold text-slate-400 flex flex-col items-center">
+                <ArrowUp className="w-3 h-3 text-police-cyan" />
+                <span className="text-[7px] font-mono">F</span>
               </div>
-              <div className="absolute bottom-1.5 text-[10px] font-bold text-slate-400 flex flex-col items-center">
-                <span className="text-[8px] font-mono">B</span>
-                <ArrowDown className="w-3.5 h-3.5 text-slate-400" />
+              <div className="absolute bottom-1 text-[9px] font-bold text-slate-400 flex flex-col items-center">
+                <span className="text-[7px] font-mono">B</span>
+                <ArrowDown className="w-3 h-3 text-slate-400" />
               </div>
-              <div className="absolute left-1.5 text-[10px] font-bold text-slate-400 flex items-center gap-0.5">
-                <ArrowLeft className="w-3.5 h-3.5 text-slate-400" />
-                <span className="text-[8px] font-mono">L</span>
+              <div className="absolute left-1 text-[9px] font-bold text-slate-400 flex items-center gap-0.5">
+                <ArrowLeft className="w-3 h-3 text-slate-400" />
+                <span className="text-[7px] font-mono">L</span>
               </div>
-              <div className="absolute right-1.5 text-[10px] font-bold text-slate-400 flex items-center gap-0.5">
-                <span className="text-[8px] font-mono">R</span>
-                <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+              <div className="absolute right-1 text-[9px] font-bold text-slate-400 flex items-center gap-0.5">
+                <span className="text-[7px] font-mono">R</span>
+                <ArrowRight className="w-3 h-3 text-slate-400" />
               </div>
-              
+
               {/* Diagonal ko'rsatkichlar */}
-              <span className="absolute top-3 left-3 text-[9px] text-slate-500 font-mono font-bold">Q</span>
-              <span className="absolute top-3 right-3 text-[9px] text-slate-500 font-mono font-bold">E</span>
+              <span className="absolute top-2 left-2 text-[8px] text-slate-500 font-mono font-bold">G</span>
+              <span className="absolute top-2 right-2 text-[8px] text-slate-500 font-mono font-bold">I</span>
+              <span className="absolute bottom-2 left-2 text-[8px] text-slate-500 font-mono font-bold">H</span>
+              <span className="absolute bottom-2 right-2 text-[8px] text-slate-500 font-mono font-bold">J</span>
 
               {/* Ichki markaz halqalari */}
-              <div className="w-22 h-22 rounded-full border border-police-cyan/20 absolute" />
+              <div className="w-20 h-20 rounded-full border border-police-cyan/20 absolute" />
               <div className="w-8 h-8 rounded-full border border-dashed border-police-cyan/35 absolute" />
 
               {/* Joystik tutqichi (Knob) */}
               <div
-                className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-gradient-to-br from-police-blue to-police-blue/80 border-2 border-police-cyan shadow-lg shadow-police-cyan/50 flex items-center justify-center pointer-events-none transition-transform duration-75"
+                className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-gradient-to-br from-police-blue to-police-blue/80 border-2 border-police-cyan shadow-lg shadow-police-cyan/50 flex items-center justify-center pointer-events-none transition-transform duration-75"
                 style={{
                   transform: `translate3d(${driveKnob.x}px, ${driveKnob.y}px, 0)`
                 }}
               >
-                <div className="w-3.5 h-3.5 rounded-full bg-police-cyan shadow-[0_0_8px_#00e5ff]" />
+                <div className="w-3 h-3 rounded-full bg-police-cyan shadow-[0_0_8px_#00e5ff]" />
               </div>
             </div>
 
-            <p className="text-[10px] text-slate-400 mt-1 text-center font-mono">
-              Surib boshqaring yoki: <span className="text-police-cyan">W A S D Q E</span>
+            <p className="text-[9px] text-slate-400 mt-0.5 text-center font-mono">
+              Joystik yoki: <span className="text-police-cyan">W A S D Q E</span>
             </p>
           </div>
 
-          {/* Minora ko'tarish/tushirish */}
-          <div className="w-full flex flex-col gap-1.5 mt-auto">
-            <div className="grid grid-cols-2 gap-1.5">
+          {/* SENSORLI TUGMALAR (Tezkor bosish: Oldinga, Orqaga, Egri burilishlar va Katta STOP) */}
+          <div className="w-full flex flex-col gap-1 my-1">
+            <div className="grid grid-cols-3 gap-1">
               <button
-                onClick={() => sendMecanumCommand('U')}
-                title="Teleskopik minorani ko'tarish (U)"
-                className="py-1.5 px-2 rounded-lg border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 text-slate-200 text-xs font-semibold flex items-center justify-center gap-1 transition-colors"
+                type="button"
+                onPointerDown={(e) => { e.preventDefault(); sendMecanumCommand('G'); }}
+                onPointerUp={(e) => { e.preventDefault(); sendMecanumCommand('S'); }}
+                onPointerLeave={() => sendMecanumCommand('S')}
+                onPointerCancel={() => sendMecanumCommand('S')}
+                title="Oldinga-chapga egri burilish (G)"
+                className="py-1.5 px-1 rounded-lg border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 active:bg-police-cyan/30 text-police-cyan text-xs font-bold font-mono flex flex-col items-center justify-center select-none touch-none"
               >
-                <ChevronsUp className="w-4 h-4 text-police-cyan" /> Minora (U)
+                <span>↖️ G</span>
               </button>
               <button
+                type="button"
+                onPointerDown={(e) => { e.preventDefault(); sendMecanumCommand('F'); }}
+                onPointerUp={(e) => { e.preventDefault(); sendMecanumCommand('S'); }}
+                onPointerLeave={() => sendMecanumCommand('S')}
+                onPointerCancel={() => sendMecanumCommand('S')}
+                title="To'g'ri oldinga (W / F)"
+                className="py-1.5 px-1 rounded-lg border border-police-cyan/40 bg-tactical-850 hover:bg-police-blue/40 active:bg-police-cyan/30 text-white text-xs font-bold font-mono flex flex-col items-center justify-center select-none touch-none shadow-[0_0_10px_rgba(0,229,255,0.15)]"
+              >
+                <ArrowUp className="w-4 h-4 text-police-cyan" />
+              </button>
+              <button
+                type="button"
+                onPointerDown={(e) => { e.preventDefault(); sendMecanumCommand('I'); }}
+                onPointerUp={(e) => { e.preventDefault(); sendMecanumCommand('S'); }}
+                onPointerLeave={() => sendMecanumCommand('S')}
+                onPointerCancel={() => sendMecanumCommand('S')}
+                title="Oldinga-o'ngga egri burilish (I)"
+                className="py-1.5 px-1 rounded-lg border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 active:bg-police-cyan/30 text-police-cyan text-xs font-bold font-mono flex flex-col items-center justify-center select-none touch-none"
+              >
+                <span>I ↗️</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-1">
+              <button
+                type="button"
+                onPointerDown={(e) => { e.preventDefault(); sendMecanumCommand('L'); }}
+                onPointerUp={(e) => { e.preventDefault(); sendMecanumCommand('S'); }}
+                onPointerLeave={() => sendMecanumCommand('S')}
+                onPointerCancel={() => sendMecanumCommand('S')}
+                title="Joyida chapga burilish (A / L)"
+                className="py-1.5 px-1 rounded-lg border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 active:bg-police-cyan/30 text-white text-xs font-bold font-mono flex items-center justify-center select-none touch-none"
+              >
+                <ArrowLeft className="w-4 h-4 text-police-cyan" />
+              </button>
+              <button
+                type="button"
+                onClick={() => sendMecanumCommand('S')}
+                title="Favqulodda to'xtash (STOP)"
+                className="py-1.5 px-1 rounded-lg border border-police-red bg-police-red/20 hover:bg-police-red/35 active:bg-police-red text-police-red hover:text-white font-extrabold text-xs flex items-center justify-center gap-1 select-none shadow-[0_0_12px_rgba(255,23,68,0.3)] transition-all"
+              >
+                <Square className="w-3.5 h-3.5 fill-current" /> STOP
+              </button>
+              <button
+                type="button"
+                onPointerDown={(e) => { e.preventDefault(); sendMecanumCommand('R'); }}
+                onPointerUp={(e) => { e.preventDefault(); sendMecanumCommand('S'); }}
+                onPointerLeave={() => sendMecanumCommand('S')}
+                onPointerCancel={() => sendMecanumCommand('S')}
+                title="Joyida o'ngga burilish (D / R)"
+                className="py-1.5 px-1 rounded-lg border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 active:bg-police-cyan/30 text-white text-xs font-bold font-mono flex items-center justify-center select-none touch-none"
+              >
+                <ArrowRight className="w-4 h-4 text-police-cyan" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-1">
+              <button
+                type="button"
+                onPointerDown={(e) => { e.preventDefault(); sendMecanumCommand('H'); }}
+                onPointerUp={(e) => { e.preventDefault(); sendMecanumCommand('S'); }}
+                onPointerLeave={() => sendMecanumCommand('S')}
+                onPointerCancel={() => sendMecanumCommand('S')}
+                title="Orqaga-chapga burilish (H)"
+                className="py-1.5 px-1 rounded-lg border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 active:bg-police-cyan/30 text-slate-300 text-xs font-bold font-mono flex flex-col items-center justify-center select-none touch-none"
+              >
+                <span>↙️ H</span>
+              </button>
+              <button
+                type="button"
+                onPointerDown={(e) => { e.preventDefault(); sendMecanumCommand('B'); }}
+                onPointerUp={(e) => { e.preventDefault(); sendMecanumCommand('S'); }}
+                onPointerLeave={() => sendMecanumCommand('S')}
+                onPointerCancel={() => sendMecanumCommand('S')}
+                title="To'g'ri orqaga (S / B)"
+                className="py-1.5 px-1 rounded-lg border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 active:bg-police-cyan/30 text-white text-xs font-bold font-mono flex items-center justify-center select-none touch-none"
+              >
+                <ArrowDown className="w-4 h-4 text-police-cyan" />
+              </button>
+              <button
+                type="button"
+                onPointerDown={(e) => { e.preventDefault(); sendMecanumCommand('J'); }}
+                onPointerUp={(e) => { e.preventDefault(); sendMecanumCommand('S'); }}
+                onPointerLeave={() => sendMecanumCommand('S')}
+                onPointerCancel={() => sendMecanumCommand('S')}
+                title="Orqaga-o'ngga burilish (J)"
+                className="py-1.5 px-1 rounded-lg border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 active:bg-police-cyan/30 text-slate-300 text-xs font-bold font-mono flex flex-col items-center justify-center select-none touch-none"
+              >
+                <span>J ↘️</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Qo'shimcha tugmalar: Signal, Fara, Minora U/D */}
+          <div className="w-full flex flex-col gap-1 mt-auto pt-1 border-t border-tactical-800">
+            <div className="grid grid-cols-2 gap-1">
+              <button
+                type="button"
+                onClick={toggleHorn}
+                title="Signal berish"
+                className={`py-1.5 px-2 rounded-lg border text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors ${
+                  hornActive
+                    ? 'bg-police-amber text-tactical-950 border-police-amber font-bold shadow-[0_0_8px_rgba(255,171,0,0.5)]'
+                    : 'bg-tactical-850 border-tactical-700 hover:bg-tactical-800 text-slate-200'
+                }`}
+              >
+                <Volume2 className="w-3.5 h-3.5" /> Signal
+              </button>
+              <button
+                type="button"
+                onClick={toggleLight}
+                title="Fara chirog'ini yoqish/o'chirish"
+                className={`py-1.5 px-2 rounded-lg border text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors ${
+                  lightActive
+                    ? 'bg-police-cyan text-tactical-950 border-police-cyan font-bold shadow-[0_0_8px_rgba(0,229,255,0.5)]'
+                    : 'bg-tactical-850 border-tactical-700 hover:bg-tactical-800 text-slate-200'
+                }`}
+              >
+                <Lightbulb className="w-3.5 h-3.5" /> Fara
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-1">
+              <button
+                type="button"
+                onClick={() => sendMecanumCommand('U')}
+                title="Teleskopik minorani ko'tarish (U)"
+                className="py-1 px-2 rounded-lg border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 text-slate-300 text-[11px] font-semibold flex items-center justify-center gap-1 transition-colors"
+              >
+                <ChevronsUp className="w-3.5 h-3.5 text-police-cyan" /> Minora (U)
+              </button>
+              <button
+                type="button"
                 onClick={() => sendMecanumCommand('D')}
                 title="Teleskopik minorani tushirish (D)"
-                className="py-1.5 px-2 rounded-lg border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 text-slate-200 text-xs font-semibold flex items-center justify-center gap-1 transition-colors"
+                className="py-1 px-2 rounded-lg border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 text-slate-300 text-[11px] font-semibold flex items-center justify-center gap-1 transition-colors"
               >
-                <ChevronsDown className="w-4 h-4 text-police-cyan" /> Minora (D)
+                <ChevronsDown className="w-3.5 h-3.5 text-police-cyan" /> Minora (D)
               </button>
             </div>
           </div>
