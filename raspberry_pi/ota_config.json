@@ -1,9 +1,0 @@
-{
-  "enabled": true,
-  "branch": "main",
-  "check_interval_sec": 30,
-  "health_check_url": "http://localhost:8000/api/health",
-  "health_timeout_sec": 25,
-  "auto_rollback": true,
-  "core_service_name": "qalqon-core.service"
-}

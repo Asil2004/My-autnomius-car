@@ -1,7 +1,0 @@
-<?xml version='1.0' encoding='utf-8'?>
-<resources>
-    <string name="app_name">Qalqon</string>
-    <string name="title_activity_main">Qalqon</string>
-    <string name="package_name">uz.iiv.qalqon</string>
-    <string name="custom_url_scheme">uz.iiv.qalqon</string>
-</resources>
