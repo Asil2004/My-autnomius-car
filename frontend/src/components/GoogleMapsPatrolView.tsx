@@ -20,13 +20,17 @@ import {
   Undo2
 } from 'lucide-react';
 import { useRobot } from '../context/RobotContext';
+import { headingService, SmoothAngle, type HeadingMode, type HeadingSource } from '../services/headingService';
+import { navigationService, type NavState } from '../services/navigationService';
+import { camLinkSettings } from '../services/camLinkSettings';
+import { fleetWatcher, selectedRobotStore, type FleetState } from '../services/robotCamLink';
 
 // Default center: Navoiy street (Opposite Qizilqum 13 & Navoiy City)
 const NAVOI_CENTER: [number, number] = [40.09985, 65.36835];
 
 // High-fidelity SVG Digital Twin Robot
 const ROBOT_SVG_CONTENT = `
-  <div id="react-robot-marker-svg" style="width: 56px; height: 58px; transform: rotate(0deg); transition: transform 0.1s linear; transform-origin: center center; filter: drop-shadow(0 0 8px rgba(0, 229, 255, 0.6));">
+  <div id="react-robot-marker-svg" style="width: 56px; height: 58px; transform: rotate(0deg); transform-origin: 28px 29px; will-change: transform; filter: drop-shadow(0 0 8px rgba(0, 229, 255, 0.6));">
     <svg viewBox="0 0 56 58" width="56" height="58">
       <!-- 360° LiDAR radar sweep circle -->
       <circle cx="28" cy="29" r="26" fill="rgba(0, 229, 255, 0.15)" stroke="rgba(0, 229, 255, 0.5)" stroke-width="1.2" stroke-dasharray="3,2"/>
@@ -80,6 +84,8 @@ export const GoogleMapsPatrolView: React.FC = () => {
   const [mode, setMode] = useState<'demo' | 'real'>('demo');
   const [mapLayerType, setMapLayerType] = useState<'hybrid' | 'roadmap'>('hybrid');
   const [isPatrolling, setIsPatrolling] = useState(false);
+  const isPatrollingRef = useRef(false);
+  isPatrollingRef.current = isPatrolling;
   const [routingStatus, setRoutingStatus] = useState<string>("Nuqtalar qo'yilmagan");
 
   // Real Raspberry Pi WebSocket state
@@ -109,15 +115,91 @@ export const GoogleMapsPatrolView: React.FC = () => {
   const hybridLayerRef = useRef<L.TileLayer | null>(null);
   const roadmapLayerRef = useRef<L.TileLayer | null>(null);
 
-  // Update robot marker DOM rotation and latlng
+  // ---------------------------------------------------------------------------
+  // ROBOT MARKERI: joylashuv darhol, burilish esa giroskop (IMU / planshet sensori) bo'yicha silliq.
+  // setRobotVisual dagi heading faqat zaxira (giroskop ma'lumoti bo'lmasa: simulyatsiya yoki GPS yo'nalishi).
+  // ---------------------------------------------------------------------------
+  const fallbackHeadingRef = useRef(135);
+  const headingVectorRef = useRef<L.Polyline | null>(null);
+  const [headingInfo, setHeadingInfo] = useState<{ heading: number; source: HeadingSource; rate: number }>({
+    heading: 135,
+    source: 'none',
+    rate: 0
+  });
+  const [headingMode, setHeadingModeState] = useState<HeadingMode>(() => headingService.getMode());
+  const changeHeadingMode = useCallback(async (m: HeadingMode) => {
+    if (m === 'device' || m === 'auto') await headingService.requestDevicePermission();
+    headingService.setMode(m);
+    setHeadingModeState(m);
+  }, []);
+
   const setRobotVisual = useCallback((lat: number, lon: number, heading: number) => {
     if (robotMarkerRef.current) {
       robotMarkerRef.current.setLatLng([lat, lon]);
     }
-    const svgElem = document.getElementById('react-robot-marker-svg');
-    if (svgElem) {
-      svgElem.style.transform = `rotate(${heading}deg)`;
-    }
+    fallbackHeadingRef.current = heading;
+  }, []);
+
+  // Har kadrda: maqsad burchak (giroskop yoki zaxira) -> silliq o'ralmagan burchak -> marker va yo'nalish vektori
+  useEffect(() => {
+    const unsub = headingService.subscribe(() => {});
+    const smooth = new SmoothAngle(120);
+    let raf = 0;
+    let last = performance.now();
+    let lastUi = 0;
+    const frame = (now: number) => {
+      const dt = now - last;
+      last = now;
+      // Operatorda yo'nalish robot telemetriyasidan keladi (operator telefoni/planshetining sensori emas)
+      const gyro = remoteHeadingRef.current ? null : headingService.getState();
+      const target = gyro ? gyro.heading : fallbackHeadingRef.current;
+      const shown = smooth.step(target, dt);
+
+      const svgElem = document.getElementById('react-robot-marker-svg');
+      if (svgElem) svgElem.style.transform = `rotate(${shown.toFixed(2)}deg)`;
+
+      // Harakat yo'nalishi vektori: robotdan oldinga ~14 m, ko'rsatilgan burchak bo'yicha
+      const map = mapRef.current;
+      const marker = robotMarkerRef.current;
+      if (map && marker) {
+        const p = marker.getLatLng();
+        const rad = (shown * Math.PI) / 180;
+        const meters = 14;
+        const dLat = (meters * Math.cos(rad)) / 111320;
+        const dLon = (meters * Math.sin(rad)) / (111320 * Math.cos((p.lat * Math.PI) / 180));
+        const tip: L.LatLngExpression = [p.lat + dLat, p.lng + dLon];
+        if (!headingVectorRef.current) {
+          headingVectorRef.current = L.polyline([p, tip], {
+            color: gyro ? '#facc15' : '#00e5ff',
+            weight: 3,
+            opacity: 0.9,
+            dashArray: '6 6',
+            interactive: false
+          }).addTo(map);
+        } else {
+          headingVectorRef.current.setLatLngs([p, tip]);
+          headingVectorRef.current.setStyle({ color: gyro ? '#facc15' : '#00e5ff' });
+        }
+      }
+
+      // Panel raqamlari 5 marta/s yangilanadi (har kadrda React qayta chizilmasin)
+      if (now - lastUi > 200) {
+        lastUi = now;
+        const h = ((shown % 360) + 360) % 360;
+        setHeadingInfo((prev) => {
+          const next = { heading: Math.round(h), source: gyro?.source ?? 'none', rate: Math.round(gyro?.rate ?? 0) };
+          return prev.heading === next.heading && prev.source === next.source && prev.rate === next.rate ? prev : next;
+        });
+      }
+      raf = requestAnimationFrame(frame);
+    };
+    raf = requestAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(raf);
+      unsub();
+      headingVectorRef.current?.remove();
+      headingVectorRef.current = null;
+    };
   }, []);
 
   // Update Polyline on map
@@ -281,25 +363,123 @@ export const GoogleMapsPatrolView: React.FC = () => {
     return () => window.removeEventListener('keydown', onKey);
   }, [setDrawing]);
 
-  // Haqiqiy GPS ma'lumotlarini telemetriyaga sinxronlash
+  // MARKAZIY NAVIGATSIYA: joylashuv + tezlik + yo'nalish bitta holatdan (GPS uzilsa dead reckoning).
+  // Demo patrul simulyatsiyasi yurayotganda marker simulyatsiyaga bo'ysunadi
+  const [nav, setNav] = useState<NavState | null>(null);
+  const accuracyCircleRef = useRef<L.Circle | null>(null);
+  // Operator qurilmasi: marker tanlangan ROBOT telemetriyasidan (o'z GPS/giroskopi emas)
+  const [isOperator, setIsOperator] = useState(() => camLinkSettings.get().role === 'operator');
+  useEffect(() => camLinkSettings.subscribe((s) => setIsOperator(s.role === 'operator')), []);
+  const remoteHeadingRef = useRef(false);
+  remoteHeadingRef.current = isOperator;
+
+  /** Bitta navigatsiya holatini xaritaga chizish (mahalliy yoki robotdan kelgan) */
+  const lastNavUiRef = useRef(0);
+  const applyNav = useCallback(
+    (s: NavState) => {
+      setRobotVisual(s.lat, s.lon, s.heading);
+      const map = mapRef.current;
+      if (map) {
+        const r = Math.min(500, Math.max(2, s.accuracy));
+        const color = s.positionSource === 'gps' ? '#22c55e' : s.positionSource === 'dead-reckoning' ? '#f59e0b' : '#ef4444';
+        if (!accuracyCircleRef.current) {
+          accuracyCircleRef.current = L.circle([s.lat, s.lon], { radius: r, color, weight: 1, fillOpacity: 0.08, interactive: false }).addTo(map);
+        } else {
+          accuracyCircleRef.current.setLatLng([s.lat, s.lon]).setRadius(r).setStyle({ color });
+        }
+      }
+      // Panel 4 marta/s yangilanadi
+      const now = Date.now();
+      if (now - lastNavUiRef.current > 250) {
+        lastNavUiRef.current = now;
+        setNav(s);
+        setTelemetry((prev) => ({ ...prev, lat: s.lat, lon: s.lon, speed: s.speed, heading: s.heading }));
+      }
+    },
+    [setRobotVisual]
+  );
+
   useEffect(() => {
-    if (gps.isReal) {
-      setTelemetry(prev => ({
-        ...prev,
-        lat: gps.latitude,
-        lon: gps.longitude,
-        speed: gps.speed || 0,
-        heading: gps.heading || prev.heading
-      }));
-      setRobotVisual(gps.latitude, gps.longitude, gps.heading || 0);
+    if (isOperator) return;
+    return navigationService.subscribe((s) => {
+      if (!s.initialized || isPatrollingRef.current) return;
+      applyNav(s);
+    });
+  }, [isOperator, applyNav]);
+
+  // OPERATOR: park telemetriyasi. Tanlangan robot asosiy marker, qolganlari kichik belgilar (bosilsa tanlanadi)
+  const [fleet, setFleet] = useState<FleetState>(() => fleetWatcher.getState());
+  const [chosenRobot, setChosenRobot] = useState(() => selectedRobotStore.get());
+  useEffect(() => fleetWatcher.subscribe(setFleet), []);
+  useEffect(() => selectedRobotStore.subscribe(setChosenRobot), []);
+  const watchedRobot =
+    (chosenRobot && fleet.robots.some((r) => r.id === chosenRobot) ? chosenRobot : '') ||
+    fleet.robots.find((r) => r.online)?.id ||
+    '';
+  const otherRobotMarkersRef = useRef(new Map<string, L.CircleMarker>());
+  useEffect(() => {
+    if (!isOperator) return;
+    const map = mapRef.current;
+    const seen = new Set<string>();
+    for (const r of fleet.robots) {
+      const n = r.tel?.nav;
+      if (!n) continue;
+      if (r.id === watchedRobot) {
+        if (!isPatrollingRef.current) {
+          applyNav({
+            lat: n.lat,
+            lon: n.lon,
+            speed: n.speed,
+            heading: n.heading,
+            headingSource: n.hsrc,
+            positionSource: r.online ? n.psrc : 'stale',
+            accuracy: n.acc,
+            gpsAgeMs: n.gpsAgeS < 0 ? Infinity : n.gpsAgeS * 1000,
+            t: r.tel!.t,
+            initialized: true
+          });
+        }
+        continue;
+      }
+      if (!map) continue;
+      seen.add(r.id);
+      let m = otherRobotMarkersRef.current.get(r.id);
+      if (!m) {
+        m = L.circleMarker([n.lat, n.lon], { radius: 8, weight: 2, fillOpacity: 0.7 })
+          .bindTooltip(r.id, { permanent: true, direction: 'top', offset: [0, -8] })
+          .on('click', () => selectedRobotStore.set(r.id))
+          .addTo(map);
+        otherRobotMarkersRef.current.set(r.id, m);
+      }
+      m.setLatLng([n.lat, n.lon]).setStyle({ color: r.online ? '#38bdf8' : '#64748b', fillColor: r.online ? '#0ea5e9' : '#334155' });
     }
-  }, [gps.isReal, gps.latitude, gps.longitude, gps.speed, gps.heading, setRobotVisual]);
+    otherRobotMarkersRef.current.forEach((m, id) => {
+      if (!seen.has(id)) {
+        m.remove();
+        otherRobotMarkersRef.current.delete(id);
+      }
+    });
+  }, [isOperator, fleet, watchedRobot, applyNav]);
+  useEffect(() => {
+    const markers = otherRobotMarkersRef.current;
+    return () => {
+      markers.forEach((m) => m.remove());
+      markers.clear();
+    };
+  }, []);
+  useEffect(
+    () => () => {
+      accuracyCircleRef.current?.remove();
+      accuracyCircleRef.current = null;
+    },
+    []
+  );
 
   const goToRealGPS = useCallback(() => {
     if (!mapRef.current) return;
     startRealGPS();
     mapRef.current.setView([gps.latitude, gps.longitude], 19);
-    setRobotVisual(gps.latitude, gps.longitude, gps.heading || 0);
+    setRobotVisual(gps.latitude, gps.longitude, gps.heading || fallbackHeadingRef.current);
     setTelemetry(prev => ({
       ...prev,
       lat: gps.latitude,
@@ -397,7 +577,10 @@ export const GoogleMapsPatrolView: React.FC = () => {
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+          // Robot IMU / giroskop yo'nalishi (bo'lsa) marker burilishini boshqaradi
+          headingService.ingestTelemetry(data);
           if (data.gps && data.gps.has_fix) {
+            headingService.pushGps(data.gps.heading, data.gps.speed);
             const rLat = data.gps.latitude;
             const rLon = data.gps.longitude;
             const rHeading = data.gps.heading || 0;
@@ -777,6 +960,28 @@ export const GoogleMapsPatrolView: React.FC = () => {
             </button>
           </div>
 
+          {/* Markaziy navigatsiya holati: joylashuv manbai va aniqligi */}
+          {nav && (
+            <div
+              data-nav-status
+              className={`mb-2 px-2 py-1.5 rounded border text-[11px] font-mono flex items-center justify-between gap-2 ${
+                nav.positionSource === 'gps'
+                  ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300'
+                  : nav.positionSource === 'dead-reckoning'
+                  ? 'bg-amber-500/10 border-amber-500/40 text-amber-300'
+                  : 'bg-rose-500/10 border-rose-500/40 text-rose-300'
+              }`}
+            >
+              <span className="font-bold">
+                {nav.positionSource === 'gps'
+                  ? 'GPS + giroskop'
+                  : nav.positionSource === 'dead-reckoning'
+                  ? `GPS yo'q ${Math.round(nav.gpsAgeMs / 1000)} s: hisoblangan`
+                  : "GPS uzoq vaqt yo'q: joylashuv eskirgan"}
+              </span>
+              <span>±{nav.accuracy < 1000 ? Math.round(nav.accuracy) : '>999'} m</span>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-2 text-xs font-mono">
             <div className="bg-tactical-900/90 border-l-2 border-police-blue p-2 rounded">
               <div className="text-[10px] text-slate-400">GPS Kenglik (Lat)</div>
@@ -790,9 +995,39 @@ export const GoogleMapsPatrolView: React.FC = () => {
 
             <div className="bg-tactical-900/90 border-l-2 border-amber-500 p-2 rounded">
               <div className="text-[10px] text-slate-400 flex items-center gap-1">
-                <Compass className="w-3 h-3" /> Kompas (Heading)
+                <Compass className="w-3 h-3" /> Giroskop (Heading)
               </div>
-              <div className="font-bold text-amber-400">{Math.round(telemetry.heading)}°</div>
+              <div className="font-bold text-amber-400 flex items-baseline gap-1.5" data-heading-value>
+                {headingInfo.heading}°
+                {headingInfo.source !== 'none' && Math.abs(headingInfo.rate) >= 2 && (
+                  <span className="text-[10px] font-normal text-slate-400">
+                    {headingInfo.rate > 0 ? '↻' : '↺'} {Math.abs(headingInfo.rate)}°/s
+                  </span>
+                )}
+              </div>
+              <div className="text-[9px] text-slate-500" data-heading-source>
+                {headingInfo.source === 'imu'
+                  ? 'Manba: robot IMU'
+                  : headingInfo.source === 'device'
+                  ? 'Manba: planshet giroskopi'
+                  : headingInfo.source === 'gps'
+                  ? "Manba: GPS yo'nalishi"
+                  : headingMode === 'off'
+                  ? "Giroskop o'chiq"
+                  : "Giroskop signali yo'q"}
+              </div>
+              <select
+                value={headingMode}
+                onChange={(e) => void changeHeadingMode(e.target.value as HeadingMode)}
+                title="Marker yo'nalishi manbai"
+                className="mt-1 w-full bg-tactical-950 border border-tactical-700 rounded text-[10px] text-slate-200 px-1 py-0.5"
+              >
+                <option value="auto">Avto (IMU → planshet → GPS)</option>
+                <option value="imu">Faqat robot IMU</option>
+                <option value="device">Faqat planshet giroskopi</option>
+                <option value="gps">Faqat GPS</option>
+                <option value="off">O'chiq</option>
+              </select>
             </div>
 
             <div className="bg-tactical-900/90 border-l-2 border-emerald-500 p-2 rounded">

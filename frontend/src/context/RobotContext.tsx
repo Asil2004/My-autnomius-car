@@ -14,6 +14,8 @@ import type {
   RemoteStatus
 } from '../types/robot';
 import { tacticalAudio } from '../services/audioService';
+import { headingService } from '../services/headingService';
+import { navigationService } from '../services/navigationService';
 
 export interface LogMessage {
   id: string;
@@ -116,6 +118,14 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const lastAdminLogRef = useRef({ cmd: '', t: 0 });
   const [speedLevel, setSpeedLevelState] = useState<SpeedLevel>(2);
   const [isMoving, setIsMoving] = useState<boolean>(false);
+  // Navigatsiya: faqat buyruq O'ZGARGANDA xabar beriladi ("to'xta" -> dead reckoning siljimaydi, tezlik 0).
+  // Boshlang'ich 'S' hisobga olinmaydi: robot avtonom yurayotgan bo'lishi mumkin
+  const prevCmdRef = useRef<MecanumCommand>('S');
+  useEffect(() => {
+    if (lastCommand === prevCmdRef.current) return;
+    prevCmdRef.current = lastCommand;
+    navigationService.setMoving(lastCommand !== 'S');
+  }, [lastCommand]);
 
   // ESP32 Direct MQTT & Local HTTP boshqaruv holatlari
   const [esp32Connected, setEsp32Connected] = useState<boolean>(false);
@@ -437,6 +447,16 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const speedKmH = pos.coords.speed !== null && pos.coords.speed !== undefined
           ? +(pos.coords.speed * 3.6).toFixed(1)
           : 0;
+        headingService.pushGps(pos.coords.heading, speedKmH);
+        // Markaziy navigatsiya (GPS + tezlik + giroskop): GPS uzilsa dead reckoning bilan davom etadi
+        navigationService.pushGps({
+          lat: pos.coords.latitude,
+          lon: pos.coords.longitude,
+          accuracyM: pos.coords.accuracy,
+          // Qurilma tezlik bermasa (null) navigatsiya o'zi GPS nuqtalaridan hisoblaydi
+          speedKmh: pos.coords.speed !== null && pos.coords.speed !== undefined ? speedKmH : null,
+          courseDeg: pos.coords.heading
+        });
 
         setGps({
           latitude: pos.coords.latitude,
@@ -757,7 +777,17 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 status: 'ONLINE'
               }));
             }
+            // Robot IMU / giroskop (imu.yaw, yaw, compass ...): xaritadagi marker yo'nalishi shu bilan boshqariladi
+            headingService.ingestTelemetry(d);
             if (d.gps && d.gps.has_fix) {
+              headingService.pushGps(d.gps.heading, d.gps.speed);
+              navigationService.pushGps({
+                lat: d.gps.latitude,
+                lon: d.gps.longitude,
+                accuracyM: d.gps.accuracy ?? d.gps.hdop ?? null,
+                speedKmh: d.gps.speed,
+                courseDeg: d.gps.heading
+              });
               setGps((prev) => ({
                 ...prev,
                 latitude: d.gps.latitude,

@@ -8,6 +8,18 @@ import { loadCocoModel } from '../services/aiPreload';
 import { createAnnotatedStream, type AnnotatedStream } from '../services/nvrOverlayCompositor';
 import { nvrRecordingService, type TimelineRange, type NvrChunk, type NvrStorageStats, type NvrDiskStatus, NVR_MAX_STORAGE_BYTES } from '../services/nvrRecordingService';
 import { FloatingPanel } from './FloatingPanel';
+import { camLinkSettings } from '../services/camLinkSettings';
+import {
+  robotCamBroadcaster,
+  watchRobotCamera,
+  fleetWatcher,
+  selectedRobotStore,
+  type FleetState,
+  type RobotTelemetry,
+  type BroadcastStatus,
+  type ViewerState,
+  type WireBox
+} from '../services/robotCamLink';
 import {
   Activity,
   ArrowUp,
@@ -454,10 +466,44 @@ export const HUDView: React.FC = () => {
     transition: isPanning ? 'none' : 'transform 160ms ease-out'
   };
 
+  // FULLSCREEN: kamera konteyneri butun ekranni (100vw x 100vh) egallaydi.
+  // 1) Brauzerning Fullscreen API si (element "top layer" ga chiqadi, boshqa UI umuman ko'rinmaydi);
+  // 2) API ishlamasa (Android WebView / APK) yoki rad etilsa: fixed + eng yuqori z-index + qolgan UI yashiriladi.
+  const fullscreenRef = useRef<HTMLDivElement | null>(null);
   const handleToggleFullscreen = () => {
-    setIsFullscreen((prev) => !prev);
+    if (!isFullscreen) {
+      setIsFullscreen(true);
+      const el = fullscreenRef.current;
+      if (el?.requestFullscreen && !document.fullscreenElement) {
+        el.requestFullscreen({ navigationUI: 'hide' }).catch(() => {
+          // Ruxsat berilmadi: CSS (fixed) rejimi baribir butun ekranni egallaydi
+        });
+      }
+    } else {
+      setIsFullscreen(false);
+      if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+    }
     resetOverlayTimer();
   };
+
+  // Brauzer fullscreen dan Esc / orqaga tugmasi bilan chiqilsa, holat ham yangilanadi
+  useEffect(() => {
+    const onChange = () => {
+      if (!document.fullscreenElement) setIsFullscreen(false);
+    };
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+
+  // Fullscreen paytida sahifadagi boshqa panellar (navbar, pastki menyu, yon panellar) yashiriladi va sahifa aylanmaydi
+  useEffect(() => {
+    if (!isFullscreen) return;
+    document.body.classList.add('qalqon-cam-fullscreen');
+    return () => {
+      document.body.classList.remove('qalqon-cam-fullscreen');
+      if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+    };
+  }, [isFullscreen]);
 
   const handleCameraClick = useCallback(() => {
     if (suppressClickRef.current) {
@@ -560,7 +606,38 @@ export const HUDView: React.FC = () => {
   const [cameraSource] = useState<'FRONTAL' | 'RPI' | 'SIMULATION'>('FRONTAL');
   const [cameraLoading, setCameraLoading] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [mirrorVideo, setMirrorVideo] = useState(true);
+  // Qurilma roli: robot planshet (kamera shu yerda) yoki operator (robot tasvirini masofadan ko'radi)
+  const [camRole, setCamRole] = useState(() => camLinkSettings.get().role);
+  useEffect(() => camLinkSettings.subscribe((s) => setCamRole(s.role)), []);
+  const isViewer = camRole === 'operator';
+  const [remoteState, setRemoteState] = useState<{ state: ViewerState; detail?: string }>({ state: 'connecting' });
+  const [remoteBoxes, setRemoteBoxes] = useState<WireBox[]>([]);
+  const [broadcast, setBroadcast] = useState<BroadcastStatus>(() => robotCamBroadcaster.getStatus());
+  useEffect(() => robotCamBroadcaster.subscribe(setBroadcast), []);
+
+  // OPERATOR: park (barcha robotlar) va tanlangan robot. Tanlanmagan bo'lsa birinchi onlayn robot
+  const [fleet, setFleet] = useState<FleetState>(() => fleetWatcher.getState());
+  useEffect(() => fleetWatcher.subscribe(setFleet), []);
+  const [chosenRobot, setChosenRobot] = useState(() => selectedRobotStore.get());
+  useEffect(() => selectedRobotStore.subscribe(setChosenRobot), []);
+  const watchedRobot =
+    (chosenRobot && fleet.robots.some((r) => r.id === chosenRobot) ? chosenRobot : '') ||
+    fleet.robots.find((r) => r.online)?.id ||
+    chosenRobot ||
+    '';
+  // Tanlangan robotning tezkor telemetriyasi (data kanal, 10 Hz) yoki park telemetriyasi (MQTT, 1 Hz)
+  const [liveTel, setLiveTel] = useState<RobotTelemetry | null>(null);
+  const liveTelAtRef = useRef(0);
+  const onLiveTelemetry = useCallback((t: RobotTelemetry) => {
+    const now = Date.now();
+    if (now - liveTelAtRef.current < 250) return; // ekran 4 marta/s yangilanadi
+    liveTelAtRef.current = now;
+    setLiveTel(t);
+  }, []);
+  const fleetTel = fleet.robots.find((r) => r.id === watchedRobot)?.tel ?? null;
+  const watchedTel = liveTel && liveTel.id === watchedRobot && Date.now() - liveTel.t < 5000 ? liveTel : fleetTel;
+  // Old kamera planshetda "oyna" ko'rinishida qulay; operator esa robot ko'rayotganini to'g'ri ko'radi
+  const [mirrorVideo, setMirrorVideo] = useState(() => camLinkSettings.get().role === 'robot');
 
   // AI Detektor holatlari
   const [aiModelLoaded, setAiModelLoaded] = useState(false);
@@ -682,6 +759,7 @@ export const HUDView: React.FC = () => {
     nvrRecordingService.stopRecording();
     annotatedRef.current?.stop();
     annotatedRef.current = null;
+    robotCamBroadcaster.clearSource(streamRef.current);
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
@@ -717,6 +795,8 @@ export const HUDView: React.FC = () => {
       }
 
       streamRef.current = stream;
+      // Robot planshet: tasvir dispetcher markazidagi operatorlarga ham uzatiladi
+      robotCamBroadcaster.setSource(stream);
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
@@ -758,18 +838,150 @@ export const HUDView: React.FC = () => {
     }
   }, [addLog, stopCameraStream]);
 
+  // OPERATOR: o'z kamerasi ochilmaydi, robot planshetining tasviri WebRTC orqali keladi
+  const startRemoteCamera = useCallback((robotId: string) => {
+    stopCameraStream();
+    setCameraError(null);
+    setCameraLoading(true);
+    let annotated: AnnotatedStream | null = null;
+    const stop = watchRobotCamera(robotId, {
+      onTelemetry: onLiveTelemetry,
+      onStream: (stream) => {
+        const v = videoRef.current;
+        nvrRecordingService.stopRecording();
+        annotated?.stop();
+        annotated = null;
+        annotatedRef.current = null;
+        if (!stream || !v) {
+          if (v) v.srcObject = null;
+          setCameraLoading(true);
+          return;
+        }
+        v.srcObject = stream;
+        v.onresize = () => {
+          if (v.videoWidth && v.videoHeight) {
+            const a = v.videoWidth / v.videoHeight;
+            setVideoAspect((prev) => (Math.abs(prev - a) > 0.01 ? a : prev));
+          }
+        };
+        void v.play().catch(() => {});
+        setCameraLoading(false);
+        setCameraError(null);
+        // Operator kompyuterida ham robot tasviri (ramkalar bilan) NVR ga yoziladi
+        annotated = createAnnotatedStream(v, {
+          title: 'QALQON ROBOT (masofaviy)',
+          mirror: () => overlayStateRef.current.mirror,
+          getBoxes: () => {
+            const s = overlayStateRef.current;
+            if (!s.ai) return [];
+            return s.objects.map((o) => ({
+              x: o.box.x / 100,
+              y: o.box.y / 100,
+              w: o.box.width / 100,
+              h: o.box.height / 100,
+              color: o.color,
+              label: o.isIdentifiedPerson ? `${o.label} ${(o.confidence * 100).toFixed(0)}%` : o.label,
+              note: o.distance > 0 ? `${o.distanceUpperBound ? '<' : o.distanceApprox ? '~' : ''}${o.distance} m` : undefined
+            }));
+          }
+        });
+        annotatedRef.current = annotated;
+        nvrRecordingService.startRecording(annotated?.stream ?? stream);
+      },
+      onBoxes: setRemoteBoxes,
+      onState: (state, detail) => {
+        setRemoteState((prev) => (prev.state === state && prev.detail === detail ? prev : { state, detail }));
+        if (state !== 'live') setCameraLoading(true);
+      }
+    });
+    addLog('SYSTEM', 'info', `${robotId} robot kamerasiga masofadan ulanilmoqda...`);
+    return () => {
+      stop();
+      annotated?.stop();
+    };
+  }, [addLog, stopCameraStream, onLiveTelemetry]);
+
   // Kamera rejimi o'zgarganda ishga tushirish
   useEffect(() => {
-    if (cameraSource === 'FRONTAL') {
-      startFrontalCamera();
-    } else {
+    if (cameraSource !== 'FRONTAL') {
       stopCameraStream();
+      return;
     }
+    if (isViewer) {
+      if (!watchedRobot) {
+        setRemoteState({ state: 'robot-offline' });
+        setCameraLoading(true);
+        return;
+      }
+      const stop = startRemoteCamera(watchedRobot);
+      return () => {
+        stop();
+        stopCameraStream();
+        setRemoteBoxes([]);
+        setLiveTel(null);
+      };
+    }
+    startFrontalCamera();
     return () => {
       cameraRequestRef.current++;
       stopCameraStream();
     };
-  }, [cameraSource, startFrontalCamera, stopCameraStream]);
+  }, [cameraSource, isViewer, watchedRobot, startFrontalCamera, startRemoteCamera, stopCameraStream]);
+
+  // ROBOT: aniqlangan obyektlar operatorlarga ham uzatiladi (kadrning o'z koordinatalarida, oynalanmagan)
+  useEffect(() => {
+    if (isViewer) return;
+    robotCamBroadcaster.setBoxes(
+      aiEnabled
+        ? detectedObjects.map((o) => ({
+            x: (mirrorVideo ? 100 - (o.box.x + o.box.width) : o.box.x) / 100,
+            y: o.box.y / 100,
+            w: o.box.width / 100,
+            h: o.box.height / 100,
+            color: o.color,
+            label: o.label,
+            kind: o.category,
+            identified: o.isIdentifiedPerson,
+            conf: o.confidence,
+            dist: o.distance,
+            distApprox: o.distanceApprox,
+            distUpper: o.distanceUpperBound
+          }))
+        : []
+    );
+  }, [isViewer, aiEnabled, detectedObjects, mirrorVideo]);
+  useEffect(() => () => robotCamBroadcaster.setBoxes([]), []);
+
+  // OPERATOR: robotdan kelgan ramkalar HUD dagi odatiy obyektlar ro'yxatiga aylantiriladi
+  useEffect(() => {
+    if (!isViewer) return;
+    const objs: DetectedObject[] = aiEnabled
+      ? remoteBoxes.map((b, i) => {
+          const x = (mirrorVideo ? 1 - (b.x + b.w) : b.x) * 100;
+          const label = b.identified ? b.label.replace(/\s+\d+%$/, '') : b.label;
+          return {
+            id: `remote-${i}`,
+            label,
+            confidence: b.conf ?? 0.9,
+            distance: b.dist ?? 0,
+            distanceApprox: b.distApprox,
+            distanceUpperBound: b.distUpper,
+            box: { x, y: b.y * 100, width: b.w * 100, height: b.h * 100 },
+            color: b.color,
+            category: b.kind ?? 'person',
+            isIdentifiedPerson: !!b.identified,
+            personName: b.identified ? label : undefined
+          };
+        })
+      : [];
+    setDetectedObjects(objs);
+    setDetectedCounts({
+      people: objs.filter((o) => o.category === 'person').length,
+      cars: objs.filter((o) => o.category === 'car').length,
+      obstacles: objs.filter((o) => o.category === 'other').length,
+      total: objs.length
+    });
+  }, [isViewer, aiEnabled, remoteBoxes, mirrorVideo, setDetectedObjects]);
 
   // =========================================================================
   // 3. TASVIRDAN ODAM VA MASHINALARNI HAMDA SHAXSNI ANIQLASH
@@ -1080,7 +1292,8 @@ export const HUDView: React.FC = () => {
   // Deteksiya sikli (har ~120ms da bir kadr tekshiriladi)
   useEffect(() => {
     let intervalId: number | null = null;
-    if (cameraSource === 'FRONTAL' && aiEnabled) {
+    // Operator kompyuterida aniqlash ishlamaydi: ramkalar robot planshetidan tayyor holda keladi
+    if (cameraSource === 'FRONTAL' && aiEnabled && !isViewer) {
       intervalId = window.setInterval(() => {
         detectFrame();
       }, 120);
@@ -1088,7 +1301,7 @@ export const HUDView: React.FC = () => {
     return () => {
       if (intervalId) clearInterval(intervalId);
     };
-  }, [cameraSource, aiEnabled, detectFrame]);
+  }, [cameraSource, aiEnabled, detectFrame, isViewer]);
 
   // Yangi shaxsni bazaga qo'shish (yuz tekshiruvi, xatolik xabari va aksessuar variantlari jarayoni bilan)
   const handleAddNewPerson = async (e: React.FormEvent) => {
@@ -1423,6 +1636,72 @@ export const HUDView: React.FC = () => {
           </span>
         </button>
 
+        {/* Kamera translyatsiyasi holati: robotda nechta operator kuzatyapti, operatorda robot bilan aloqa */}
+        <div
+          data-cam-link
+          title={isViewer ? 'Tasvir robot planshetidan keladi' : "Bu qurilma robot planshet: tasvir operatorlarga uzatiladi"}
+          className={`px-2.5 py-1.5 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 border ${
+            (isViewer ? remoteState.state === 'live' : broadcast.state === 'online')
+              ? 'bg-police-green/10 text-police-green border-police-green/40'
+              : 'bg-tactical-850 text-police-amber border-tactical-700'
+          }`}
+        >
+          <Radio className="w-3.5 h-3.5" />
+          {isViewer
+            ? remoteState.state === 'live'
+              ? 'Robot kamerasi: jonli'
+              : remoteState.state === 'robot-offline'
+              ? 'Robot oflayn'
+              : remoteState.state === 'error'
+              ? 'Aloqa xatosi'
+              : 'Robotga ulanmoqda'
+            : broadcast.duplicate
+            ? `${broadcast.robotId}: ID takrorlangan!`
+            : broadcast.state === 'online'
+            ? `${broadcast.robotId} efirda: ${broadcast.viewers} operator`
+            : broadcast.state === 'error'
+            ? 'Translyatsiya xatosi'
+            : 'Translyatsiya ulanmoqda'}
+        </div>
+
+        {/* OPERATOR: qaysi robotni kuzatish + uning navigatsiya telemetriyasi (bir manbadan, sinxron) */}
+        {isViewer && (
+          <div className="flex items-center gap-1.5" data-fleet>
+            <select
+              value={watchedRobot}
+              onChange={(e) => selectedRobotStore.set(e.target.value)}
+              title="Kuzatiladigan robot"
+              className="px-2 py-1.5 rounded-lg bg-tactical-850 border border-tactical-700 text-[11px] font-semibold text-slate-100"
+            >
+              {fleet.robots.length === 0 && <option value="">Robotlar topilmadi</option>}
+              {fleet.robots.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.online ? '●' : '○'} {r.id}
+                  {r.online ? '' : ' (oflayn)'}
+                </option>
+              ))}
+            </select>
+            {watchedTel?.nav && (
+              <div
+                data-robot-tel
+                title={`Joylashuv: ${watchedTel.nav.lat.toFixed(6)}, ${watchedTel.nav.lon.toFixed(6)} (±${Math.round(watchedTel.nav.acc)} m)`}
+                className={`px-2 py-1.5 rounded-lg border text-[11px] font-mono flex items-center gap-2 ${
+                  watchedTel.nav.psrc === 'gps'
+                    ? 'border-police-green/40 text-police-green'
+                    : watchedTel.nav.psrc === 'dead-reckoning'
+                    ? 'border-police-amber/50 text-police-amber'
+                    : 'border-police-red/50 text-police-red'
+                }`}
+              >
+                <span>{(watchedTel.nav.speed * 3.6).toFixed(1)} km/soat</span>
+                <span>{Math.round(watchedTel.nav.heading)}°</span>
+                <span>{watchedTel.nav.psrc === 'gps' ? 'GPS' : watchedTel.nav.psrc === 'dead-reckoning' ? 'DR' : 'eski'}</span>
+                {watchedTel.battery?.pct !== undefined && <span className="text-slate-300">{Math.round(watchedTel.battery.pct)}%</span>}
+              </div>
+            )}
+          </div>
+        )}
+
         <button
           onClick={() => openOnly('sensors')}
           title="Sensorlar panelini ochish"
@@ -1542,12 +1821,29 @@ export const HUDView: React.FC = () => {
         {/* ========================================================================= */}
         {/* O'RTA: Katta ekranli kamera - NVR OSD, ZOOM, FULLSCREEN, LIVE / PLAYBACK, 5S AUTO-HIDE */}
         {/* ========================================================================= */}
-        <div className={`relative flex-1 min-h-0 h-full flex flex-col bg-black overflow-hidden ${
-          isFullscreen ? 'fixed inset-0 z-50 w-screen h-screen' : ''
-        }`}>
+        <div
+          ref={fullscreenRef}
+          data-cam-fullscreen={isFullscreen ? 'on' : undefined}
+          // relative va fixed bir vaqtda berilmaydi (aks holda Tailwind tartibida relative yutib, fullscreen ishlamaydi)
+          className={`${
+            isFullscreen
+              ? 'fixed inset-0 m-0 p-0 border-0 rounded-none'
+              : 'relative flex-1 min-h-0 h-full'
+          } flex flex-col bg-black overflow-hidden`}
+          style={
+            isFullscreen
+              ? { width: '100vw', height: '100dvh', zIndex: 2147483647, margin: 0, padding: 0, border: 0 }
+              : undefined
+          }
+        >
           <div className={`flex-1 min-h-0 w-full h-full flex flex-col ${activeCam === 'face' ? '' : 'invisible'}`}>
-            {/* Viewport: justify-start orqali kadr chapga oxirigacha taqalgan */}
-            <div ref={viewportWrapRef} className="bg-black flex-1 min-h-0 w-full h-full flex items-center justify-start overflow-hidden relative">
+            {/* Viewport: oddiy rejimda kadr chapga taqalgan, fullscreen da markazda */}
+            <div
+              ref={viewportWrapRef}
+              className={`bg-black flex-1 min-h-0 w-full h-full flex items-center overflow-hidden relative ${
+                isFullscreen ? 'justify-center' : 'justify-start'
+              }`}
+            >
               <div
                 ref={zoomFrameRef}
                 className="relative bg-black flex items-center justify-center overflow-hidden"
@@ -1607,10 +1903,35 @@ export const HUDView: React.FC = () => {
                       className={`w-full h-full object-contain transition-transform ${mirrorVideo ? 'scale-x-[-1]' : ''}`}
                     />
 
-                    {cameraLoading && (
+                    {cameraLoading && !isViewer && (
                       <div className="absolute inset-0 bg-tactical-950/80 flex flex-col items-center justify-center space-y-2 z-10">
                         <RefreshCw className="w-8 h-8 text-police-cyan animate-spin" />
                         <span className="font-mono text-xs text-white">Frontal kamera ochilmoqda...</span>
+                      </div>
+                    )}
+
+                    {/* OPERATOR: robot kamerasiga ulanish holati */}
+                    {cameraLoading && isViewer && (
+                      <div className="absolute inset-0 bg-tactical-950/90 flex flex-col items-center justify-center gap-2 p-4 text-center z-10">
+                        {remoteState.state === 'robot-offline' ? (
+                          <VideoOff className="w-9 h-9 text-slate-500" />
+                        ) : remoteState.state === 'error' ? (
+                          <AlertTriangle className="w-9 h-9 text-police-red" />
+                        ) : (
+                          <RefreshCw className="w-8 h-8 text-police-cyan animate-spin" />
+                        )}
+                        <span className="font-mono text-sm font-bold text-white">
+                          {remoteState.state === 'robot-offline'
+                            ? 'Robot planshet oflayn'
+                            : remoteState.state === 'error'
+                            ? "Robot kamerasiga ulanib bo'lmadi"
+                            : 'Robot kamerasiga ulanilmoqda...'}
+                        </span>
+                        <span className="font-mono text-xs text-slate-400 max-w-md">
+                          {remoteState.state === 'robot-offline'
+                            ? "Robot planshetida sayt ochiq va Sozlamalar > Kamera translyatsiyasida \"Robot planshet\" tanlangan bo'lishi kerak. Kanal kodi ikkala qurilmada bir xil bo'lsin."
+                            : remoteState.detail ?? 'Tasvir faqat robot planshetidan keladi, bu qurilmaning kamerasi ishlatilmaydi.'}
+                        </span>
                       </div>
                     )}
 
@@ -1657,10 +1978,12 @@ export const HUDView: React.FC = () => {
                           <span className="truncate">{obj.label}</span>
                           {obj.isIdentifiedPerson && <span className="opacity-70 text-[10px]">{(obj.confidence * 100).toFixed(0)}%</span>}
                         </div>
-                        <div className="absolute right-1 bottom-1 px-1.5 py-0.5 rounded-md bg-black/70 text-[10px] font-semibold text-white">
-                          {obj.distanceUpperBound ? '<' : obj.distanceApprox ? '~' : ''}
-                          {obj.distance} m
-                        </div>
+                        {obj.distance > 0 && (
+                          <div className="absolute right-1 bottom-1 px-1.5 py-0.5 rounded-md bg-black/70 text-[10px] font-semibold text-white">
+                            {obj.distanceUpperBound ? '<' : obj.distanceApprox ? '~' : ''}
+                            {obj.distance} m
+                          </div>
+                        )}
                       </div>
                     ))}
               </div>

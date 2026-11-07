@@ -14,6 +14,28 @@ import { AdminLoginModal } from './components/AdminLoginModal';
 import { AdminPanelView } from './components/AdminPanelView';
 import { ESP32RemoteView } from './components/ESP32RemoteView';
 import type { RemoteLink } from './services/remoteClient';
+import { robotCamBroadcaster, fleetWatcher } from './services/robotCamLink';
+import { navigationService } from './services/navigationService';
+import { headingService } from './services/headingService';
+
+// Faqat ishlab chiqish rejimida: sinov skriptlari ilova ishlatayotgan servis nusxalarini ko'ra olsin
+if (import.meta.env.DEV) {
+  (window as unknown as { __qalqon: unknown }).__qalqon = { robotCamBroadcaster, fleetWatcher, navigationService, headingService };
+}
+
+/** Robot holatidan (batareya, sonar, buyruq) telemetriyaga: navigatsiya esa navigationService dan to'g'ridan-to'g'ri */
+const RobotTelemetryBridge: React.FC = () => {
+  const { battery, sonars, lastCommand } = useRobot();
+  useEffect(() => {
+    robotCamBroadcaster.setTelemetryExtra({
+      battery: { v: battery.voltage, pct: battery.percentage },
+      sonars: { front: sonars.front, rear: sonars.rear, left: sonars.left, right: sonars.right },
+      cmd: lastCommand
+    });
+  }, [battery.voltage, battery.percentage, sonars.front, sonars.rear, sonars.left, sonars.right, lastCommand]);
+  return null;
+};
+import { camLinkSettings } from './services/camLinkSettings';
 
 const MainContent: React.FC = () => {
   const { activeTab } = useRobot();
@@ -32,6 +54,24 @@ const MainContent: React.FC = () => {
 const AppShell: React.FC = () => {
   // Vaqt, GPS manzil va ob-havoni ilova ochilgandan boshlab kuzatib, saqlab boradi (robot savollarga javob berishi uchun)
   useEffect(() => situationService.start(), []);
+  // PARK ALOQASI (qaysi sahifa ochiq bo'lishidan qat'i nazar):
+  //  - robot planshet: kamera tasviri va telemetriya operatorlarga uzatiladi;
+  //  - operator: barcha robotlar ro'yxati va telemetriyasi kuzatiladi.
+  useEffect(() => {
+    const apply = (s: { role: string }) => {
+      robotCamBroadcaster.stop();
+      fleetWatcher.stop();
+      if (s.role === 'robot') void robotCamBroadcaster.start();
+      else void fleetWatcher.start();
+    };
+    apply(camLinkSettings.get());
+    const unsub = camLinkSettings.subscribe(apply);
+    return () => {
+      unsub();
+      robotCamBroadcaster.stop();
+      fleetWatcher.stop();
+    };
+  }, []);
   const [isUnlocked, setIsUnlocked] = useState(() =>
     window.location.hash === '#hud' || localStorage.getItem('qalqon_auto_unlock') === 'true'
   );
@@ -118,6 +158,7 @@ const AppShell: React.FC = () => {
 export function App() {
   return (
     <RobotProvider>
+      <RobotTelemetryBridge />
       <AppShell />
     </RobotProvider>
   );

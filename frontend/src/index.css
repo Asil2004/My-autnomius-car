@@ -37,6 +37,19 @@ body {
   width: 100vw;
 }
 
+/* Kamera FULLSCREEN: faqat kamera konteyneri (va uni o'rab turgan ota elementlar) qoladi.
+   Navbar, pastki menyu, yon panellar, suzuvchi oynalar va boshqa hamma narsa yashiriladi */
+body.qalqon-cam-fullscreen {
+  overflow: hidden;
+  background: #000;
+}
+body.qalqon-cam-fullscreen *:not(:has([data-cam-fullscreen])):not([data-cam-fullscreen]):not([data-cam-fullscreen] *) {
+  visibility: hidden !important;
+}
+[data-cam-fullscreen] {
+  box-sizing: border-box;
+}
+
 /* Brauzer bergan qismlar ham palitradan: belgilash, kursor rangi, fokus halqasi, skrollbar */
 ::selection {
   background: rgba(90, 209, 230, 0.28);

@@ -8,6 +8,8 @@ import { aiDialogService } from '../services/aiDialogService';
 import { tacticalAudio } from '../services/audioService';
 import { edgeTtsService } from '../services/edgeTtsService';
 import { nvrRecordingService } from '../services/nvrRecordingService';
+import { robotCamBroadcaster } from '../services/robotCamLink';
+import { camLinkSettings } from '../services/camLinkSettings';
 import { createAnnotatedStream, type AnnotatedStream, type OverlayBox } from '../services/nvrOverlayCompositor';
 import { RobotAvatar, type EyeInput } from './RobotAvatar';
 
@@ -30,6 +32,8 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
 
   // Kamera va avto-salom AI & Avtonom bo'limida sozlanadi (bosh sahifada boshqaruv elementlari yo'q)
   const [cameraActive, setCameraActive] = useState<boolean>(() => faceViewSettings.get().cameraEnabled);
+  const [camRole, setCamRole] = useState(() => camLinkSettings.get().role);
+  useEffect(() => camLinkSettings.subscribe((s) => setCamRole(s.role)), []);
   const isSpeakingRef = useRef(false);
   // Qo'l tegizmasdan suhbat: mikrofon tinglovchisi, javob tayyorlanmoqdami, oxirgi suhbat vaqti
   const listenerRef = useRef<HandsFreeListener | null>(null);
@@ -180,7 +184,8 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
   // ==========================================================================
   useEffect(() => {
     const input = eyeInputRef.current;
-    if (!cameraActive) {
+    // Dispetcher (operator) qurilmasi o'z kamerasini ochmaydi: tasvir faqat robot planshetidan keladi
+    if (!cameraActive || camRole !== 'robot') {
       input.hasFace = false;
       input.happy = false;
       return;
@@ -230,6 +235,8 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
             })
           : null;
         nvrRecordingService.startRecording(annotated?.stream ?? stream);
+        // Operatorlarga uzatish (dispetcher markazi shu tasvirni kuzatadi)
+        robotCamBroadcaster.setSource(stream);
 
         // ------------------------------------------------------------------
         // Operator HUD dagi Face ID texnologiyasi (faceRecognitionService.identifyPeople):
@@ -287,6 +294,11 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
                     : faceCycles >= STRANGER_AFTER_CYCLES ? 'Piyoda' : 'Tekshirilmoqda'
                 }))
             };
+            // Operatorlar ekranidagi ramkalar (ism yoki "Piyoda")
+            const faced = withFace.filter((i) => i.faceBox);
+            robotCamBroadcaster.setBoxes(
+              recBoxes.boxes.map((b, k) => ({ ...b, kind: 'person' as const, identified: !!faced[k]?.person, conf: faced[k]?.confidence ?? undefined }))
+            );
             // Bir nechta odam bo'lsa: avval tanilgan, keyin eng katta (eng yaqin) yuz
             const main = withFace.length
               ? withFace.reduce((a, b) => {
@@ -358,13 +370,15 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
       if (trackInterval) clearInterval(trackInterval);
       nvrRecordingService.stopRecording();
       annotated?.stop();
+      robotCamBroadcaster.clearSource(stream);
+      robotCamBroadcaster.setBoxes([]);
       if (stream) {
         stream.getTracks().forEach(t => t.stop());
       }
       input.hasFace = false;
       input.happy = false;
     };
-  }, [cameraActive]);
+  }, [cameraActive, camRole]);
 
   return (
     <div onClick={handleUnlockAudio} className="relative w-full h-full bg-tactical-950 overflow-hidden select-none">
