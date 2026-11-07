@@ -17,6 +17,7 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -166,78 +167,65 @@ class MainActivity : AppCompatActivity() {
         }
 
         val inputImage = InputImage.fromMediaImage(mediaImage, rotationDegrees)
+        // ML Kit ramkalari burilgan (tik) kadr koordinatalarida: overlay ham shu o'lchamni olishi kerak
+        val rotated = rotationDegrees == 90 || rotationDegrees == 270
+        val frameW = if (rotated) imageProxy.height else imageProxy.width
+        val frameH = if (rotated) imageProxy.width else imageProxy.height
 
-        faceDetector.detectInImage(inputImage)
-            .addOnSuccessListener { faces ->
-                if (faces.isEmpty()) {
-                    binding.overlayView.clear()
-                    runOnUiThread {
-                        binding.tvRecognitionStatus.text = "🔍 SKANERLANMOQDA..."
-                        binding.tvRecognitionStatus.setTextColor(getColor(uz.iiv.faceid.R.color.text_secondary))
-                        updateStatsHeader(0, SystemClock.elapsedRealtime() - startTime)
-                    }
-                    imageProxy.close()
-                    return@addOnSuccessListener
-                }
-
-                // Convert frame to rotated bitmap for face cropping
-                val fullFrameBitmap: Bitmap = try {
-                    BitmapUtils.imageProxyToRotatedBitmap(imageProxy)
-                } catch (e: Exception) {
-                    imageProxy.close()
-                    return@addOnSuccessListener
-                }
-
-                val recognitionResults = mutableListOf<RecognitionResult>()
-                val appSettings = FaceIdApp.instance.settings
-                val embeddingModel = FaceIdApp.instance.embeddingModel
-
-                for (face in faces) {
-                    val croppedFace = faceDetector.cropFace(fullFrameBitmap, face) ?: continue
-
-                    // Generate MobileFaceNet 192-d normalized embedding
-                    val embedding = embeddingModel.getEmbedding(croppedFace)
-                    croppedFace.recycle()
-
-                    // Optional Liveness Evaluation
-                    val livenessResult = if (appSettings.isLivenessEnabled) {
-                        livenessDetector.evaluate(face)
-                    } else null
-
-                    // Biometric Top-1 Matching
-                    val matchResult = faceMatcher.match(
-                        queryEmbedding = embedding,
-                        databaseFaces = cachedFaces,
-                        threshold = appSettings.threshold,
-                        boundingBox = face.boundingBox,
-                        livenessResult = livenessResult
-                    )
-                    recognitionResults.add(matchResult)
-                }
-
-                fullFrameBitmap.recycle()
-
-                val inferTimeMs = SystemClock.elapsedRealtime() - startTime
-
-                // Deliver to Overlay and HUD UI
+        // Aniqlash va embedding kamera oqimida (cameraExecutor) bajariladi: UI oqimi qotmaydi
+        try {
+            val faces = Tasks.await(faceDetector.detectInImage(inputImage))
+            if (faces.isEmpty()) {
                 runOnUiThread {
-                    binding.overlayView.setResults(
-                        recognitionResults,
-                        imageProxy.width,
-                        imageProxy.height,
-                        lensFacing
-                    )
-
-                    updateHud(recognitionResults)
-                    updateStatsHeader(faces.size, inferTimeMs)
+                    binding.overlayView.clear()
+                    binding.tvRecognitionStatus.text = "🔍 SKANERLANMOQDA..."
+                    binding.tvRecognitionStatus.setTextColor(getColor(uz.iiv.faceid.R.color.text_secondary))
+                    updateStatsHeader(0, SystemClock.elapsedRealtime() - startTime)
                 }
+                return
+            }
 
-                imageProxy.close()
+            // Yuzni kesib olish uchun burilgan kadr
+            val fullFrameBitmap: Bitmap = BitmapUtils.imageProxyToRotatedBitmap(imageProxy)
+
+            val recognitionResults = mutableListOf<RecognitionResult>()
+            val appSettings = FaceIdApp.instance.settings
+            val embeddingModel = FaceIdApp.instance.embeddingModel
+
+            for (face in faces) {
+                val croppedFace = faceDetector.cropFace(fullFrameBitmap, face) ?: continue
+
+                // MobileFaceNet 192-o'lchamli normallangan embedding
+                val embedding = embeddingModel.getEmbedding(croppedFace)
+                croppedFace.recycle()
+
+                val livenessResult = if (appSettings.isLivenessEnabled) {
+                    livenessDetector.evaluate(face)
+                } else null
+
+                val matchResult = faceMatcher.match(
+                    queryEmbedding = embedding,
+                    databaseFaces = cachedFaces,
+                    threshold = appSettings.threshold,
+                    boundingBox = face.boundingBox,
+                    livenessResult = livenessResult
+                )
+                recognitionResults.add(matchResult)
             }
-            .addOnFailureListener { e ->
-                Log.e(TAG, "Face detection error", e)
-                imageProxy.close()
+
+            fullFrameBitmap.recycle()
+            val inferTimeMs = SystemClock.elapsedRealtime() - startTime
+
+            runOnUiThread {
+                binding.overlayView.setResults(recognitionResults, frameW, frameH, lensFacing)
+                updateHud(recognitionResults)
+                updateStatsHeader(faces.size, inferTimeMs)
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Face detection error", e)
+        } finally {
+            imageProxy.close()
+        }
     }
 
     private fun updateHud(results: List<RecognitionResult>) {

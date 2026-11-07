@@ -217,7 +217,7 @@ export const AdminPanelView: React.FC<AdminPanelViewProps> = ({ link, onExit }) 
   const sonar = telemetry?.sonars;
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-tactical-950 text-slate-100 overflow-hidden select-none">
+    <div className="flex flex-col app-viewport bg-tactical-950 text-slate-100 overflow-hidden select-none">
       <header className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-tactical-900 border-b border-tactical-700">
         <div className="flex items-center gap-3">
           <div className="p-1.5 rounded-lg bg-police-blue/20 text-police-cyan">

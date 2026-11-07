@@ -44,19 +44,21 @@ class FaceIdApp : Application() {
 
     private suspend fun seedPreloadedFacesIfNeeded() {
         val db = AppDatabase.getInstance(this)
-        val count = db.faceDao().getCount()
-        if (count > 0) {
-            Log.d(TAG, "Database already seeded with $count faces.")
-            return
-        }
-
-        Log.d(TAG, "Seeding initial database with official officers...")
-
+        // Web versiyadagi bilan bir xil ro'yxat. Bazada yo'q bo'lganlari qo'shiladi (yangilanishda ham)
+        val existing = db.faceDao().getAll().map { it.fullName }.toSet()
         val initialMembers = listOf(
             Triple("preload/koldoshev_sarvar.jpg", "Qo'ldoshev Sarvar", "IIV Xodimi"),
             Triple("preload/asilbek_ravshanov.png", "Asilbek Ravshanov", "Tizim Muhandisi"),
-            Triple("preload/boburjon_bozorov.jpg", "Bozorov Boburjon", "Katta Ilmiy Xodim")
-        )
+            Triple("preload/boburjon_bozorov.jpg", "Bozorov Boburjon", "Katta Ilmiy Xodim"),
+            Triple("preload/muhammadali_ravshanov.jpg", "Muhammadali Ravshanov", "Ruxsat berilgan shaxs"),
+            Triple("preload/odilov_zulfiddin.jpg", "Zulfiddin Odilov", "Ruxsat berilgan shaxs"),
+            Triple("preload/azamat_karimov.jpg", "Azamat Karimov", "Ruxsat berilgan shaxs")
+        ).filter { it.second !in existing }
+        if (initialMembers.isEmpty()) {
+            Log.d(TAG, "Database already contains all preloaded faces.")
+            return
+        }
+        Log.d(TAG, "Seeding ${initialMembers.size} preloaded faces...")
 
         val detector = FaceDetection.getClient(
             FaceDetectorOptions.Builder()

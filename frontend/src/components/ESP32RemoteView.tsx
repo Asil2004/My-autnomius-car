@@ -431,7 +431,7 @@ export const ESP32RemoteView: React.FC<ESP32RemoteViewProps> = ({ onExit }) => {
       )}
 
       {/* Asosiy 3 Ustunli Boshqaruv Qismi */}
-      <div className="flex-1 grid grid-cols-[1.2fr_1fr_1.2fr] gap-4 p-4 max-w-4xl mx-auto w-full h-[calc(100vh-52px)]">
+      <div className="flex-1 grid grid-cols-[1.2fr_1fr_1.2fr] gap-4 p-4 max-w-4xl mx-auto w-full h-[calc(100dvh-52px)]">
         {/* Chap Ustun: Oldinga va Orqaga */}
         <div className="flex flex-col gap-3">
           {/* Oldinga */}

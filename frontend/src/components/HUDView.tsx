@@ -1929,7 +1929,7 @@ export const HUDView: React.FC = () => {
                         </span>
                         <span className="font-mono text-xs text-slate-400 max-w-md">
                           {remoteState.state === 'robot-offline'
-                            ? "Robot planshetida sayt ochiq va Sozlamalar > Kamera translyatsiyasida \"Robot planshet\" tanlangan bo'lishi kerak. Kanal kodi ikkala qurilmada bir xil bo'lsin."
+                            ? "Robot planshetida Qalqon ochiq va Sozlamalar > Robotlar parkida \"Robot planshet\" tanlangan bo'lishi kerak. Park kodi barcha qurilmalarda bir xil bo'lsin."
                             : remoteState.detail ?? 'Tasvir faqat robot planshetidan keladi, bu qurilmaning kamerasi ishlatilmaydi.'}
                         </span>
                       </div>

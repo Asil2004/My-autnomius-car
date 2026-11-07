@@ -117,7 +117,7 @@ const AppShell: React.FC = () => {
   // DEFAULT VIEW: Robot yuzi (2D ko'zlar, kamera yoqilgach odamni kuzatadi)
   if (!isUnlocked) {
     return (
-      <div className="relative h-screen w-screen bg-tactical-950 overflow-hidden select-none">
+      <div className="relative app-viewport bg-tactical-950 overflow-hidden select-none">
         <RobotFaceView
           onUnlockRequest={() => setAuthModalOpen(true)}
           onAdminRequest={() => setAdminLoginOpen(true)}
@@ -147,7 +147,7 @@ const AppShell: React.FC = () => {
 
   // UNLOCKED VIEW: Full Operator Command Center
   return (
-    <div className="flex flex-col h-screen w-screen bg-tactical-950 text-slate-100 overflow-hidden font-sans select-none">
+    <div className="flex flex-col app-viewport bg-tactical-950 text-slate-100 overflow-hidden font-sans select-none">
       <Navbar onLockScreen={() => { localStorage.removeItem('qalqon_auto_unlock'); setIsUnlocked(false); }} onOpenController={() => setControllerOpen(true)} />
       <MainContent />
       <TabNavigation />
