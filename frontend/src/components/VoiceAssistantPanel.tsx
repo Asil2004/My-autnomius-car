@@ -19,9 +19,9 @@ export const VoiceAssistantPanel: React.FC = () => {
   useEffect(() => faceViewSettings.subscribe(setSettings), []);
 
   const [uvApiKey, setUvApiKey] = useState(() => uzbekVoiceService.getApiKey());
-  const [geminiApiKey, setGeminiApiKey] = useState(() => aiDialogService.getGeminiKey());
+  const [claudeApiKey, setClaudeApiKey] = useState(() => aiDialogService.getClaudeKey());
   const [showUvKey, setShowUvKey] = useState(false);
-  const [showGeminiKey, setShowGeminiKey] = useState(false);
+  const [showClaudeKey, setShowClaudeKey] = useState(false);
   const [saved, setSaved] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [s2sOpen, setS2sOpen] = useState(false);
@@ -29,7 +29,7 @@ export const VoiceAssistantPanel: React.FC = () => {
   const handleSaveKeys = (e: React.FormEvent) => {
     e.preventDefault();
     uzbekVoiceService.setApiKey(uvApiKey);
-    aiDialogService.setGeminiKey(geminiApiKey);
+    aiDialogService.setClaudeKey(claudeApiKey);
     setSaved(true);
     tacticalAudio.playCommandBeep();
     setTimeout(() => setSaved(false), 2500);
@@ -42,14 +42,14 @@ export const VoiceAssistantPanel: React.FC = () => {
   // Kalitni saqlab, erkin savol bilan AI javobini sinash (Gemini ishlayaptimi yoki yo'qmi ko'rinadi)
   const [brainTest, setBrainTest] = useState<string | null>(null);
   const handleTestBrain = async () => {
-    aiDialogService.setGeminiKey(geminiApiKey);
+    aiDialogService.setClaudeKey(claudeApiKey);
     setBrainTest('...');
-    const r = await aiDialogService.respond("Toshkent qaysi davlatning poytaxti? Bir gap bilan javob ber.", { skipCache: true });
+    const r = await aiDialogService.respond("Kissavurlik uchun qanday jazo bor?", { skipCache: true });
     setCacheSize(answerCache.size());
     setBrainTest(
-      r.source === 'gemini_llm'
-        ? `✓ Gemini ishlayapti: ${r.answer}`
-        : `✗ Gemini javob bermadi${aiDialogService.lastLlmError ? ` (${aiDialogService.lastLlmError})` : ' (kalit kiritilmagan)'}. Lokal javob: ${r.answer}`
+      r.source === 'claude_llm'
+        ? `✓ Claude Sonnet 5.5 (jar arxitekturasi): ${r.answer}`
+        : `✗ Claude javob bermadi${aiDialogService.lastLlmError ? ` (${aiDialogService.lastLlmError})` : ''}. Lokal javob: ${r.answer}`
     );
   };
 
@@ -241,7 +241,7 @@ export const VoiceAssistantPanel: React.FC = () => {
           <div>
             <h3 className="font-mono text-sm font-extrabold text-white tracking-wider flex items-center gap-2">
               <Key className="w-4 h-4 text-police-cyan" />
-              API KALITLARI: UZBEKVOICE.AI (STT) VA GEMINI
+              API KALITLARI: UZBEKVOICE.AI (STT & LOLA TTS) VA CLAUDE SONNET 5.5
             </h3>
             <p className="text-xs font-mono text-slate-400">O'zbekcha nutqni aniqlash, AI javobi va Sardor 1x ovozi</p>
           </div>
@@ -292,25 +292,25 @@ export const VoiceAssistantPanel: React.FC = () => {
               <label className="block text-slate-200 font-bold flex items-center justify-between">
                 <span className="flex items-center space-x-1.5 text-amber-300">
                   <Bot className="w-3.5 h-3.5" />
-                  <span>Gemini LLM API kaliti:</span>
+                  <span>Claude Sonnet 5.5 API kaliti (jar):</span>
                 </span>
                 <span className="text-[10px] text-slate-400 font-normal">Ixtiyoriy</span>
               </label>
               <div className="relative">
                 <input
-                  type={showGeminiKey ? 'text' : 'password'}
-                  value={geminiApiKey}
-                  onChange={(e) => setGeminiApiKey(e.target.value)}
-                  placeholder="AIzaSy... (bo'sh qolsa lokal qoidalar ishlaydi)"
+                  type={showClaudeKey ? 'text' : 'password'}
+                  value={claudeApiKey}
+                  onChange={(e) => setClaudeApiKey(e.target.value)}
+                  placeholder="Anthropic API kaliti (jar bo'yicha)..."
                   className="w-full bg-tactical-950 border border-tactical-700 rounded-lg pl-3 pr-10 py-2.5 text-white font-mono placeholder-slate-500 focus:outline-none focus:border-amber-400"
                 />
                 <button
                   type="button"
-                  onClick={() => setShowGeminiKey(!showGeminiKey)}
+                  onClick={() => setShowClaudeKey(!showClaudeKey)}
                   className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
-                  aria-label={showGeminiKey ? 'Kalitni yashirish' : "Kalitni ko'rsatish"}
+                  aria-label={showClaudeKey ? 'Kalitni yashirish' : "Kalitni ko'rsatish"}
                 >
-                  {showGeminiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  {showClaudeKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
               <p className="text-[11px] text-slate-400">Erkin savollarga batafsil AI javobi uchun</p>
@@ -369,7 +369,7 @@ export const VoiceAssistantPanel: React.FC = () => {
               Gemini bir marta javob bergan savol keshda saqlanadi va keyin internetsiz ham darhol javob beriladi.
             </span>
           </div>
-          {!geminiApiKey.trim() && (
+          {!claudeApiKey.trim() && (
             <p className="text-[11px] text-amber-300">
               Gemini kalitisiz robot faqat tayyor mavzularga (xavfsizlik, huquq, 102, o'zi haqida) javob beradi. Kalitni
               aistudio.google.com saytida bepul olish mumkin.

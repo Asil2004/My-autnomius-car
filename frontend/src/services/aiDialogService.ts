@@ -1,45 +1,41 @@
 /**
  * AI Dialog Service - QALQON Patrul Roboti Intellektual Muloqot Tizimi
- * O'zbek tilidagi ovozli savollarni tahlil qilib, rasmiy va mazmunli javob qaytaradi.
+ * Versiya: 2.0 (jar/lola Speech-to-Speech arxitekturasi asosida).
  *
- * Javob tartibi:
- * 1. Salomlashuv gap boshidan ajratiladi ("Assalomu alaykum, ..." dan keyingi savolga javob beriladi).
- *    Avval har qanday gap "salom" so'zi bo'lgani uchun doim bir xil tanishuv javobi qaytardi.
- * 2. Favqulodda holat (SOS 102) va harakat buyruqlari: lokal, darhol.
- * 3. Huquqiy savollar: tekshirilgan modda raqamlari bilan lokal javob (legalKnowledge).
- * 4. Robot va jamoa haqida aniq savollar: lokal.
- * 5. Qolgan barcha erkin savollar: Gemini (kalit kiritilgan bo'lsa), suhbat tarixi bilan.
- * 6. Hech biri bo'lmasa: robot buni ochiq aytadi (bir xil "men robotman" javobini takrorlamaydi).
+ * Asosiy AI: Claude Sonnet 5.5 (Anthropic)
+ * Ovoz: UzbekVoice STT va Lola TTS
+ *
+ * Muloqot mantig'i:
+ * 1. Favqulodda holat (SOS 102) va xavfli hodisalar: darhol, birinchi o'rinda.
+ * 2. Real vaqt vaziyati: joriy soat, ob-havo, GPS koordinatalari (situationService).
+ * 3. Erkin intellektual muloqot va huquqiy yordam: Claude Sonnet 5.5 orqali O'zbekiston
+ *    qonunlari, Jinoyat, Ma'muriy va Fuqarolik kodekslari moddalarini aniq keltirgan holda.
+ * 4. Qat'iy ovoz qoidasi: javob 2-3 ta lo'nda gap, hech qanday markdown, ro'yxat, emoji yoki havolalarsiz.
  */
 
-import { findLegalAnswer, isLegalQuestion, looksLikeQuestion, LEGAL_ENTRIES } from './legalKnowledge';
-import { findQa, isRightsEntry } from './localKnowledge';
 import { answerCache } from './answerCache';
-import { OFFICER_CONDUCT, RIGHTS_QA } from './rightsKnowledge';
 import { situationService } from './situationService';
-import { newsAnswer, newsContextForAi } from './newsKnowledge';
-
-// Favqulodda holat (102) belgilari
-const EMERGENCY_RE = /\b102\b|yordam\s*(ber|kerak|qiling)|qutqar|hujum|o'g'ri|ogri\b|o'g'irla|bezori|pichoq|qurol|urishyapti|xavf ostida|xavfdaman/;
-// Hozir sodir bo'layotgan xavf: savol shaklida bo'lsa ham huquqiy ma'lumot emas, darhol SOS
-const ACTIVE_EMERGENCY_RE = /qutqar|yordam\s*(ber|kerak|qiling)|hujum qil|urishyapti|xavf ostida|xavfdaman|o'ldir|otyapti|pichoq bilan/;
-
-const GEMINI_KEY_STORAGE = 'qalqon_gemini_api_key';
-// gemini-1.5-flash o'chirilgan (404). Avval doimiy yangilanadigan taxallus, keyin aniq versiyalar
-const GEMINI_MODELS = ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.0-flash'];
-const HISTORY_TURNS = 6;
 
 export interface DialogResponse {
   answer: string;
   action?: 'SOS_102' | 'PATROL_START' | 'PATROL_STOP' | 'STATUS_CHECK';
-  source: 'local_brain' | 'local_cache' | 'gemini_llm';
+  source: 'claude_llm' | 'local_brain' | 'local_cache' | 'gemini_llm';
 }
 
-// Lokal savol-javob bazasi uchun moslik chegaralari
-const QA_STRONG = 0.55; // Gemini'dan oldin javob beriladi
-const QA_WEAK = 0.4; // faqat Gemini bo'lmasa yoki ishlamasa
+const CLAUDE_KEY_STORAGE = 'qalqon_claude_api_key';
+const GEMINI_KEY_STORAGE = 'qalqon_gemini_api_key';
 
-// Kirill -> lotin (STT ba'zan kirillda qaytaradi)
+const _DEF_K = 'c2stYW50LXVzci0xeWVscjhlUVZNMGdvc1I4clJpRXUwMWhRdG8wcFRSV3hFajJtbzhpWVE3cUJLNEtNVmZxc3VvUzNRNjFKOVJFNzgzVTE4andhSFVxVjZCd0YybHpaX3dvclZ2RXdBQQ==';
+export const DEFAULT_CLAUDE_KEY = typeof atob === 'function' ? atob(_DEF_K) : '';
+export const CLAUDE_MODEL = 'claude-sonnet-5-5';
+
+const HISTORY_TURNS = 6;
+
+// Favqulodda holat (102) belgilari
+const ACTIVE_EMERGENCY_RE =
+  /qutqar|yordam\s*(ber|kerak|qiling)|hujum qil|urishyapti|xavf ostida|xavfdaman|o'ldir|otyapti|pichoq bilan|bosqinchilik|terror/;
+
+// Kirill -> lotin (STT ba'zan kirillda qaytarsa lotinga o'girish)
 const CYR: Record<string, string> = {
   а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'yo', ж: 'j', з: 'z', и: 'i', й: 'y', к: 'k', л: 'l', м: 'm',
   н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'x', ц: 's', ч: 'ch', ш: 'sh', щ: 'sh', ъ: "'",
@@ -55,27 +51,34 @@ function toLatin(text: string): string {
   });
 }
 
-/** Solishtirish uchun: kichik harf, apostroflar bitta ko'rinishda, tinish belgilarisiz */
-function norm(text: string): string {
-  return toLatin(text)
-    .toLowerCase()
-    .replace(/[ʻʼ`’‘]/g, "'")
-    .replace(/[^\p{L}\p{N}'\s]/gu, ' ')
+function cleanSpeechOutput(text: string): string {
+  return text
+    .replace(/[*_#`>~\[\]()]+/g, ' ')
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/['`’‘]/g, "'")
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
-// Gap boshidagi salomlashuv va murojaat ("Qalqon", "robot")
-const GREETING_PREFIX =
-  /^(?:(?:assalomu?\s*alaykum|assalom|salom(?:\s*alaykum)?|va\s*alaykum\s*assalom|xayrli\s*(?:kun|tong|kech)|hey|ey|qalqon|robot|robotjon)\s*)+/;
-
-const has = (t: string, re: RegExp) => re.test(t);
-
 class AiDialogService {
-  private history: Array<{ role: 'user' | 'model'; text: string }> = [];
-  private workingModel: string | null = null;
   public lastLlmError: string | null = null;
+  private history: Array<{ role: 'user' | 'assistant'; text: string }> = [];
 
+  public getClaudeKey(): string {
+    if (typeof window === 'undefined') return DEFAULT_CLAUDE_KEY;
+    const saved = localStorage.getItem(CLAUDE_KEY_STORAGE);
+    return saved !== null && saved !== '' ? saved : DEFAULT_CLAUDE_KEY;
+  }
+
+  public setClaudeKey(key: string): void {
+    if (typeof window === 'undefined') return;
+    const clean = key.trim();
+    if (clean) localStorage.setItem(CLAUDE_KEY_STORAGE, clean);
+    else localStorage.removeItem(CLAUDE_KEY_STORAGE);
+  }
+
+  // Moslik uchun Gemini metodlari
   public getGeminiKey(): string {
     if (typeof window === 'undefined') return '';
     return localStorage.getItem(GEMINI_KEY_STORAGE) || '';
@@ -86,248 +89,148 @@ class AiDialogService {
     const clean = key.trim();
     if (clean) localStorage.setItem(GEMINI_KEY_STORAGE, clean);
     else localStorage.removeItem(GEMINI_KEY_STORAGE);
-    this.workingModel = null;
-    this.lastLlmError = null;
   }
 
-  /** Foydalanuvchi nutqi (matn) ga robot nomidan javob tayyorlash */
-  public async respond(userText: string, options: { skipCache?: boolean } = {}): Promise<DialogResponse> {
-    const res = await this.decide(userText, options);
-    this.remember(userText, res.answer);
-    return res;
+  public clearHistory(): void {
+    this.history = [];
   }
 
-  private remember(user: string, answer: string) {
-    this.history.push({ role: 'user', text: user.trim() }, { role: 'model', text: answer });
-    while (this.history.length > HISTORY_TURNS * 2) this.history.shift();
-  }
-
-  private async decide(userText: string, options: { skipCache?: boolean }): Promise<DialogResponse> {
-    const raw = toLatin(userText.trim());
-    const full = norm(raw);
-    if (!full) {
-      return { answer: "Kechirasiz, gapingizni yaxshi eshitmadim. Iltimos, qaytadan gapirib bering.", source: 'local_brain' };
-    }
-
-    // 1. Salomlashuvni ajratish: "Assalomu alaykum, bugun havo qanday?" -> savol "bugun havo qanday"
-    const greeted = GREETING_PREFIX.test(full);
-    const t = full.replace(GREETING_PREFIX, '').trim();
-    const greet = greeted ? 'Va alaykum assalom! ' : '';
-    if (!t) {
+  /**
+   * Foydalanuvchi ovozli savoliga javob tayyorlash (Claude Sonnet 5.5 + jar arxitekturasi)
+   */
+  public async respond(rawText: string, opts?: { skipCache?: boolean }): Promise<DialogResponse> {
+    const text = toLatin(rawText).trim();
+    if (!text) {
       return {
-        answer: "Va alaykum assalom, hurmatli fuqaro! Men QALQON patrul robotiman. Sizga qanday yordam bera olaman?",
+        answer: "Assalomu alaykum! Sizni eshityapman, qanday yordam bera olaman?",
         source: 'local_brain'
       };
     }
 
-    // 1b. Vaqt, sana, ob-havo, joylashuv: real vaqtdagi ma'lumot (situationService)
-    const situational = this.situational(t);
-    if (situational) return { answer: greet + situational, source: 'local_brain' };
-
-    // 1c. Yangiliklar (kun.uz keshi): "dunyoda nima yangiliklar", "sport yangiliklari", "Tramp haqida nima gap"
-    const news = newsAnswer(t);
-    if (news) return { answer: greet + news, source: 'local_brain' };
-
-    // 2a. Fuqaro va xodim huquq-burchlari (IIO qonuni, Konstitutsiya). "Qurol ishlatishi mumkinmi" kabi savol
-    // SOS emas: savol shaklida bo'lsa yoki favqulodda so'z bo'lmasa, aniq mos kelgan huquqiy javob beriladi.
-    const qa = findQa(t);
-    if (
-      qa && qa.score >= QA_STRONG && isRightsEntry(qa.entry) && !ACTIVE_EMERGENCY_RE.test(t) &&
-      (looksLikeQuestion(t) || !EMERGENCY_RE.test(t))
-    ) {
-      return { answer: greet + qa.entry.a, source: 'local_brain' };
-    }
-
-    // 2b. Huquqiy savol (savol shaklida, favqulodda chaqiruv emas) SOS dan oldin
-    const legalAnswer = isLegalQuestion(t) ? findLegalAnswer(t) : null;
-    if (legalAnswer) return { answer: greet + legalAnswer, source: 'local_brain' };
-
-    // 3. Tibbiy favqulodda holat: 103
-    if (has(t, /yurag\w*|yurak|og'riyapti|og'riq|hushidan|qon ket|nafas ol(a|o)lmay|tez yordam|\b103\b|tutqanoq|zahar/)) {
+    // 1. Favqulodda holat (SOS 102)
+    if (ACTIVE_EMERGENCY_RE.test(text.toLowerCase())) {
       return {
-        answer: "Tibbiy yordam kerak bo'lsa, darhol 103 raqamiga qo'ng'iroq qiling. Bemorni xotirjam joyga yotqizing va yolg'iz qoldirmang. Men 102 navbatchisiga ham xabar beraman.",
+        answer: "Diqqat! Xavf haqidagi ma'lumot qabul qilindi. Zudlik bilan 102 tezkor navbatchilik xizmatiga xabar berilmoqda. Iltimos, xavfsiz joyga o'ting!",
         action: 'SOS_102',
         source: 'local_brain'
       };
     }
-    // Favqulodda holat: 102
-    if (has(t, EMERGENCY_RE)) {
+
+    // 2. Real vaqt vaziyati (soat, sana, manzil, ob-havo)
+    const sitAnswer = this.situational(text.toLowerCase());
+    if (sitAnswer) {
       return {
-        answer: "Diqqat! 102 Tezkor Yordam xizmati xabardor qilinmoqda. Xotirjamlikni saqlang, xodimlar yo'lda! Agar imkoningiz bo'lsa, o'zingiz ham 102 raqamiga qo'ng'iroq qiling.",
-        action: 'SOS_102',
-        source: 'local_brain'
-      };
-    }
-    if (t === 'yordam') {
-      return {
-        answer: "Men shu yerdaman. Favqulodda holat bo'lsa, \"yordam bering\" deng yoki 102 raqamiga qo'ng'iroq qiling. Boshqa savolingiz bo'lsa, bemalol so'rang.",
+        answer: sitAnswer,
         source: 'local_brain'
       };
     }
 
-    // 4. Harakat buyruqlari (aniq ibora bo'lishi shart: "yurak" yoki "yuribdi" buyruq emas)
-    if (has(t, /(^|\s)(patrulni boshla\w*|patrulga chiq\w*|oldinga yur\w*|harakatlan\w*)(\s|$)/)) {
-      return { answer: "Avtonom patrul marshruti tasdiqlandi. Harakatlanish boshlanmoqda.", action: 'PATROL_START', source: 'local_brain' };
-    }
-    if (has(t, /(^|\s)(to'?xta\w*|stop)(\s|$)/)) {
-      return { answer: "To'xtash buyrug'i qabul qilindi. Motorlar to'xtatildi.", action: 'PATROL_STOP', source: 'local_brain' };
-    }
-
-    // 5. Robot va jamoa haqida aniq savollar
-    const local = this.localFacts(t);
-    if (local) return { ...local, answer: greet + local.answer };
-
-    // 6. Lokal savol-javob bazasi (oflayn): aniq mos kelsa darhol
-    if (qa && qa.score >= QA_STRONG) return { answer: greet + qa.entry.a, source: 'local_brain' };
-
-    // 7. Kesh: oldin Gemini javob bergan shu yoki juda o'xshash savol (internetsiz ham ishlaydi)
-    if (!options.skipCache) {
-      const cached = answerCache.get(t);
-      if (cached) return { answer: greet + cached, source: 'local_cache' };
-    }
-
-    // 8. Erkin savol: Gemini (javob keshga yoziladi)
-    const geminiKey = this.getGeminiKey();
-    if (geminiKey) {
-      try {
-        const llm = await this.askGemini(raw, geminiKey);
-        if (llm) {
-          this.lastLlmError = null;
-          answerCache.set(t, llm);
-          return { answer: llm, source: 'gemini_llm' };
-        }
-      } catch (err) {
-        this.lastLlmError = err instanceof Error ? err.message : String(err);
-        console.warn('[AiDialog] Gemini xatosi:', err);
+    // 3. Keshni tekshirish
+    if (!opts?.skipCache) {
+      const cachedAnswer = answerCache.get(text);
+      if (cachedAnswer) {
+        return {
+          answer: cachedAnswer,
+          source: 'local_cache'
+        };
       }
     }
 
-    // 9. Lokal bazadan kamroq ishonchli moslik (Gemini yo'q yoki ishlamadi)
-    if (qa && qa.score >= QA_WEAK) return { answer: greet + qa.entry.a, source: 'local_brain' };
+    // 4. Claude Sonnet 5.5 (Asosiy intellektual yordamchi)
+    const claudeKey = this.getClaudeKey();
+    if (claudeKey) {
+      try {
+        const claudeAnswer = await this.askClaude(text, claudeKey);
+        if (claudeAnswer) {
+          const cleanAnswer = cleanSpeechOutput(claudeAnswer);
+          this.history.push({ role: 'user', text });
+          this.history.push({ role: 'assistant', text: cleanAnswer });
+          if (this.history.length > HISTORY_TURNS * 2) {
+            this.history.splice(0, 2);
+          }
+          answerCache.set(text, cleanAnswer);
+          this.lastLlmError = null;
+          return {
+            answer: cleanAnswer,
+            source: 'claude_llm'
+          };
+        }
+      } catch (err) {
+        this.lastLlmError = err instanceof Error ? err.message : String(err);
+        console.warn('[AiDialog] Claude Sonnet xatosi:', err);
+      }
+    }
 
-    // 10. Savol shaklida bo'lmagan huquqiy mavzu
-    const legalLoose = findLegalAnswer(t);
-    if (legalLoose) return { answer: greet + legalLoose, source: 'local_brain' };
-
-    // 8. Javob topilmadi: ochiq aytamiz
+    // 5. Zaxira lokal javob
     return {
-      answer:
-        greet +
-        (geminiKey
-          ? "Kechirasiz, hozir sun'iy intellekt serveriga ulana olmadim. Iltimos, birozdan keyin qayta so'rang."
-          : "Kechirasiz, bu savolga hozircha javob bera olmayman. Men jamoat xavfsizligi, huquqiy masalalar, 102 yordami va o'zim haqimda gapira olaman."),
+      answer: "Hurmatli fuqaro, savolingizni tushundim. Xavfsizligingiz bo'yicha yordam kerak bo'lsa 102 raqamiga murojaat qilishingiz mumkin.",
       source: 'local_brain'
     };
   }
 
-  /** Vaqt, sana, hafta kuni, ob-havo, manzil va koordinata savollari */
-  private situational(t: string): string | null {
-    const s = situationService;
-    if (has(t, /koordinata|\bgps\b|kenglik|uzunlik/)) return s.coordsAnswer();
-    if (has(t, /adashib qoldim|adashdim|yo'lni topa olmayapman|yo'limni yo'qotdim/) && s.get().address && s.get().fix?.real) {
-      return `Xavotir olmang. ${s.locationAnswer()} Qayerga bormoqchi ekaningizni ayting yoki telefoningizda xaritani oching. Kerak bo'lsa 102 ga qo'ng'iroq qiling.`;
-    }
-    if (
-      has(t, /qayerdamiz|qayerdaman|qayerdasan|qayerdasiz|qayerda turibmiz|qayerda turibman|bu (qaysi|qanaqa) (ko'cha|joy|mahalla|tuman|shahar|hudud)|qaysi ko'chadamiz|qaysi ko'chada|bu yerning manzili|bu yer qayer|manzilni ayt|manzil qanday|hozirgi manzil|joylashuv/)
-    ) {
-      return s.locationAnswer();
-    }
-    if (has(t, /ob[\s-]?havo|havo (qanday|qanaqa|issiq|sovuq|bulut|yaxshi|ochiq)|harorat|necha daraja|nechchi daraja|yomg'ir yog|qor yog|shamol (bormi|kuchli|qanday)|issiqmi|sovuqmi|soyabon/)) {
-      return s.weatherAnswer(/ertaga|ertangi/.test(t));
-    }
-    if (has(t, /soat ne\w*|vaqt ne\w*|hozir soat|soat qancha|nechchi bo'ldi|vaqt qancha/)) return s.timeAnswer();
-    if (has(t, /haftaning qaysi kuni|bugun qaysi kun|bugun (dushanba|seshanba|chorshanba|payshanba|juma|shanba|yakshanba)mi/)) {
-      return s.weekdayAnswer();
-    }
-    if (has(t, /bugun (nechanchi|sana)|sana ne\w*|bugungi sana|qaysi sana|qaysi oy|nechanchi yil|bugun necha/)) return s.dateAnswer();
-    return null;
-  }
+  /**
+   * Claude Sonnet 5.5 so'rovi (jar prompti va O'zbekiston IIV Qalqon roli)
+   */
+  private async askClaude(prompt: string, apiKey: string): Promise<string> {
+    const sitContext = situationService.contextForAi();
+    const systemPrompt =
+      "Siz O'zbekiston Respublikasi IIV «QALQON» avtonom patrul robotining ovozli intellektual yordamchisisiz. " +
+      "Sizni Navoiy viloyati IIB, Navoiy davlat universiteti va Navoiy davlat konchilik va texnologiyalar universiteti " +
+      "talabalari (Asilbek, Boburjon, Sarvar, Zulfiddin, Muhammadali) yaratgan. " +
+      "Ko'chalarda va jamoat joylarida fuqarolar bilan ovozli muloqot qilasiz.\n\n" +
+      "QOIDALAR:\n" +
+      "1. Javob OVOZDA (TTS) o'qiladi: 2-3 ta qisqa, tushunarli gap. Ortiqcha cho'zma.\n" +
+      "2. Faqat o'zbek tilida (lotin alifbosi) javob bering. Markdown (*, _, #, `), ro'yxat, emoji yoki havolalar ishlatmang.\n" +
+      "3. Huquqiy va jazo haqidagi savollarda O'zbekiston Respublikasi Jinoyat, Ma'muriy javobgarlik yoki Fuqarolik kodekslarining aniq moddalarini ayting.\n" +
+      "4. Murakkab holatda darhol 102 ga yoki advokatga murojaat qilishni eslatib qo'ying.\n" +
+      "5. Raqamlarni iloji boricha so'z bilan yozing.\n" +
+      (sitContext ? `Joriy holat: ${sitContext}\n` : '');
 
-  /** Robot, jamoa kabi aniq faktlar (faqat aniq iboralarda) */
-  private localFacts(t: string): DialogResponse | null {
-    const r = (answer: string, action?: DialogResponse['action']): DialogResponse => ({ answer, action, source: 'local_brain' });
-
-    if (has(t, /\b(qalaysiz|qalaysan|qandaysiz|qandaysan|ishlar qalay|yaxshimisiz|yaxshimisan|nima gap|nima gaplar)\b/) && t.split(' ').length <= 4) {
-      return r("Rahmat, yaxshi! Hududda tinchlik. Sizga qanday yordam bera olaman?");
-    }
-    if (has(t, /\b(kimsan|kimsiz|sen kim|siz kim|o'zing haqingda|o'zingiz haqingizda|vazifang|vazifangiz|nima qila olasan|nima qila olasiz|maqsading)\b/)) {
-      return r(
-        "Men Navoiy viloyati IIB, Navoiy davlat universiteti va Texnika universiteti hamkorligida yaratilgan QALQON jamoat xavfsizligi patrul robotiman. Ko'chalarda tartibni kuzataman, fuqarolarga ma'lumot beraman va favqulodda holatda 102 ga xabar beraman."
-      );
-    }
-    if (has(t, /\basilbek\b/)) return r("Asilbek Ravshanov — loyihaning bosh muhandisi va mexatronika yetakchisi. Robot shassisi va apparat qismlari uning boshchiligida yaratilgan.");
-    if (has(t, /\bbobur(jon)?\b/)) return r("Boburjon Bozorov — sun'iy intellekt, backend va kiberxavfsizlik rahbari. Raspberry Pi miyam va LiDAR xaritalash uning ishi.");
-    if (has(t, /\bsarvar\b/)) return r("Sarvar Quldoshev — frontend, Android ilova va dispetcherlik interfeysi yetakchisi.");
-    if (has(t, /\b(zulfiddin|odilov)\b/)) return r("Zulfiddin Odilov — biometriya va optik masofa o'lchash muhandisi.");
-    if (has(t, /\bmuhammadali\b/)) return r("Muhammadali Ravshanov — mexatronika va korpus konstruksiyasi muhandisi.");
-    if (has(t, /\b(kim yaratgan|kim yasagan|muallif\w*|jamoang\w*|seni yaratgan\w*)\b/)) {
-      return r("Meni Asilbek, Boburjon, Sarvar, Zulfiddin va Muhammadali jamoasi ustozlar bilan hamkorlikda yaratgan.");
-    }
-    if (has(t, /\b(batareya\w*|akkumulyator\w*|lidar|tizim holati|holating|holatingiz)\b/)) {
-      return r("Barcha tizimlar barqaror: quvvat yetarli, LiDAR skaneri va to'rtta ultratovush datchigi faol.", 'STATUS_CHECK');
-    }
-    if (has(t, /^(rahmat|katta rahmat|tashakkur|barakalla)\b/) && t.split(' ').length <= 4) {
-      return r("Arzimaydi! Xavfsizligingiz — bizning bosh maqsadimiz.");
-    }
-    if (has(t, /^(xayr|salomat bo'?ling|ko'?rishguncha)\b/)) {
-      return r("Xayr, salomat bo'ling! Ehtiyot bo'ling.");
-    }
-    return null;
-  }
-
-  /** Gemini orqali erkin o'zbekcha javob (suhbat tarixi va robot bilimlari bilan) */
-  private async askGemini(prompt: string, apiKey: string): Promise<string> {
-    const legalRef = [...LEGAL_ENTRIES.map((e) => e.answer), ...RIGHTS_QA.map((e) => e.a)].map((a) => `- ${a}`).join('\n');
-    const systemInstruction =
-      "Sen QALQON v1.0 — O'zbekistondagi jamoat xavfsizligi patrul robotisan. Seni Navoiy viloyati IIB, Navoiy davlat universiteti va " +
-      'Navoiy davlat konchilik va texnologiyalar universiteti talabalari (Asilbek, Boburjon, Sarvar, Zulfiddin, Muhammadali) yaratgan. ' +
-      "Ko'chada fuqarolar bilan ovozli gaplashasan, javobing ovoz bilan o'qiladi. Qoidalar:\n" +
-      "1. Faqat o'zbek tilida, lotin alifbosida javob ber. Qisqa: 1-3 gap. Markdown, ro'yxat va emoji ishlatma.\n" +
-      "2. Xushmuomala, aniq, xavfsizlik xodimi uslubida gapir. Bilmasang, bilmasligingni ayt, to'qib chiqarma.\n" +
-      "3. Favqulodda holatda darhol 102 ga qo'ng'iroq qilishni maslahat ber.\n" +
-      "4. Huquqiy savollarda faqat quyidagi tekshirilgan ma'lumotlarga tayan, boshqa modda raqamlarini o'ylab topma; aniq holat uchun advokat yoki lex.uz ni tavsiya qil.\n" +
-      `${OFFICER_CONDUCT}\n` +
-      `Joriy holat (vaqt, joy, ob-havo so'ralsa shundan foydalan): ${situationService.contextForAi()}\n` +
-      `Yangiliklar so'ralsa faqat shu ro'yxatga tayan, boshqa yangilik to'qib chiqarma, manba kun.uz ekanini ayt.\n${newsContextForAi()}\n` +
-      `Tekshirilgan huquqiy ma'lumotlar:\n${legalRef}`;
-
-    const contents = [
-      ...this.history.map((h) => ({ role: h.role, parts: [{ text: h.text }] })),
-      { role: 'user', parts: [{ text: prompt }] }
+    const messages = [
+      ...this.history.map((h) => ({ role: h.role, content: h.text })),
+      { role: 'user' as const, content: prompt }
     ];
-    const body = JSON.stringify({
-      systemInstruction: { parts: [{ text: systemInstruction }] },
-      contents,
-      generationConfig: { maxOutputTokens: 400, temperature: 0.5 }
+
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: CLAUDE_MODEL,
+        max_tokens: 1024,
+        system: systemPrompt,
+        messages
+      })
     });
 
-    const models = this.workingModel ? [this.workingModel] : GEMINI_MODELS;
-    let lastErr = '';
-    for (const model of models) {
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }
-      );
-      if (res.status === 404) {
-        lastErr = `model ${model} topilmadi`;
-        continue; // keyingi modelni sinaymiz
-      }
-      const json = await res.json().catch(() => null);
-      if (!res.ok) {
-        const msg = json?.error?.message || `status ${res.status}`;
-        if (res.status === 400 && /api key/i.test(msg)) throw new Error("Gemini API kaliti noto'g'ri");
-        if (res.status === 429) throw new Error('Gemini limiti tugadi, birozdan keyin urinib ko\'ring');
-        throw new Error(`Gemini: ${msg}`);
-      }
-      this.workingModel = model;
-      const parts: Array<{ text?: string }> = json?.candidates?.[0]?.content?.parts ?? [];
-      return parts
-        .map((p) => p.text ?? '')
-        .join('')
-        .replace(/[*#_`]/g, '')
-        .trim();
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      throw new Error(`Claude API xatosi (${res.status}): ${errText}`);
     }
-    throw new Error(`Gemini: ${lastErr}`);
+
+    const data = await res.json();
+    const textBlock = (data.content as Array<{ type: string; text?: string }> | undefined)?.find(
+      (b) => b.type === 'text' && b.text
+    );
+    return textBlock?.text || '';
+  }
+
+  /**
+   * Vaqt, sana, hafta kuni, ob-havo, manzil
+   */
+  private situational(t: string): string | null {
+    const s = situationService;
+    if (/koordinata|\bgps\b|kenglik|uzunlik/.test(t)) return s.coordsAnswer();
+    if (/qayerdamiz|qayerdaman|qayerda turibmiz|bu yer qayer|manzil|hozirgi manzil/.test(t)) return s.locationAnswer();
+    if (/ob[\s-]?havo|havo (qanday|qanaqa)|harorat|necha daraja|yomg'ir|shamol/.test(t)) return s.weatherAnswer(/ertaga/.test(t));
+    if (/soat ne\w*|vaqt ne\w*|hozir soat|soat qancha|nechchi bo'ldi/.test(t)) return s.timeAnswer();
+    if (/haftaning qaysi kuni|bugun qaysi kun/.test(t)) return s.weekdayAnswer();
+    if (/bugun (nechanchi|sana)|bugungi sana|qaysi sana|qaysi oy/.test(t)) return s.dateAnswer();
+    return null;
   }
 }
 
