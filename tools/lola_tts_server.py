@@ -90,7 +90,7 @@ async def stt_recognize(audio_bytes: bytes, filename: str = "voice.wav") -> str:
 
 
 async def claude_ask(question: str) -> str:
-    """Claude Sonnet 5.5 orqali javob olish."""
+    """Claude Sonnet 5.5 orqali javob olish (real vaqtda internetdan qidiruv bilan)."""
     headers = {
         "x-api-key": ANT_KEY,
         "anthropic-version": "2023-06-01",
@@ -100,15 +100,17 @@ async def claude_ask(question: str) -> str:
         "model": CLAUDE_MODEL,
         "max_tokens": 1024,
         "system": SYSTEM_PROMPT,
+        "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
         "messages": [{"role": "user", "content": question}],
     }
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=45) as client:
         r = await client.post("https://api.anthropic.com/v1/messages", headers=headers, json=payload)
         if not r.is_success:
             raise HTTPException(r.status_code, f"Claude API xatoligi: {r.text}")
-        content = r.json().get("content", [])
-        text_block = next((b for b in content if b.get("type") == "text"), None)
-        return (text_block.get("text", "") if text_block else "").strip()
+        data = r.json()
+        content = data.get("content", [])
+        text = " ".join(b.get("text", "") for b in content if b.get("type") == "text").strip()
+        return text
 
 
 async def lola_synthesize(text: str) -> str:

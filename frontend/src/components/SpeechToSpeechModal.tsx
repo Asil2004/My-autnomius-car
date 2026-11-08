@@ -104,9 +104,9 @@ export const SpeechToSpeechModal: React.FC<SpeechToSpeechModalProps> = ({
       };
       setMessages(prev => [...prev, robotMsg]);
 
-      // 4. TTS: tayyor gaplar Sardor mp3, qolgani uzbekvoice.ai TTS (ruscha ovozga o'tmaydi)
+      // 4. UzbekVoice.ai Lola TTS orqali audio ijro etish
       setIsProcessing(false);
-      speakRobotResponse(robotAnswer);
+      speakRobotResponse(robotAnswer, aiResponse.audioUrl);
     } catch (err) {
       console.error('[S2S] Pipeline error:', err);
       setIsProcessing(false);
@@ -114,7 +114,7 @@ export const SpeechToSpeechModal: React.FC<SpeechToSpeechModalProps> = ({
     }
   };
 
-  const speakRobotResponse = (text: string) => {
+  const speakRobotResponse = (text: string, audioUrl?: string) => {
     setIsSpeaking(true);
 
     let tick = 0;
@@ -132,7 +132,14 @@ export const SpeechToSpeechModal: React.FC<SpeechToSpeechModalProps> = ({
       setIsSpeaking(false);
     };
 
-    edgeTtsService.speak(text, { voice: 'uz-UZ-SardorNeural', rate: 1.0 }, undefined, finish);
+    if (audioUrl) {
+      const au = new Audio(audioUrl);
+      au.onended = finish;
+      au.onerror = () => edgeTtsService.speak(text, { voice: 'uz-UZ-SardorNeural' }, undefined, finish);
+      au.play().catch(() => edgeTtsService.speak(text, { voice: 'uz-UZ-SardorNeural' }, undefined, finish));
+    } else {
+      edgeTtsService.speak(text, { voice: 'uz-UZ-SardorNeural', rate: 1.0 }, undefined, finish);
+    }
   };
 
   if (!isOpen) return null;

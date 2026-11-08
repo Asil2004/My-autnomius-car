@@ -47,7 +47,7 @@ export const VoiceAssistantPanel: React.FC = () => {
     const r = await aiDialogService.respond("Kissavurlik uchun qanday jazo bor?", { skipCache: true });
     setCacheSize(answerCache.size());
     setBrainTest(
-      r.source === 'claude_llm'
+      r.source === 'claude_web' || r.source === 'jar_backend'
         ? `✓ Claude Sonnet 5.5 (jar arxitekturasi): ${r.answer}`
         : `✗ Claude javob bermadi${aiDialogService.lastLlmError ? ` (${aiDialogService.lastLlmError})` : ''}. Lokal javob: ${r.answer}`
     );

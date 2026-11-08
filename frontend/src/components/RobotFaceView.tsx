@@ -12,6 +12,7 @@ import { robotCamBroadcaster } from '../services/robotCamLink';
 import { camLinkSettings } from '../services/camLinkSettings';
 import { createAnnotatedStream, type AnnotatedStream, type OverlayBox } from '../services/nvrOverlayCompositor';
 import { RobotAvatar, type EyeInput } from './RobotAvatar';
+import { JarVoiceOrb } from './JarVoiceOrb';
 
 // Avto-salom oraliqlari
 const GREET_ANY_MS = 60 * 1000; // har qanday ikki salom orasida (yangi odam tanilsa ham) kamida 1 daqiqa
@@ -441,6 +442,15 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
       >
         <Lock className="w-4 h-4" />
       </button>
+
+      {/* JAR OVOZLI YORDAMCHI (Claude Sonnet 5.5 + Web Search + Lola TTS) */}
+      <div className="absolute bottom-5 sm:bottom-7 left-0 right-0 z-30 flex justify-center pointer-events-auto px-4">
+        <JarVoiceOrb
+          onSpeechLevel={(level) => {
+            eyeInputRef.current.speech = level;
+          }}
+        />
+      </div>
     </div>
   );
 };
