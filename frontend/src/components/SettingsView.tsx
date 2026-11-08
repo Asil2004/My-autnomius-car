@@ -14,6 +14,7 @@ import {
 import { nvrRecordingService, type NvrDiskStatus, type NvrStorageStats } from '../services/nvrRecordingService';
 import { tacticalAudio } from '../services/audioService';
 import { CamLinkCard } from './CamLinkCard';
+import { PtzCameraCard } from './PtzCameraCard';
 
 export const SettingsView: React.FC = () => {
   const { system, setRpiConfig, isSimulationMode, toggleSimulationMode } = useRobot();
@@ -85,6 +86,8 @@ export const SettingsView: React.FC = () => {
       </div>
 
       <CamLinkCard />
+
+      <PtzCameraCard />
 
       {/* Video arxiv (NVR): kamera tasviri D diskdagi papkaga 1 GB aylanma yoziladi */}
       <div className="hud-panel rounded-xl p-4 space-y-3">

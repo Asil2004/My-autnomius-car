@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kamera</title>
+<style>
+  :root{--bg:#0f1218;--panel:#181d26;--line:#262d3a;--text:#e6ebf2;--muted:#8b95a7;--accent:#3d7bfd;--ok:#2fbf71;--bad:#e5484d}
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif}
+  main{max-width:1000px;margin:0 auto;padding:16px;display:flex;flex-direction:column;gap:16px}
+  .view{position:relative;background:#000;border-radius:12px;overflow:hidden;display:flex;justify-content:center;align-items:center;min-height:240px}
+  .view img{display:block;max-width:100%;max-height:72vh;object-fit:contain}
+  .badge{position:absolute;top:10px;left:10px;padding:4px 10px;border-radius:999px;background:#000a;font-size:13px;display:flex;align-items:center;gap:6px}
+  .badge::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--bad)}
+  .badge.on::before{background:var(--ok)}
+  .controls{display:flex;flex-wrap:wrap;gap:20px;justify-content:center;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .pad{display:grid;grid-template-columns:repeat(3,64px);grid-template-rows:repeat(3,64px);gap:6px}
+  button{font:inherit;color:var(--text);background:#222937;border:1px solid var(--line);border-radius:10px;cursor:pointer}
+  button:hover{background:#2a3344}
+  .pad button{font-size:22px;touch-action:none;user-select:none;-webkit-user-select:none}
+  .pad button.active{background:var(--accent);border-color:var(--accent)}
+  .pad .stop{color:var(--bad)}
+  .side{display:flex;flex-direction:column;gap:12px;min-width:220px}
+  .side button{padding:10px 14px}
+  label{display:flex;flex-direction:column;gap:6px;color:var(--muted)}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  select{font:inherit;color:var(--text);background:#222937;border:1px solid var(--line);border-radius:8px;padding:8px}
+  .presets{display:flex;flex-wrap:wrap;gap:6px}
+  .presets button{padding:6px 10px;font-size:13px}
+  .hint{color:var(--muted);font-size:13px}
+  .note{font-size:13px;color:#f0c674;background:#f0c67414;border:1px solid #f0c67444;border-radius:8px;padding:8px 10px}
+  #msg{min-height:1.2em;font-size:13px;color:var(--bad)}
+</style>
+</head>
+<body>
+<main>
+  <div class="view">
+    <img id="video" alt="Kamera tasviri">
+    <span id="badge" class="badge">Ulanmoqda…</span>
+  </div>
+
+  <div class="controls">
+    <div class="pad" id="pad" aria-label="Kamera yo'nalishi">
+      <button data-dir="up_left" title="Yuqori-chap">↖</button>
+      <button data-dir="up" title="Yuqoriga">▲</button>
+      <button data-dir="up_right" title="Yuqori-o'ng">↗</button>
+      <button data-dir="left" title="Chapga">◀</button>
+      <button id="stopBtn" class="stop" title="To'xtatish">■</button>
+      <button data-dir="right" title="O'ngga">▶</button>
+      <button data-dir="down_left" title="Pastki-chap">↙</button>
+      <button data-dir="down" title="Pastga">▼</button>
+      <button data-dir="down_right" title="Pastki-o'ng">↘</button>
+    </div>
+
+    <div class="side">
+      <label>Ko'rinish
+        <select id="lens"><option value="">Barcha linzalar</option></select>
+      </label>
+      <label>Tezlik: <span id="speedOut">50%</span>
+        <input id="speed" type="range" min="10" max="100" step="5" value="50">
+      </label>
+      <div id="lensNote" class="note" hidden></div>
+      <button id="snapBtn">Surat olish</button>
+      <button id="savePresetBtn">Joriy holatni saqlash</button>
+      <div class="presets" id="presets"></div>
+      <div class="hint">Tugmani bosib turing — kamera buriladi, qo'yib yuborsangiz to'xtaydi. Klaviaturada strelkalar ham ishlaydi.</div>
+      <div id="msg"></div>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const img = $('video'), badge = $('badge'), msg = $('msg'), speed = $('speed'), lensSel = $('lens');
+const saved = (() => { try { return localStorage.getItem('kamera.lens') || ''; } catch { return ''; } })();
+const lensQuery = () => lensSel.value === '' ? '' : '&lens=' + lensSel.value;
+
+// ── Video ─────────────────────────────────────────────────────────────────
+function startVideo(){ img.src = 'stream?t=' + Date.now() + lensQuery(); }
+img.onerror = () => setTimeout(startVideo, 3000);
+startVideo();
+let ptzLens = 0;
+function updateLensNote(){
+  const v = lensSel.value, note = $('lensNote');
+  const fixed = v !== '' && Number(v) !== ptzLens && lensSel.options.length > 2;
+  note.hidden = !fixed;
+  if(fixed) note.textContent = `Linza ${Number(v) + 1} qo'zg'almas. Yo'nalish tugmalari faqat Linza ${ptzLens + 1} ni buradi.`;
+}
+lensSel.onchange = () => { try { localStorage.setItem('kamera.lens', lensSel.value); } catch {} startVideo(); updateLensNote(); };
+
+function fillLenses(n, ptz){
+  ptzLens = ptz ?? 0;
+  if(lensSel.options.length === n + 1 || n <= 1) return;
+  lensSel.innerHTML = '<option value="">Barcha linzalar</option>';
+  for(let i = 0; i < n; i++)
+    lensSel.add(new Option(`Linza ${i + 1}` + (i === ptzLens ? ' (buriladi)' : ' (qo\'zg\'almas)'), String(i)));
+  if(saved !== '' && Number(saved) < n){ lensSel.value = saved; startVideo(); }
+  updateLensNote();
+}
+
+async function pollStatus(){
+  try{
+    const s = await (await fetch('status', {cache:'no-store'})).json();
+    fillLenses(s.video.lenses || 1, s.ptz_lens);
+    const on = s.video.connected;
+    badge.classList.toggle('on', on);
+    badge.textContent = on ? `Jonli · ${s.video.width}×${s.video.height}` : (s.video.error || 'Ulanmoqda…');
+  }catch{ badge.classList.remove('on'); badge.textContent = 'Server bilan aloqa yo\'q'; }
+}
+pollStatus(); setInterval(pollStatus, 3000);
+
+// ── PTZ ───────────────────────────────────────────────────────────────────
+async function post(url, body){
+  const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})});
+  if(!r.ok){ const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
+  msg.textContent = '';
+  return r.json();
+}
+const showErr = e => { msg.textContent = e.message; };
+
+speed.oninput = () => { $('speedOut').textContent = speed.value + '%'; };
+
+let activeDir = null, heartbeat = null, activeBtn = null;
+function sendMove(){ if(activeDir) post('ptz/move', {direction: activeDir, speed: speed.value / 100, duration: 1.2}).catch(showErr); }
+function press(dir, btn){
+  if(activeDir === dir) return;
+  release(false);
+  activeDir = dir; activeBtn = btn; btn && btn.classList.add('active');
+  sendMove();
+  heartbeat = setInterval(sendMove, 700);   // bosib turilganda harakatni uzaytirib turadi
+}
+function release(sendStop = true){
+  if(!activeDir) return;
+  clearInterval(heartbeat); heartbeat = null;
+  activeBtn && activeBtn.classList.remove('active');
+  activeDir = null; activeBtn = null;
+  if(sendStop) post('ptz/stop').catch(showErr);
+}
+
+document.querySelectorAll('#pad button[data-dir]').forEach(btn => {
+  btn.addEventListener('pointerdown', e => { e.preventDefault(); btn.setPointerCapture(e.pointerId); press(btn.dataset.dir, btn); });
+  ['pointerup','pointercancel','lostpointercapture'].forEach(ev => btn.addEventListener(ev, () => release()));
+  btn.addEventListener('contextmenu', e => e.preventDefault());
+});
+$('stopBtn').onclick = () => { release(false); post('ptz/stop').catch(showErr); };
+
+const KEYS = {ArrowLeft:'left', ArrowRight:'right', ArrowUp:'up', ArrowDown:'down'};
+addEventListener('keydown', e => { const d = KEYS[e.key]; if(!d || e.repeat) return; e.preventDefault(); press(d, document.querySelector(`[data-dir="${d}"]`)); });
+addEventListener('keyup', e => { if(KEYS[e.key] && activeDir === KEYS[e.key]) release(); });
+addEventListener('blur', () => release());
+addEventListener('visibilitychange', () => { if(document.hidden) release(); });
+
+// ── Surat ─────────────────────────────────────────────────────────────────
+$('snapBtn').onclick = () => {
+  const a = document.createElement('a');
+  a.href = 'snapshot.jpg?t=' + Date.now() + lensQuery();
+  a.download = 'kamera_' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.jpg';
+  a.click();
+};
+
+// ── Presetlar ─────────────────────────────────────────────────────────────
+async function loadPresets(){
+  try{
+    const list = await (await fetch('ptz/presets', {cache:'no-store'})).json();
+    const box = $('presets'); box.innerHTML = '';
+    (Array.isArray(list) ? list : []).forEach(p => {
+      const b = document.createElement('button');
+      b.textContent = p.name; b.title = 'Shu holatga burish';
+      b.onclick = () => post(`ptz/presets/${encodeURIComponent(p.token)}/goto?speed=${speed.value / 100}`).catch(showErr);
+      box.appendChild(b);
+    });
+  }catch{}
+}
+$('savePresetBtn').onclick = async () => {
+  const name = prompt('Holat nomi (masalan: Eshik):');
+  if(!name) return;
+  try{ await post('ptz/presets', {name}); loadPresets(); }catch(e){ showErr(e); }
+};
+loadPresets();
+</script>
+</body>
+</html>

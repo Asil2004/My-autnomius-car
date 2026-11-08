@@ -8,6 +8,8 @@ import { loadCocoModel } from '../services/aiPreload';
 import { createAnnotatedStream, type AnnotatedStream } from '../services/nvrOverlayCompositor';
 import { nvrRecordingService, type TimelineRange, type NvrChunk, type NvrStorageStats, type NvrDiskStatus, NVR_MAX_STORAGE_BYTES } from '../services/nvrRecordingService';
 import { FloatingPanel } from './FloatingPanel';
+import { PtzLensView } from './PtzLensView';
+import { ptzCameraService, LENS, type PtzLens } from '../services/ptzCameraService';
 import { camLinkSettings } from '../services/camLinkSettings';
 import {
   robotCamBroadcaster,
@@ -63,7 +65,9 @@ import {
 } from 'lucide-react';
 
 type PanelId = 'control' | 'sensors' | 'ai' | 'ptz' | 'log';
-type CamId = 'face' | 'ptz' | 'front' | 'rear' | 'right';
+type CamId = 'face' | 'ptz' | 'front' | 'rear' | 'right' | 'left';
+// Kamera moduli (camera_server, CP-159-1) linzalari: PTZ, o'ngga va chapga qaragan
+const MODULE_LENS: Partial<Record<CamId, PtzLens>> = { ptz: LENS.ptz, right: LENS.right, left: LENS.left };
 
 // Robotdagi jami 5 ta kamera (1 tasi 360° PTZ). Qaysi biri kattalashtirilsa, qolgan 4 tasi chap tomonda kichik ko'rinadi
 // Kursorga bog'langan zoom chegaralari
@@ -72,10 +76,11 @@ const ZOOM_MAX = 8;
 
 const ALL_CAMERAS: { id: CamId; short: string; long: string }[] = [
   { id: 'face', short: 'Face ID', long: 'Face ID (Planshet)' },
-  { id: 'ptz', short: 'PTZ', long: 'PTZ 360° kamera' },
+  { id: 'ptz', short: 'PTZ', long: 'PTZ kamera' },
+  { id: 'right', short: "O'ng", long: "O'ng kamera" },
+  { id: 'left', short: 'Chap', long: 'Chap kamera' },
   { id: 'front', short: 'Old', long: 'Old kamera (RPi)' },
-  { id: 'rear', short: 'Orqa', long: 'Orqa kamera' },
-  { id: 'right', short: "O'ng", long: "O'ng kamera" }
+  { id: 'rear', short: 'Orqa', long: 'Orqa kamera' }
 ];
 
 const OPEN_KEY = 'qalqon.hud.open.v1';
@@ -1533,7 +1538,11 @@ export const HUDView: React.FC = () => {
   };
 
   const handlePtzDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    e.currentTarget.setPointerCapture(e.pointerId);
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      /* ba'zi qurilmalarda capture bo'lmasa ham joystik ishlayveradi */
+    }
     setIsPtzDragging(true);
     updatePtzVec(e);
     if (ptzIntervalRef.current) clearInterval(ptzIntervalRef.current);
@@ -1543,6 +1552,10 @@ export const HUDView: React.FC = () => {
         const dPan = Math.round((dx / 50) * 8);
         const dTilt = Math.round((-dy / 50) * 5);
         if (dPan !== 0 || dTilt !== 0) adjustPTZ(dPan, dTilt);
+        // Haqiqiy PTZ kamera (camera_server): yo'nalish va tezlik = joystik og'ishi (markazdan uzoqroq = tezroq)
+        ptzCameraService.move(dx / 50, -dy / 50);
+      } else {
+        ptzCameraService.stop(); // o'lik zona: kamera turadi
       }
     }, 90);
   };
@@ -1558,18 +1571,21 @@ export const HUDView: React.FC = () => {
       clearInterval(ptzIntervalRef.current);
       ptzIntervalRef.current = null;
     }
+    ptzCameraService.stop();
   };
 
   useEffect(() => {
     return () => {
       if (ptzIntervalRef.current) clearInterval(ptzIntervalRef.current);
+      ptzCameraService.stop();
     };
   }, []);
 
   const smallCameras = ALL_CAMERAS.filter((c) => c.id !== activeCam);
-  // PTZ aktiv bo'lganda 2 ta kamera chapda, 2 ta kamera esa o'ng tomondagi joystik tepasiga o'tadi
-  const leftCameras = activeCam === 'ptz' ? smallCameras.slice(0, 2) : smallCameras;
-  const rightCameras = activeCam === 'ptz' ? smallCameras.slice(2, 4) : [];
+  // PTZ aktiv bo'lganda kameralarning yarmi chapda, qolgani o'ng tomondagi joystik tepasiga o'tadi
+  const half = Math.ceil(smallCameras.length / 2);
+  const leftCameras = activeCam === 'ptz' ? smallCameras.slice(0, half) : smallCameras;
+  const rightCameras = activeCam === 'ptz' ? smallCameras.slice(half) : [];
 
   const renderCameraTile = (cam: (typeof ALL_CAMERAS)[0], extraClass = '') => (
     <button
@@ -1595,11 +1611,9 @@ export const HUDView: React.FC = () => {
             </span>
           )}
         </>
-      ) : cam.id === 'ptz' ? (
-        <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-tactical-900 text-police-cyan group-hover:bg-tactical-850">
-          <SlidersHorizontal className="w-5 h-5 animate-pulse text-police-cyan" />
-          <span className="text-[10px] font-mono text-slate-300 font-bold">{ptz.pan}° / {ptz.tilt}°</span>
-        </span>
+      ) : MODULE_LENS[cam.id] !== undefined ? (
+        // Kamera moduli linzalari (PTZ / o'ng / chap): jonli video
+        <PtzLensView lens={MODULE_LENS[cam.id]!} variant="tile" label={cam.long} className="absolute inset-0" />
       ) : cam.id === 'face' ? (
         <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-police-blue/15 text-police-blue">
           <Camera className="w-5 h-5 text-police-cyan" />
@@ -2003,35 +2017,26 @@ export const HUDView: React.FC = () => {
                     alt="Old kamera (RPi)"
                     className="w-full h-full object-contain bg-black"
                   />
-                ) : activeCam === 'ptz' ? (
-                  <div className="relative w-full h-full flex flex-col items-center justify-center bg-tactical-950">
-                    <div className="absolute inset-4 border border-police-cyan/25 rounded-lg flex items-center justify-center pointer-events-none">
-                      <div className="w-16 h-0.5 bg-police-cyan/40" />
-                      <div className="h-16 w-0.5 bg-police-cyan/40 absolute" />
-                      <div className="w-32 h-32 rounded-full border border-police-cyan/20 absolute" />
-                      <span className="absolute top-3 left-3 text-[11px] font-mono font-bold text-police-cyan flex items-center gap-1.5">
-                        <SlidersHorizontal className="w-3.5 h-3.5" /> 360° PTZ KAMERA (JONLI)
-                      </span>
-                      <span className="absolute top-3 right-3 text-[11px] font-mono text-police-cyan bg-police-blue/20 px-2 py-0.5 rounded border border-police-cyan/30">
-                        PAN: {ptz.pan}° | TILT: {ptz.tilt}°
-                      </span>
-                      <span className="absolute bottom-3 left-3 text-[10px] font-mono text-slate-400">
-                        REJIM: {ptz.mode === 'AUTO_CAMERA' ? 'AVTOMATIK' : "QO'LDA BOSHQARUV"}
-                      </span>
-                      <span className="absolute bottom-3 right-3 text-[10px] font-mono text-slate-400">
-                        ZOOM: {ptz.zoom}x
-                      </span>
-                    </div>
-
-                    <div className="flex flex-col items-center gap-2 z-10">
-                      <div className="p-4 rounded-full bg-police-cyan/10 border border-police-cyan/40 text-police-cyan shadow-lg shadow-police-cyan/20 animate-pulse">
-                        <SlidersHorizontal className="w-10 h-10" />
+                ) : MODULE_LENS[activeCam] !== undefined ? (
+                  // Kamera moduli linzasi katta oynada (PTZ da nishon chiziqlari va joystik holati ustida)
+                  <div className="relative w-full h-full">
+                    <PtzLensView
+                      lens={MODULE_LENS[activeCam]!}
+                      variant="main"
+                      label={ALL_CAMERAS.find((c) => c.id === activeCam)?.long ?? 'Kamera'}
+                    />
+                    {activeCam === 'ptz' && (
+                      <div className="absolute inset-4 flex items-center justify-center pointer-events-none">
+                        <div className="w-16 h-0.5 bg-police-cyan/40" />
+                        <div className="h-16 w-0.5 bg-police-cyan/40 absolute" />
+                        <div className="w-32 h-32 rounded-full border border-police-cyan/20 absolute" />
+                        {isPtzDragging && (
+                          <span className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[11px] font-mono font-bold text-police-cyan bg-black/60 px-2 py-0.5 rounded">
+                            PTZ: {ptzKnob.x > 8 ? "O'ngga" : ptzKnob.x < -8 ? 'Chapga' : ''} {ptzKnob.y < -8 ? 'Yuqoriga' : ptzKnob.y > 8 ? 'Pastga' : ''}
+                          </span>
+                        )}
                       </div>
-                      <div className="text-base font-bold text-slate-100">PTZ Kamera Boshqaruv Rejimi</div>
-                      <div className="text-xs text-slate-400 max-w-sm">
-                        Chap pastdagi joystik orqali kamerani gorizontal va vertikal 360° burishingiz mumkin.
-                      </div>
-                    </div>
+                    )}
                   </div>
                 ) : (
                   <div className="flex flex-col items-center gap-2">

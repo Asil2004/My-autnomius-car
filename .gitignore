@@ -31,3 +31,4 @@ phone_screen.png
 .gemini/
 CP210x_driver/
 .claude/
+.venv/
