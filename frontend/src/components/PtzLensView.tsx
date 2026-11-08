@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { VideoOff, RefreshCw } from 'lucide-react';
-import { ptzCameraService, type PtzLens, type PtzCameraStatus } from '../services/ptzCameraService';
+import { ptzCameraService, CAMERA_ROTATED_180, type PtzLens, type PtzCameraStatus } from '../services/ptzCameraService';
 import { lensHub } from '../services/lensHub';
 
 const DRAW_FPS = 15;
@@ -71,7 +71,14 @@ export const PtzLensView: React.FC<{
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, cw, ch);
       try {
+        if (CAMERA_ROTATED_180) {
+          // Kamera teskari o'rnatilgan: kadrni 180° aylantirib chizamiz
+          ctx.save();
+          ctx.translate(cw, ch);
+          ctx.rotate(Math.PI);
+        }
         ctx.drawImage(src, 0, sy, sw, sh, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
+        if (CAMERA_ROTATED_180) ctx.restore();
       } catch {
         return; // kadr hali dekodlanmagan
       }

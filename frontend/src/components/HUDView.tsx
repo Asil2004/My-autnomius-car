@@ -9,7 +9,7 @@ import { createAnnotatedStream, type AnnotatedStream } from '../services/nvrOver
 import { nvrRecordingService, type TimelineRange, type NvrChunk, type NvrStorageStats, type NvrDiskStatus, NVR_MAX_STORAGE_BYTES } from '../services/nvrRecordingService';
 import { FloatingPanel } from './FloatingPanel';
 import { PtzLensView } from './PtzLensView';
-import { ptzCameraService, LENS, type PtzLens } from '../services/ptzCameraService';
+import { ptzCameraService, LENS, CAMERA_ROTATED_180, type PtzLens } from '../services/ptzCameraService';
 import { camLinkSettings } from '../services/camLinkSettings';
 import {
   robotCamBroadcaster,
@@ -1551,8 +1551,9 @@ export const HUDView: React.FC = () => {
         const dTilt = Math.round((-dy / 50) * 5);
         if (dPan !== 0 || dTilt !== 0) adjustPTZ(dPan, dTilt);
         // Haqiqiy PTZ kamera (camera_server): yo'nalish va tezlik = joystik og'ishi (markazdan uzoqroq = tezroq)
-        // Y o'qi teskari (operator talabi): joystik yuqoriga -> kamera pastga va aksincha
-        ptzCameraService.move(dx / 50, dy / 50);
+        // Kamera teskari o'rnatilgan va tasvir 180° aylantirib ko'rsatiladi: joystik ekrandagi tasvir bo'yicha
+        // ishlashi uchun ikkala o'q kameraning o'z koordinatasida teskari (o'ngga -> pan manfiy, yuqoriga -> tilt manfiy)
+        ptzCameraService.move(CAMERA_ROTATED_180 ? -dx / 50 : dx / 50, dy / 50);
       } else {
         ptzCameraService.stop(); // o'lik zona: kamera turadi
       }

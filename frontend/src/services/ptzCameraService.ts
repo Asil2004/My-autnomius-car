@@ -8,6 +8,12 @@
  */
 
 export type PtzLens = 0 | 1 | 2;
+
+/**
+ * Kamera robotga teskari (180°) o'rnatilgan: HUD da uchala linza tasviri 180° aylantirib chiziladi.
+ * Shunda joystik yo'nalishlari ham ekrandagi (to'g'rilangan) tasvirga mos bo'lishi uchun pan teskari yuboriladi.
+ */
+export const CAMERA_ROTATED_180 = true;
 export const LENS = { ptz: 0, right: 1, left: 2 } as const;
 
 const BASE_KEY = 'qalqon.ptzCameraBase.v1';
