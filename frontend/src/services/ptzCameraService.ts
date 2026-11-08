@@ -71,9 +71,14 @@ class PtzCameraService {
     };
   }
 
-  /** MJPEG jonli video manzili. nonce o'zgarsa brauzer qayta ulanadi */
+  /** Bitta linzaning MJPEG manzili. nonce o'zgarsa brauzer qayta ulanadi */
   streamUrl(lens: PtzLens, nonce = 0) {
     return `${this.base}/stream?lens=${lens}&r=${nonce}`;
+  }
+
+  /** Butun kadr (barcha linzalar ustma-ust) MJPEG manzili: HUD barcha oynalar uchun bitta ulanish ishlatadi */
+  fullStreamUrl(nonce = 0) {
+    return `${this.base}/stream?r=${nonce}`;
   }
 
   // ---------------------------------------------------------------------------

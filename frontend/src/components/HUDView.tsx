@@ -78,9 +78,7 @@ const ALL_CAMERAS: { id: CamId; short: string; long: string }[] = [
   { id: 'face', short: 'Face ID', long: 'Face ID (Planshet)' },
   { id: 'ptz', short: 'PTZ', long: 'PTZ kamera' },
   { id: 'right', short: "O'ng", long: "O'ng kamera" },
-  { id: 'left', short: 'Chap', long: 'Chap kamera' },
-  { id: 'front', short: 'Old', long: 'Old kamera (RPi)' },
-  { id: 'rear', short: 'Orqa', long: 'Orqa kamera' }
+  { id: 'left', short: 'Chap', long: 'Chap kamera' }
 ];
 
 const OPEN_KEY = 'qalqon.hud.open.v1';
@@ -1553,7 +1551,8 @@ export const HUDView: React.FC = () => {
         const dTilt = Math.round((-dy / 50) * 5);
         if (dPan !== 0 || dTilt !== 0) adjustPTZ(dPan, dTilt);
         // Haqiqiy PTZ kamera (camera_server): yo'nalish va tezlik = joystik og'ishi (markazdan uzoqroq = tezroq)
-        ptzCameraService.move(dx / 50, -dy / 50);
+        // Y o'qi teskari (operator talabi): joystik yuqoriga -> kamera pastga va aksincha
+        ptzCameraService.move(dx / 50, dy / 50);
       } else {
         ptzCameraService.stop(); // o'lik zona: kamera turadi
       }
@@ -1582,10 +1581,9 @@ export const HUDView: React.FC = () => {
   }, []);
 
   const smallCameras = ALL_CAMERAS.filter((c) => c.id !== activeCam);
-  // PTZ aktiv bo'lganda kameralarning yarmi chapda, qolgani o'ng tomondagi joystik tepasiga o'tadi
-  const half = Math.ceil(smallCameras.length / 2);
-  const leftCameras = activeCam === 'ptz' ? smallCameras.slice(0, half) : smallCameras;
-  const rightCameras = activeCam === 'ptz' ? smallCameras.slice(half) : [];
+  // PTZ aktiv bo'lganda (joystik chiqqanda) Face ID o'ng tomondagi bo'sh joyga o'tadi, O'ng va Chap chapda qoladi
+  const leftCameras = activeCam === 'ptz' ? smallCameras.filter((c) => c.id !== 'face') : smallCameras;
+  const rightCameras = activeCam === 'ptz' ? smallCameras.filter((c) => c.id === 'face') : [];
 
   const renderCameraTile = (cam: (typeof ALL_CAMERAS)[0], extraClass = '') => (
     <button
@@ -2376,8 +2374,7 @@ export const HUDView: React.FC = () => {
           {rightCameras.length > 0 && (
             <div className="w-full flex flex-col gap-2 mb-2 pb-2 border-b border-tactical-700/80 animate-in fade-in zoom-in-95 duration-200">
               <div className="text-[10px] font-mono text-slate-400 flex items-center justify-between px-0.5">
-                <span className="font-semibold text-police-cyan">QO'SHIMCHA KAMERALAR</span>
-                <span className="text-[9px] bg-tactical-800 px-1.5 py-0.5 rounded text-slate-300">2 ta</span>
+                <span className="font-semibold text-police-cyan">FACE ID KAMERA</span>
               </div>
               <div className="flex flex-col gap-2 w-full">
                 {rightCameras.map((cam) => renderCameraTile(cam, 'w-full shadow-md'))}

@@ -47,7 +47,8 @@ Step '3/4 APK build (gradle assembleDebug)'
 if (Test-Path $JavaHome) { $env:JAVA_HOME = $JavaHome }
 Push-Location $android
 try {
-  .\gradlew.bat assembleDebug --console=plain
+  # --no-daemon: fonda qoladigan Gradle daemon chaqiruvchining chiqish oqimini ochiq ushlab, skriptni "osiltirmasin"
+  .\gradlew.bat assembleDebug --console=plain --no-daemon
   if ($LASTEXITCODE -ne 0) { throw 'Gradle build xato' }
 } finally { Pop-Location }
 Write-Host "APK: $apk ($([math]::Round((Get-Item $apk).Length / 1MB, 1)) MB)"
@@ -57,6 +58,9 @@ if ($NoInstall) { Write-Host "`nO'rnatish o'tkazib yuborildi (-NoInstall)."; exi
 Step "4/4 Planshetga o'rnatish"
 if (-not (Test-Path $Adb)) { throw "adb topilmadi: $Adb" }
 $ErrorActionPreference = 'Continue'
+# adb serverini alohida (handle meros qilmaydigan) jarayonda ishga tushiramiz: aks holda fonda qoladigan adb
+# server skript chiqishini ochiq ushlab, chaqiruvchi tugashini kutib qolardi
+Start-Process -FilePath $Adb -ArgumentList 'start-server' -WindowStyle Hidden -Wait
 $devices = & $Adb devices | Select-String -Pattern '\tdevice$'
 if (-not $devices) { throw "Planshet ulanmagan yoki USB debugging ruxsati berilmagan (adb devices)" }
 
