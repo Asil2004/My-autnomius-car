@@ -187,6 +187,15 @@ class EdgeTtsService {
   ): void {
     if (!text || !text.trim()) return;
 
+    // jar normalizatsiyasi: markdown va noo'rin belgilarni tozalash
+    text = text
+      .replace(/[*_#`>~\[\]()]+/g, ' ')
+      .replace(/https?:\/\/\S+/g, '')
+      .replace(/['`’‘]/g, "'")
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!text) return;
+
     this.stop();
     const gen = this.generation;
 

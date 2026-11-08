@@ -43,8 +43,8 @@ const char* mqttTopic  = "qalqon/robot/cmd";   // Masofaviy buyruqlar mavzusi
 // 1. WI-FI SOZLAMALARI (PLANSHET HOTSPOT MA'LUMOTLARI)
 // ==============================================================================
 // Planshetingizda "Kirish nuqtasi" (Tochka dostupa / Hotspot) nomi va parolini kiriting:
-const char* ssid     = "Qalqon_Hotspot";   // Planshet Hotspot nomi
-const char* password = "12345678";         // Planshet Hotspot paroli (kamida 8 belgi)
+const char* ssid     = "qalqon1";   // Planshet Hotspot nomi
+const char* password = "12345679";         // Planshet Hotspot paroli (kamida 8 belgi)
 
 // WebServer porti (Standart HTTP - 80)
 WebServer server(80);

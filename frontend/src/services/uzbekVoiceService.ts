@@ -18,12 +18,12 @@ export interface UzbekVoiceConfig {
 
 const STORAGE_KEY = 'qalqon_uzbekvoice_api_key';
 const ENDPOINT_KEY = 'qalqon_uzbekvoice_endpoint';
-export const DEFAULT_UZBEKVOICE_API_KEY = '4a3c6d14-77b1-4758-852a-70468a800e3b:a3a4bd8a-7f6d-4a4c-81ad-7ce2af0db63c';
+export const DEFAULT_UZBEKVOICE_API_KEY = '7d1160ed-180a-4107-a1d0-5aafaa492964:4e3f03b5-9c42-4da6-9d3d-da889e63c40d';
 
 const UZBEKVOICE_TTS_ENDPOINT = 'https://uzbekvoice.ai/api/v1/tts';
 // Erkak ovozi. Kalit tarifida bo'lmasa server o'zi boshqa ovoz (hozir "lola") bilan almashtiradi;
 // tarifda yoqilganda kodni o'zgartirmasdan erkak ovozi chiqadi.
-export const UZBEKVOICE_TTS_MODEL = 'jasur';
+export const UZBEKVOICE_TTS_MODEL = 'lola';
 
 /** TTS audio manzillari keshi (manzil serverda 4 kun amal qiladi, biz 3 kun saqlaymiz) */
 const ttsCache = (() => {
@@ -83,6 +83,11 @@ class UzbekVoiceService {
   public getApiKey(): string {
     if (typeof window === 'undefined') return DEFAULT_UZBEKVOICE_API_KEY;
     const saved = localStorage.getItem(STORAGE_KEY);
+    // Eski/muddati o'tgan kalit bo'lsa yangi jar kalitiga avtomatik almashtirish
+    if (saved === '7d1160ed-180a-4107-a1d0-5aafaa492964:4e3f03b5-9c42-4da6-9d3d-da889e63c40d') {
+      localStorage.setItem(STORAGE_KEY, DEFAULT_UZBEKVOICE_API_KEY);
+      return DEFAULT_UZBEKVOICE_API_KEY;
+    }
     return saved !== null && saved !== '' ? saved : DEFAULT_UZBEKVOICE_API_KEY;
   }
 
@@ -258,7 +263,13 @@ class UzbekVoiceService {
    * Bir xil matn qayta so'ralmaydi: manzil 3 kun keshda saqlanadi.
    */
   public async synthesize(text: string, model: string = UZBEKVOICE_TTS_MODEL): Promise<string> {
-    const clean = text.trim();
+    // jar/lola spetsifikatsiyasi: markdown, havolalar va belgilarni tozalash
+    const clean = text
+      .replace(/[*_#`>~\[\]()]+/g, ' ')
+      .replace(/https?:\/\/\S+/g, '')
+      .replace(/['`’‘]/g, "'")
+      .replace(/\s+/g, ' ')
+      .trim();
     const cacheKey = `${model}|${clean}`;
     const cached = ttsCache.get(cacheKey);
     if (cached) {
