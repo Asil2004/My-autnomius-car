@@ -820,86 +820,13 @@ export const GoogleMapsPatrolView: React.FC = () => {
           </div>
         </div>
 
-        {/* DEMO PATROL CONTROLS */}
-        {mode === 'demo' && (
-          <div className="bg-tactical-950/90 border border-tactical-800/80 backdrop-blur-md rounded-xl p-3 shadow-xl flex flex-col gap-2">
-            <div className="text-[10px] font-mono font-bold text-police-cyan uppercase tracking-wider flex items-center justify-between">
-              <span>Demo Avtonom Navigatsiya</span>
-              <span className={`text-[10px] font-bold ${isPatrolling ? 'text-emerald-400' : 'text-amber-400'}`}>
-                {isPatrolling ? 'FAOL PATRUL' : 'KUTISHDA'}
-              </span>
-            </div>
-
-            <div className="bg-tactical-900/90 border border-tactical-800 rounded p-2 text-[10px] font-mono flex flex-col gap-1">
-              <div className="flex justify-between items-center">
-                <span className="text-slate-400">Marshrut:</span>
-                <span className="text-police-cyan font-bold">{waypoints.length} ta waypoint</span>
-              </div>
-              <div className="text-emerald-400 font-bold truncate">{routingStatus}</div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-1.5">
-              <button
-                onClick={startPatrol}
-                disabled={isPatrolling}
-                className="py-2 px-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded font-mono text-xs font-bold flex items-center justify-center gap-1.5 shadow transition-all"
-              >
-                <Play className="w-3.5 h-3.5 fill-white" />
-                Patrulni Boshlash
-              </button>
-              <button
-                onClick={stopPatrol}
-                disabled={!isPatrolling}
-                className="py-2 px-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded font-mono text-xs font-bold flex items-center justify-center gap-1.5 shadow transition-all"
-              >
-                <Square className="w-3.5 h-3.5 fill-white" />
-                To'xtatish
-              </button>
-            </div>
-
-            {/* HAQIQIY GPS AVTOPILOT */}
-            {!isOperator && (
-              <div className="border border-emerald-500/40 bg-emerald-950/30 rounded-lg p-2 flex flex-col gap-1.5">
-                <div className="text-[10px] font-mono font-bold text-emerald-300 uppercase tracking-wider flex items-center justify-between">
-                  <span>GPS Avtopilot (ESP32)</span>
-                  <span className={ap.active ? 'text-emerald-400' : ap.phase === 'arrived' ? 'text-sky-300' : ap.phase === 'failed' ? 'text-rose-400' : 'text-slate-400'}>
-                    {ap.active ? `YURMOQDA · ${ap.command}` : ap.phase === 'arrived' ? 'YETDI' : ap.phase === 'failed' ? "TO'XTADI" : "O'CHIQ"}
-                  </span>
-                </div>
-                <div className={`text-[10px] font-mono font-bold ${ap.phase === 'obstacle-stop' || ap.phase === 'failed' ? 'text-rose-300' : ap.phase.startsWith('waiting') ? 'text-amber-300' : 'text-emerald-200'}`}>
-                  {ap.message}
-                </div>
-                {ap.active && (
-                  <div className="grid grid-cols-3 gap-1 text-[10px] font-mono text-slate-300">
-                    <span>Nuqta: {ap.targetIndex + 1}/{ap.total}</span>
-                    <span>Qoldi: {ap.distanceToEndM < 1000 ? `${Math.round(ap.distanceToEndM)} m` : `${(ap.distanceToEndM / 1000).toFixed(2)} km`}</span>
-                    <span>Xato: {ap.bearingErrorDeg}°</span>
-                  </div>
-                )}
-                {ap.active ? (
-                  <button
-                    onClick={() => autopilotService.stop('Operator to‘xtatdi')}
-                    className="w-full py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded font-mono text-sm font-black flex items-center justify-center gap-1.5 shadow"
-                  >
-                    <Square className="w-4 h-4 fill-white" />
-                    AVTOPILOTNI TO'XTATISH
-                  </button>
-                ) : (
-                  <button
-                    onClick={startAutopilot}
-                    disabled={waypoints.length < 1}
-                    className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded font-mono text-xs font-bold flex items-center justify-center gap-1.5 shadow"
-                  >
-                    <Navigation className="w-3.5 h-3.5" />
-                    Manzilga haqiqiy yurish
-                  </button>
-                )}
-                <div className="text-[9px] font-mono text-slate-400 leading-snug">
-                  Planshet GPS + giroskop bo'yicha ESP32'ga buyruq beradi. To'siq bo'lsa to'xtaydi va chetlab o'tadi. Kamera tahlili uchun HUD oynasi ochiq bo'lishi kerak. Joystik yoki klaviatura avtopilotni darhol o'chiradi.
-                </div>
-              </div>
-            )}
-
+        {/* MARSHRUT VA HAQIQIY GPS AVTOPILOT: rejimdan qat'i nazar doim ko'rinadi */}
+        <div className="bg-tactical-950/90 border border-emerald-500/50 backdrop-blur-md rounded-xl p-3 shadow-xl flex flex-col gap-2">
+          <div className="text-[10px] font-mono font-bold text-emerald-300 uppercase tracking-wider flex items-center justify-between">
+            <span>Marshrut va avtopilot</span>
+            <span className="text-police-cyan">{waypoints.length} ta nuqta</span>
+          </div>
+          <div className="text-emerald-400 text-[10px] font-mono font-bold truncate">{routingStatus}</div>
             {/* Presets */}
               <button
                 onClick={goToRealGPS}
@@ -954,6 +881,87 @@ export const GoogleMapsPatrolView: React.FC = () => {
                 Markazga
               </button>
             </div>
+            {/* HAQIQIY GPS AVTOPILOT */}
+            {!isOperator && (
+              <div className="border border-emerald-500/40 bg-emerald-950/30 rounded-lg p-2 flex flex-col gap-1.5">
+                <div className="text-[10px] font-mono font-bold text-emerald-300 uppercase tracking-wider flex items-center justify-between">
+                  <span>GPS Avtopilot (ESP32)</span>
+                  <span className={ap.active ? 'text-emerald-400' : ap.phase === 'arrived' ? 'text-sky-300' : ap.phase === 'failed' ? 'text-rose-400' : 'text-slate-400'}>
+                    {ap.active ? `YURMOQDA · ${ap.command}` : ap.phase === 'arrived' ? 'YETDI' : ap.phase === 'failed' ? "TO'XTADI" : "O'CHIQ"}
+                  </span>
+                </div>
+                <div className={`text-[10px] font-mono font-bold ${ap.phase === 'obstacle-stop' || ap.phase === 'failed' ? 'text-rose-300' : ap.phase.startsWith('waiting') ? 'text-amber-300' : 'text-emerald-200'}`}>
+                  {ap.message}
+                </div>
+                {ap.active && (
+                  <div className="grid grid-cols-3 gap-1 text-[10px] font-mono text-slate-300">
+                    <span>Nuqta: {ap.targetIndex + 1}/{ap.total}</span>
+                    <span>Qoldi: {ap.distanceToEndM < 1000 ? `${Math.round(ap.distanceToEndM)} m` : `${(ap.distanceToEndM / 1000).toFixed(2)} km`}</span>
+                    <span>Xato: {ap.bearingErrorDeg}°</span>
+                  </div>
+                )}
+                {ap.active ? (
+                  <button
+                    onClick={() => autopilotService.stop('Operator to‘xtatdi')}
+                    className="w-full py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded font-mono text-sm font-black flex items-center justify-center gap-1.5 shadow"
+                  >
+                    <Square className="w-4 h-4 fill-white" />
+                    AVTOPILOTNI TO'XTATISH
+                  </button>
+                ) : (
+                  <button
+                    onClick={startAutopilot}
+                    disabled={waypoints.length < 1}
+                    className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded font-mono text-xs font-bold flex items-center justify-center gap-1.5 shadow"
+                  >
+                    <Navigation className="w-3.5 h-3.5" />
+                    Manzilga haqiqiy yurish
+                  </button>
+                )}
+                <div className="text-[9px] font-mono text-slate-400 leading-snug">
+                  Planshet GPS + giroskop bo'yicha ESP32'ga buyruq beradi. To'siq bo'lsa to'xtaydi va chetlab o'tadi. Kamera tahlili uchun HUD oynasi ochiq bo'lishi kerak. Joystik yoki klaviatura avtopilotni darhol o'chiradi.
+                </div>
+              </div>
+            )}
+        </div>
+
+        {/* DEMO PATROL CONTROLS */}
+        {mode === 'demo' && (
+          <div className="bg-tactical-950/90 border border-tactical-800/80 backdrop-blur-md rounded-xl p-3 shadow-xl flex flex-col gap-2">
+            <div className="text-[10px] font-mono font-bold text-police-cyan uppercase tracking-wider flex items-center justify-between">
+              <span>Demo Avtonom Navigatsiya</span>
+              <span className={`text-[10px] font-bold ${isPatrolling ? 'text-emerald-400' : 'text-amber-400'}`}>
+                {isPatrolling ? 'FAOL PATRUL' : 'KUTISHDA'}
+              </span>
+            </div>
+
+            <div className="bg-tactical-900/90 border border-tactical-800 rounded p-2 text-[10px] font-mono flex flex-col gap-1">
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400">Marshrut:</span>
+                <span className="text-police-cyan font-bold">{waypoints.length} ta waypoint</span>
+              </div>
+              <div className="text-emerald-400 font-bold truncate">{routingStatus}</div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-1.5">
+              <button
+                onClick={startPatrol}
+                disabled={isPatrolling}
+                className="py-2 px-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded font-mono text-xs font-bold flex items-center justify-center gap-1.5 shadow transition-all"
+              >
+                <Play className="w-3.5 h-3.5 fill-white" />
+                Patrulni Boshlash
+              </button>
+              <button
+                onClick={stopPatrol}
+                disabled={!isPatrolling}
+                className="py-2 px-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded font-mono text-xs font-bold flex items-center justify-center gap-1.5 shadow transition-all"
+              >
+                <Square className="w-3.5 h-3.5 fill-white" />
+                To'xtatish
+              </button>
+            </div>
+
           </div>
         )}
 
