@@ -1290,17 +1290,30 @@ export const HUDView: React.FC = () => {
     }
   }, [aiEnabled, cameraSource, mirrorVideo, setDetectedObjects, updateCameraObstacle]);
 
-  // Deteksiya sikli (har ~120ms da bir kadr tekshiriladi)
+  // Deteksiya sikli. Har tekshiruvdan keyin kamida o'sha tekshiruv davomiyligicha (min 150 ms) dam beriladi:
+  // planshetda bitta tekshiruv ~150 ms davom etadi va to'xtovsiz sikl interfeys va kamera tasvirini qotirardi
   useEffect(() => {
-    let intervalId: number | null = null;
+    let timer: number | null = null;
+    let stopped = false;
     // Operator kompyuterida aniqlash ishlamaydi: ramkalar robot planshetidan tayyor holda keladi
     if (cameraSource === 'FRONTAL' && aiEnabled && !isViewer) {
-      intervalId = window.setInterval(() => {
-        detectFrame();
-      }, 120);
+      const loop = async () => {
+        if (stopped) return;
+        const t0 = performance.now();
+        try {
+          await detectFrame();
+        } catch {
+          /* bitta kadr xatosi siklni to'xtatmaydi */
+        }
+        if (stopped) return;
+        const took = performance.now() - t0;
+        timer = window.setTimeout(loop, Math.max(150, took));
+      };
+      timer = window.setTimeout(loop, 150);
     }
     return () => {
-      if (intervalId) clearInterval(intervalId);
+      stopped = true;
+      if (timer) clearTimeout(timer);
     };
   }, [cameraSource, aiEnabled, detectFrame, isViewer]);
 

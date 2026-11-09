@@ -28,8 +28,9 @@ import java.util.List;
  */
 public class UsbWebcam implements USBMonitor.OnDeviceConnectListener, IFrameCallback {
     private static final String TAG = "QalqonWebcam";
-    // Yuz tanish uchun 1280x720 (past o'lchamda yuz kichik chiqib, descriptor noaniq bo'ladi)
-    private static final int W = 1280, H = 720;
+    // 640x480: planshet protsessori 1280x720 ni (dekodlash + JPEG + brauzerda yuz aniqlash) qotib ulgurmasdi
+    private static final int W = 640, H = 480;
+    private static final int FPS = 15;
     private static final long MIN_FRAME_MS = 60; // ~15 fps
 
     private static UsbWebcam instance;
@@ -133,7 +134,12 @@ public class UsbWebcam implements USBMonitor.OnDeviceConnectListener, IFrameCall
             }
             // O'lcham turi (size.type): UVC_VS_FRAME_MJPEG (7) yoki UVC_VS_FRAME_UNCOMPRESSED (5)
             Size chosen = pickSize(cam);
-            if (chosen != null) cam.setPreviewSize(chosen);
+            if (chosen != null) {
+                // Kamera 15 kadr/s da ishlaydi: dekodlash va konvertatsiya yarmiga kamayadi (Face ID uchun yetarli)
+                chosen = chosen.clone();
+                if (chosen.fpsList != null && chosen.fpsList.contains(FPS)) chosen.fps = FPS;
+                cam.setPreviewSize(chosen);
+            }
             else cam.setPreviewSize(W, H, UVCCamera.UVC_VS_FRAME_MJPEG);
             Size ps = cam.getPreviewSize();
             width = ps != null ? ps.width : W;
@@ -242,7 +248,7 @@ public class UsbWebcam implements USBMonitor.OnDeviceConnectListener, IFrameCall
         frame.get(nv21, 0, need);
         ByteArrayOutputStream out = new ByteArrayOutputStream(need / 6);
         new YuvImage(nv21, android.graphics.ImageFormat.NV21, width, height, null)
-            .compressToJpeg(new Rect(0, 0, width, height), 75, out);
+            .compressToJpeg(new Rect(0, 0, width, height), 70, out);
         synchronized (lock) {
             jpeg = out.toByteArray();
             frameId++;

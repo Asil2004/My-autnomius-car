@@ -25,6 +25,16 @@ export interface ApkWebcamStatus {
  * operatorlarga uzatish hech o'zgarishsiz ishlaydi. track.stop() chaqirilganda oqim ulanishi ham yopiladi.
  */
 async function openApkWebcam(fps = 15): Promise<MediaStream> {
+  // Asosiy yo'l: hamma ish fon oqimida (Worker + MediaStreamTrackGenerator), yuz aniqlash tasvirni qotirmaydi
+  const Gen = (window as unknown as { MediaStreamTrackGenerator?: new (o: { kind: 'video' }) => MediaStreamTrack & { writable: WritableStream } })
+    .MediaStreamTrackGenerator;
+  if (Gen) {
+    try {
+      return await openApkWebcamWorker(Gen);
+    } catch {
+      /* quyidagi canvas usuliga qaytamiz */
+    }
+  }
   const release = usbWebcamHub.acquire();
   try {
     // Birinchi kadrni kutish (4 s)
@@ -95,6 +105,44 @@ function ensureApkWatch() {
     if (apkConnected !== null && now !== apkConnected) listeners.forEach((l) => l(c));
     apkConnected = now;
   }, 3000);
+}
+
+async function openApkWebcamWorker(
+  Gen: new (o: { kind: 'video' }) => MediaStreamTrack & { writable: WritableStream }
+): Promise<MediaStream> {
+  const track = new Gen({ kind: 'video' });
+  const worker = new Worker(new URL('./webcamWorker.ts', import.meta.url), { type: 'module' });
+  const url = `${ptzCameraService.getBase()}/webcam/stream?_=${Date.now()}`;
+  worker.postMessage({ url, writable: track.writable }, [track.writable as unknown as Transferable]);
+  const cleanup = () => {
+    worker.postMessage({ type: 'stop' });
+    window.setTimeout(() => worker.terminate(), 500);
+  };
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const t = window.setTimeout(() => reject(new Error("Web-kameradan kadr kelmadi")), 4000);
+      worker.onmessage = (e) => {
+        if (e.data?.type === 'frame') {
+          window.clearTimeout(t);
+          resolve();
+        }
+      };
+      worker.onerror = (e) => {
+        window.clearTimeout(t);
+        reject(new Error(e.message));
+      };
+    });
+  } catch (e) {
+    cleanup();
+    track.stop();
+    throw e;
+  }
+  const origStop = track.stop.bind(track);
+  track.stop = () => {
+    cleanup();
+    origStop();
+  };
+  return new MediaStream([track]);
 }
 
 export interface CameraOption {
