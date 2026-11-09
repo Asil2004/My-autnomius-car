@@ -16,6 +16,7 @@ import type {
 import { tacticalAudio } from '../services/audioService';
 import { headingService } from '../services/headingService';
 import { navigationService } from '../services/navigationService';
+import { autopilotService } from '../services/autopilotService';
 
 export interface LogMessage {
   id: string;
@@ -580,6 +581,10 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Mecanum Command Handler (ESP32 MQTT + Heartbeat + Local Fallback)
   const sendMecanumCommand = useCallback((cmd: MecanumCommand) => {
+    // Qo'lda buyruq (joystik, klaviatura, ovoz) GPS avtopilotni darhol bekor qiladi
+    if (!autopilotService.isSending() && autopilotService.getState().active) {
+      autopilotService.stop('Qo‘lda boshqaruv: avtopilot o‘chirildi');
+    }
     setLastCommand(cmd);
     setIsMoving(cmd !== 'S');
 
@@ -904,6 +909,30 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     },
     [addLog, isSimulationMode, system.rpiIp, system.rpiPort]
   );
+
+  // GPS avtopilot: ESP32 buyrug'i va to'siq ma'lumoti (kamera + sonar) shu kontekstdan olinadi
+  const sendCmdRef = useRef(sendMecanumCommand);
+  sendCmdRef.current = sendMecanumCommand;
+  const obstacleRef = useRef({ cameraObstacle, sonars });
+  obstacleRef.current = { cameraObstacle, sonars };
+  useEffect(() => {
+    autopilotService.setDriver((cmd) => sendCmdRef.current(cmd));
+    autopilotService.setObstacleProvider(() => {
+      const { cameraObstacle: c, sonars: s } = obstacleRef.current;
+      return {
+        distanceCm: c.distanceCm,
+        label: c.label,
+        evasion: c.evasionDirection,
+        cameraT: lastCameraObstacleUpdateRef.current,
+        sonarFrontCm: s.front
+      };
+    });
+    return () => {
+      autopilotService.stop();
+      autopilotService.setDriver(null);
+      autopilotService.setObstacleProvider(null);
+    };
+  }, []);
 
   const setRpiConfig = (ip: string, port: number) => {
     setSystem((prev) => ({ ...prev, rpiIp: ip, rpiPort: port }));

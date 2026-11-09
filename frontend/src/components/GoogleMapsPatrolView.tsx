@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { autopilotService, type AutopilotState } from '../services/autopilotService';
 import {
   Layers,
   Play,
@@ -343,6 +344,7 @@ export const GoogleMapsPatrolView: React.FC = () => {
       patrolIntervalRef.current = null;
     }
     setIsPatrolling(false);
+    if (autopilotService.getState().active) autopilotService.stop('Marshrut o‘chirildi');
     waypointsRef.current = [];
     removePreview();
 
@@ -555,6 +557,19 @@ export const GoogleMapsPatrolView: React.FC = () => {
   }, []);
   stopPatrolRef.current = stopPatrol;
 
+  // HAQIQIY GPS AVTOPILOT (ESP32): chizilgan marshrut bo'ylab robotni haqiqatan yurgizadi
+  const [ap, setAp] = useState<AutopilotState>(() => autopilotService.getState());
+  useEffect(() => autopilotService.subscribe(setAp), []);
+  const startAutopilot = useCallback(() => {
+    if (waypointsRef.current.length < 1) {
+      setRoutingStatus("Avval \"Marshrut chizish\" bilan manzil (kamida 1 nuqta) belgilang.");
+      return;
+    }
+    if (drawModeRef.current) setDrawing(false);
+    stopPatrol();
+    autopilotService.start(waypointsRef.current);
+  }, [setDrawing, stopPatrol]);
+
   // Raspberry Pi WebSocket Connection
   const togglePiConnection = useCallback(() => {
     if (isConnectedPi) {
@@ -693,6 +708,11 @@ export const GoogleMapsPatrolView: React.FC = () => {
     });
     map.on('mousemove', (e: L.LeafletMouseEvent) => updatePreview(e.latlng));
     map.on('mouseout', () => removePreview());
+
+    // Avtopilot yurayotgan bo'lsa (xarita qayta ochildi), uning marshrutini xaritaga qaytarish
+    if (autopilotService.getState().active && waypointsRef.current.length === 0) {
+      autopilotService.getRoute().forEach((p) => addWaypoint(p.lat, p.lon));
+    }
 
     // Invalidate size to guarantee full container rendering (test marshruti endi avtomatik yuklanmaydi)
     setTimeout(() => {
@@ -836,6 +856,49 @@ export const GoogleMapsPatrolView: React.FC = () => {
                 To'xtatish
               </button>
             </div>
+
+            {/* HAQIQIY GPS AVTOPILOT */}
+            {!isOperator && (
+              <div className="border border-emerald-500/40 bg-emerald-950/30 rounded-lg p-2 flex flex-col gap-1.5">
+                <div className="text-[10px] font-mono font-bold text-emerald-300 uppercase tracking-wider flex items-center justify-between">
+                  <span>GPS Avtopilot (ESP32)</span>
+                  <span className={ap.active ? 'text-emerald-400' : ap.phase === 'arrived' ? 'text-sky-300' : ap.phase === 'failed' ? 'text-rose-400' : 'text-slate-400'}>
+                    {ap.active ? `YURMOQDA · ${ap.command}` : ap.phase === 'arrived' ? 'YETDI' : ap.phase === 'failed' ? "TO'XTADI" : "O'CHIQ"}
+                  </span>
+                </div>
+                <div className={`text-[10px] font-mono font-bold ${ap.phase === 'obstacle-stop' || ap.phase === 'failed' ? 'text-rose-300' : ap.phase.startsWith('waiting') ? 'text-amber-300' : 'text-emerald-200'}`}>
+                  {ap.message}
+                </div>
+                {ap.active && (
+                  <div className="grid grid-cols-3 gap-1 text-[10px] font-mono text-slate-300">
+                    <span>Nuqta: {ap.targetIndex + 1}/{ap.total}</span>
+                    <span>Qoldi: {ap.distanceToEndM < 1000 ? `${Math.round(ap.distanceToEndM)} m` : `${(ap.distanceToEndM / 1000).toFixed(2)} km`}</span>
+                    <span>Xato: {ap.bearingErrorDeg}°</span>
+                  </div>
+                )}
+                {ap.active ? (
+                  <button
+                    onClick={() => autopilotService.stop('Operator to‘xtatdi')}
+                    className="w-full py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded font-mono text-sm font-black flex items-center justify-center gap-1.5 shadow"
+                  >
+                    <Square className="w-4 h-4 fill-white" />
+                    AVTOPILOTNI TO'XTATISH
+                  </button>
+                ) : (
+                  <button
+                    onClick={startAutopilot}
+                    disabled={waypoints.length < 1}
+                    className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded font-mono text-xs font-bold flex items-center justify-center gap-1.5 shadow"
+                  >
+                    <Navigation className="w-3.5 h-3.5" />
+                    Manzilga haqiqiy yurish
+                  </button>
+                )}
+                <div className="text-[9px] font-mono text-slate-400 leading-snug">
+                  Planshet GPS + giroskop bo'yicha ESP32'ga buyruq beradi. To'siq bo'lsa to'xtaydi va chetlab o'tadi. Kamera tahlili uchun HUD oynasi ochiq bo'lishi kerak. Joystik yoki klaviatura avtopilotni darhol o'chiradi.
+                </div>
+              </div>
+            )}
 
             {/* Presets */}
               <button
