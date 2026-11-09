@@ -10,6 +10,7 @@ import { edgeTtsService } from '../services/edgeTtsService';
 import { nvrRecordingService } from '../services/nvrRecordingService';
 import { robotCamBroadcaster } from '../services/robotCamLink';
 import { camLinkSettings } from '../services/camLinkSettings';
+import { faceCameraSettings } from '../services/faceCameraSettings';
 import { createAnnotatedStream, type AnnotatedStream, type OverlayBox } from '../services/nvrOverlayCompositor';
 import { RobotAvatar, type EyeInput } from './RobotAvatar';
 import { JarVoiceOrb } from './JarVoiceOrb';
@@ -33,6 +34,8 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
 
   // Kamera va avto-salom AI & Avtonom bo'limida sozlanadi (bosh sahifada boshqaruv elementlari yo'q)
   const [cameraActive, setCameraActive] = useState<boolean>(() => faceViewSettings.get().cameraEnabled);
+  const [faceCamChoice, setFaceCamChoice] = useState(() => faceCameraSettings.get());
+  useEffect(() => faceCameraSettings.subscribe(setFaceCamChoice), []);
   const [camRole, setCamRole] = useState(() => camLinkSettings.get().role);
   useEffect(() => camLinkSettings.subscribe((s) => setCamRole(s.role)), []);
   const isSpeakingRef = useRef(false);
@@ -199,14 +202,8 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
     const startCamera = async () => {
       try {
         // Operator HUD bilan bir xil o'lcham: past o'lchamda yuz kichik chiqib, descriptor noaniq bo'lardi
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: 'user',
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          },
-          audio: false
-        });
+        // Sozlamalarda tanlangan Face ID kamerasi (frontal yoki USB web-kamera)
+        stream = await faceCameraSettings.open();
 
         if (cancelled) {
           // Kamera ochilguncha effekt tozalangan (kamera o'chirildi yoki sahifa almashdi)
@@ -379,7 +376,7 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
       input.hasFace = false;
       input.happy = false;
     };
-  }, [cameraActive, camRole]);
+  }, [cameraActive, camRole, faceCamChoice]);
 
   return (
     <div onClick={handleUnlockAudio} className="relative w-full h-full bg-tactical-950 overflow-hidden select-none">

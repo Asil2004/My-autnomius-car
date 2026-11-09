@@ -198,6 +198,19 @@ public class CameraHttpServer {
                 case "/camera/stream":
                     stream(sock, out, r);
                     return;
+                // USB web-kamera (Face ID manbai)
+                case "/camera/webcam/status":
+                    json(out, r, 200, webcam().statusJson());
+                    return;
+                case "/camera/webcam/snapshot.jpg": {
+                    byte[] jpg = webcam().jpeg();
+                    if (jpg == null) send(out, r, 503, "text/plain", "Web-kameradan kadr yo'q".getBytes(StandardCharsets.UTF_8));
+                    else send(out, r, 200, "image/jpeg", jpg);
+                    return;
+                }
+                case "/camera/webcam/stream":
+                    webcamStream(sock, out, r);
+                    return;
                 case "/camera/ptz/move":
                 case "/camera/ptz/stop":
                     ptz(out, r, p.endsWith("stop"));
@@ -238,6 +251,37 @@ public class CameraHttpServer {
             out.flush();
             long wait = interval - (System.currentTimeMillis() - t0);
             if (wait > 0) Thread.sleep(wait);
+        }
+    }
+
+    private UsbWebcam webcam() {
+        return UsbWebcam.get(bridge.context());
+    }
+
+    private void webcamStream(Socket sock, OutputStream out, Req r) throws IOException, InterruptedException {
+        sock.setSoTimeout(0);
+        UsbWebcam cam = webcam();
+        String head = "HTTP/1.1 200 OK\r\n" + cors(r)
+            + "Cache-Control: no-cache, no-store, must-revalidate\r\n"
+            + "Content-Type: multipart/x-mixed-replace; boundary=frame\r\nConnection: close\r\n\r\n";
+        out.write(head.getBytes(StandardCharsets.US_ASCII));
+        out.flush();
+        long last = -1;
+        while (running) {
+            long id = cam.waitNewer(last, 5000);
+            if (id == last) {
+                // Kadr yo'q (kamera uzilgan): ulanish tirikligini tekshirish uchun bo'sh qism
+                out.write("\r\n".getBytes(StandardCharsets.US_ASCII));
+                out.flush();
+                continue;
+            }
+            last = id;
+            byte[] jpg = cam.jpeg();
+            if (jpg == null) continue;
+            out.write(("--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + jpg.length + "\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+            out.write(jpg);
+            out.write("\r\n".getBytes(StandardCharsets.US_ASCII));
+            out.flush();
         }
     }
 

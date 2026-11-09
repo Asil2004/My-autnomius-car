@@ -42,6 +42,12 @@ public class CameraService extends Service {
             startForeground(NOTIF_ID, n);
         }
         CameraBridge.get(this).start();
+        // USB web-kamera (Face ID): ulanganda avtomatik ochiladi
+        try {
+            UsbWebcam.get(this).start();
+        } catch (Throwable t) {
+            android.util.Log.w("QalqonWebcam", "USB web-kamera ishga tushmadi", t);
+        }
     }
 
     @Override
@@ -51,6 +57,7 @@ public class CameraService extends Service {
 
     @Override
     public void onDestroy() {
+        UsbWebcam.get(this).stop();
         CameraBridge.get(this).stop();
         super.onDestroy();
     }

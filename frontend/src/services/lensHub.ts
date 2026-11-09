@@ -34,7 +34,11 @@ function indexOf(buf: Uint8Array, pat: Uint8Array, from = 0): number {
   return -1;
 }
 
-class LensHub {
+export class LensHub {
+  private readonly url: (gen: number) => string;
+  constructor(url: (gen: number) => string) {
+    this.url = url;
+  }
   private users = 0;
   private gen = 0;
   private abort: AbortController | null = null;
@@ -105,7 +109,7 @@ class LensHub {
   }
 
   private async read(gen: number, ctrl: AbortController) {
-    const res = await fetch(ptzCameraService.fullStreamUrl(gen), { signal: ctrl.signal, cache: 'no-store' });
+    const res = await fetch(this.url(gen), { signal: ctrl.signal, cache: 'no-store' });
     if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
     const reader = res.body.getReader();
     let buf = new Uint8Array(0);
@@ -160,4 +164,7 @@ class LensHub {
   }
 }
 
-export const lensHub = new LensHub();
+export const lensHub = new LensHub((gen) => ptzCameraService.fullStreamUrl(gen));
+
+/** APK ichidagi USB web-kamera oqimi (Face ID manbai, planshet Android tashqi kamerani bermaganda) */
+export const usbWebcamHub = new LensHub((gen) => `${ptzCameraService.getBase()}/webcam/stream?_=${gen}`);

@@ -10,6 +10,7 @@ import { nvrRecordingService, type TimelineRange, type NvrChunk, type NvrStorage
 import { FloatingPanel } from './FloatingPanel';
 import { PtzLensView } from './PtzLensView';
 import { ptzCameraService, LENS, CAMERA_ROTATED_180, type PtzLens } from '../services/ptzCameraService';
+import { faceCameraSettings } from '../services/faceCameraSettings';
 import { camLinkSettings } from '../services/camLinkSettings';
 import {
   robotCamBroadcaster,
@@ -783,14 +784,8 @@ export const HUDView: React.FC = () => {
     setCameraError(null);
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: 'user',
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        },
-        audio: false
-      });
+      // Sozlamalarda tanlangan Face ID kamerasi (frontal yoki USB web-kamera)
+      const stream = await faceCameraSettings.open();
 
       if (isStale()) {
         stream.getTracks().forEach((track) => track.stop());
@@ -925,7 +920,10 @@ export const HUDView: React.FC = () => {
       };
     }
     startFrontalCamera();
+    // Sozlamalarda Face ID kamera manbai almashtirilsa kamera qayta ochiladi
+    const unsub = faceCameraSettings.subscribe(() => startFrontalCamera());
     return () => {
+      unsub();
       cameraRequestRef.current++;
       stopCameraStream();
     };

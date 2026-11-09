@@ -35,6 +35,10 @@ public final class CameraBridge {
         this.http = new CameraHttpServer(this, HTTP_PORT);
     }
 
+    public Context context() {
+        return ctx;
+    }
+
     public static synchronized CameraBridge get(Context ctx) {
         if (instance == null) instance = new CameraBridge(ctx);
         return instance;
