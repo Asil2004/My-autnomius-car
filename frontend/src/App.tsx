@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { autopilotService } from './services/autopilotService';
 import { situationService } from './services/situationService';
 import { RobotProvider, useRobot } from './context/RobotContext';
 import { Navbar } from './components/Navbar';
@@ -14,7 +15,7 @@ import { AdminLoginModal } from './components/AdminLoginModal';
 import { AdminPanelView } from './components/AdminPanelView';
 import { ESP32RemoteView } from './components/ESP32RemoteView';
 import type { RemoteLink } from './services/remoteClient';
-import { robotCamBroadcaster, fleetWatcher } from './services/robotCamLink';
+import { robotCamBroadcaster, fleetWatcher, AUTOPILOT_REMOTE_EVENT } from './services/robotCamLink';
 import { navigationService } from './services/navigationService';
 import { headingService } from './services/headingService';
 
@@ -75,6 +76,30 @@ const AppShell: React.FC = () => {
   const [isUnlocked, setIsUnlocked] = useState(() =>
     window.location.hash === '#hud' || localStorage.getItem('qalqon_auto_unlock') === 'true'
   );
+  // Operator masofadan GPS avtopilotni yoqsa: robot plansheti HUD ga o'tadi (to'siqni kamera aniqlashi shu yerda ishlaydi).
+  // Avtopilot tugagach, avval yuz ekrani bo'lgan bo'lsa unga qaytadi
+  const { setActiveTab } = useRobot();
+  const relockAfterAutopilotRef = useRef(false);
+  useEffect(() => {
+    const onRemote = () => {
+      setIsUnlocked((was) => {
+        if (!was) relockAfterAutopilotRef.current = true;
+        return true;
+      });
+      setActiveTab('hud');
+    };
+    window.addEventListener(AUTOPILOT_REMOTE_EVENT, onRemote);
+    const unsub = autopilotService.subscribe((s) => {
+      if (!s.active && relockAfterAutopilotRef.current) {
+        relockAfterAutopilotRef.current = false;
+        setIsUnlocked(false);
+      }
+    });
+    return () => {
+      window.removeEventListener(AUTOPILOT_REMOTE_EVENT, onRemote);
+      unsub();
+    };
+  }, [setActiveTab]);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   // Masofaviy admin: ikkinchi planshet saytni #admin bilan ochsa, kirish oynasi darhol chiqadi
   const [adminLoginOpen, setAdminLoginOpen] = useState(() => window.location.hash === '#admin');

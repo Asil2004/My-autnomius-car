@@ -16,6 +16,7 @@
 import { camChannel, camLinkSettings, type CamChannel } from './camLinkSettings';
 import { loadMqtt, MQTT_BROKER_URL } from './mqttLoader';
 import { navigationService, type NavState } from './navigationService';
+import { autopilotService, type AutopilotState, type AutopilotWaypoint } from './autopilotService';
 
 /** Data kanal orqali uzatiladigan aniqlash ramkasi. Koordinatalar 0..1, kadrning o'zida (oynalanmagan) */
 export interface WireBox {
@@ -52,7 +53,26 @@ export interface RobotTelemetry {
   sonars?: { front: number; rear: number; left: number; right: number };
   cmd?: string;
   viewers?: number;
+  /** GPS avtopilot holati (robot planshetida ishlaydi) */
+  ap?: {
+    on: boolean;
+    ph: AutopilotState['phase'];
+    msg: string;
+    i: number;
+    n: number;
+    d: number;
+    err: number;
+    cmd: string;
+  };
 }
+
+/** Operator -> robot: avtopilot buyrug'i (T/ap mavzusi, shifrlangan) */
+export type AutopilotRemoteCmd =
+  | { op: 'start'; route: AutopilotWaypoint[]; by: string; t: number }
+  | { op: 'stop'; by: string; t: number };
+
+/** Robot planshetida masofadan avtopilot yoqilganda (ilova HUD ga o'tishi uchun: kamera to'siq tahlili kerak) */
+export const AUTOPILOT_REMOTE_EVENT = 'qalqon-autopilot-remote';
 
 const MAX_VIEWERS = 6;
 const VIDEO_MAX_BITRATE = 1_500_000;
@@ -165,13 +185,38 @@ class RobotCamBroadcaster {
   }
 
   private telemetry(): RobotTelemetry {
+    const a = autopilotService.getState();
     return {
       id: this.status.robotId,
       t: Date.now(),
       nav: this.nav ? navToWire(this.nav) : undefined,
       ...this.extra,
-      viewers: this.status.viewers
+      viewers: this.status.viewers,
+      ap: {
+        on: a.active,
+        ph: a.phase,
+        msg: a.message,
+        i: a.targetIndex,
+        n: a.total,
+        d: Math.round(a.distanceToEndM),
+        err: a.bearingErrorDeg,
+        cmd: a.command
+      }
     };
+  }
+
+  /** Operatordan kelgan avtopilot buyrug'i */
+  private onAutopilotCmd(c: AutopilotRemoteCmd) {
+    if (Math.abs(Date.now() - c.t) > 60_000) return; // eski (qayta yuborilgan) xabar
+    if (c.op === 'stop') {
+      autopilotService.stop(`Operator (${c.by}) to‘xtatdi`);
+    } else if (Array.isArray(c.route) && c.route.length >= 1 && c.route.length <= 200) {
+      const route = c.route.filter((p) => isFinite(p.lat) && isFinite(p.lon) && Math.abs(p.lat) <= 90 && Math.abs(p.lon) <= 180);
+      if (!route.length) return;
+      window.dispatchEvent(new CustomEvent(AUTOPILOT_REMOTE_EVENT, { detail: { by: c.by } }));
+      autopilotService.start(route.map((p) => ({ lat: p.lat, lon: p.lon })));
+    }
+    this.publishTelemetry();
   }
 
   async start() {
@@ -192,7 +237,7 @@ class RobotCamBroadcaster {
       }
       this.client = client;
       client.on('connect', () => {
-        client.subscribe([`${T}/join`, `${T}/v/+/answer`, `${T}/v/+/ice`, `${T}/status`], { qos: 1 });
+        client.subscribe([`${T}/join`, `${T}/v/+/answer`, `${T}/v/+/ice`, `${T}/status`, `${T}/ap`], { qos: 1 });
         void channel
           .seal({ online: true, id: s.robotId, inst: this.instance, t: Date.now() })
           .then((txt) => client.publish(`${T}/status`, txt, { qos: 1, retain: true }));
@@ -253,6 +298,11 @@ class RobotCamBroadcaster {
       if (st && st.inst !== this.instance && Date.now() - st.t < 60_000) {
         this.setStatus({ duplicate: true, error: `${this.status.robotId} ID boshqa qurilmada ham ishlatilyapti` });
       }
+      return;
+    }
+    if (topic === `${T}/ap`) {
+      const c = await ch.open<AutopilotRemoteCmd>(text);
+      if (c && (c.op === 'start' || c.op === 'stop')) this.onAutopilotCmd(c);
       return;
     }
     if (topic === `${T}/join`) {
@@ -362,9 +412,21 @@ class FleetWatcher {
   private state: FleetState = { connected: false, robots: [] };
   private sweep: number | null = null;
   private generation = 0;
+  private channel: CamChannel | null = null;
 
   getState() {
     return this.state;
+  }
+
+  /** Operator: robotga avtopilot buyrug'i (marshrut bilan yurish yoki to'xtatish) */
+  async sendAutopilot(robotId: string, cmd: { op: 'start'; route: AutopilotWaypoint[] } | { op: 'stop' }): Promise<boolean> {
+    const ch = this.channel;
+    const client = this.client;
+    if (!ch || !client?.connected || !ID_RE.test(robotId)) return false;
+    const by = camLinkSettings.get().operatorName || 'Operator';
+    const text = await ch.seal({ ...cmd, by, t: Date.now() });
+    client.publish(`${ch.topic}/r/${robotId}/ap`, text, { qos: 1 });
+    return true;
   }
 
   subscribe(cb: (s: FleetState) => void) {
@@ -393,6 +455,7 @@ class FleetWatcher {
       const channel = await camChannel(camLinkSettings.get().key);
       if (gen !== this.generation) return;
       const F = channel.topic;
+      this.channel = channel;
       const client = await connectMqtt();
       if (gen !== this.generation) {
         client.end(true);

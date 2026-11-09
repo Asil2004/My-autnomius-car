@@ -881,6 +881,65 @@ export const GoogleMapsPatrolView: React.FC = () => {
                 Markazga
               </button>
             </div>
+            {/* OPERATOR: tanlangan robotni masofadan manzilga yuborish (avtopilot robot planshetida ishlaydi) */}
+            {isOperator && (() => {
+              const robot = fleet.robots.find((r) => r.id === watchedRobot);
+              const rap = robot?.tel?.ap;
+              const fresh = !!robot?.online;
+              return (
+                <div className="border border-emerald-500/40 bg-emerald-950/30 rounded-lg p-2 flex flex-col gap-1.5">
+                  <div className="text-[10px] font-mono font-bold text-emerald-300 uppercase tracking-wider flex items-center justify-between">
+                    <span>GPS Avtopilot · {watchedRobot || 'robot yo‘q'}</span>
+                    <span className={rap?.on ? 'text-emerald-400' : rap?.ph === 'arrived' ? 'text-sky-300' : rap?.ph === 'failed' ? 'text-rose-400' : 'text-slate-400'}>
+                      {!fresh ? 'OFFLAYN' : rap?.on ? `YURMOQDA · ${rap.cmd}` : rap?.ph === 'arrived' ? 'YETDI' : rap?.ph === 'failed' ? "TO'XTADI" : "O'CHIQ"}
+                    </span>
+                  </div>
+                  {rap && (
+                    <div className={`text-[10px] font-mono font-bold ${rap.ph === 'obstacle-stop' || rap.ph === 'failed' ? 'text-rose-300' : rap.ph.startsWith('waiting') ? 'text-amber-300' : 'text-emerald-200'}`}>
+                      {rap.msg}
+                    </div>
+                  )}
+                  {rap?.on && (
+                    <div className="grid grid-cols-3 gap-1 text-[10px] font-mono text-slate-300">
+                      <span>Nuqta: {rap.i + 1}/{rap.n}</span>
+                      <span>Qoldi: {rap.d < 1000 ? `${rap.d} m` : `${(rap.d / 1000).toFixed(2)} km`}</span>
+                      <span>Xato: {rap.err}°</span>
+                    </div>
+                  )}
+                  {rap?.on ? (
+                    <button
+                      onClick={() => void fleetWatcher.sendAutopilot(watchedRobot, { op: 'stop' })}
+                      className="w-full py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded font-mono text-sm font-black flex items-center justify-center gap-1.5 shadow"
+                    >
+                      <Square className="w-4 h-4 fill-white" />
+                      AVTOPILOTNI TO'XTATISH
+                    </button>
+                  ) : (
+                    <button
+                      onClick={async () => {
+                        if (drawModeRef.current) setDrawing(false);
+                        stopPatrol();
+                        const ok = await fleetWatcher.sendAutopilot(watchedRobot, { op: 'start', route: waypointsRef.current.map((p) => ({ lat: p.lat, lon: p.lon })) });
+                        setRoutingStatus(ok ? `📡 Marshrut ${watchedRobot} robotiga yuborildi` : "Robotga ulanib bo'lmadi (park aloqasi yo'q)");
+                      }}
+                      disabled={waypoints.length < 1 || !fresh}
+                      className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded font-mono text-xs font-bold flex items-center justify-center gap-1.5 shadow"
+                    >
+                      <Navigation className="w-3.5 h-3.5" />
+                      Robotni manzilga yuborish
+                    </button>
+                  )}
+                  <div className="text-[9px] font-mono text-slate-400 leading-snug">
+                    {!fresh
+                      ? 'Robot planshet onlayn emas: unda Qalqon ochiq va "Robot" rolida bo\'lishi kerak.'
+                      : waypoints.length < 1
+                      ? "Avval \"Marshrut chizish\" bilan manzil nuqtasini qo'ying."
+                      : 'Robot planshet o\'z GPS + giroskopi bo\'yicha ESP32 ga buyruq beradi, to\'siqni kamerasi bilan aniqlaydi (planshet avtomatik HUD ga o\'tadi).'}
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* HAQIQIY GPS AVTOPILOT */}
             {!isOperator && (
               <div className="border border-emerald-500/40 bg-emerald-950/30 rounded-lg p-2 flex flex-col gap-1.5">
