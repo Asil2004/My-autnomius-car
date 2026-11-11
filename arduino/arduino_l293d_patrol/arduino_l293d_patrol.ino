@@ -91,6 +91,26 @@ void loop() {
         }
         break;
 
+      case 'I': // Oldinga + O'ngga differensial ravon burilish (Yoy)
+        if (distFront > 0 && distFront < SAFE_STOP_DISTANCE) {
+          stopAll();
+          Serial.println("WARN:OBSTACLE_FRONT");
+        } else {
+          moveForwardRight();
+          Serial.println("ACK:FORWARD_RIGHT");
+        }
+        break;
+
+      case 'G': // Oldinga + Chapga differensial ravon burilish (Yoy)
+        if (distFront > 0 && distFront < SAFE_STOP_DISTANCE) {
+          stopAll();
+          Serial.println("WARN:OBSTACLE_FRONT");
+        } else {
+          moveForwardLeft();
+          Serial.println("ACK:FORWARD_LEFT");
+        }
+        break;
+
       case 'B': // Orqaga
         if (distRear > 0 && distRear < SAFE_STOP_DISTANCE) {
           stopAll();
@@ -98,6 +118,26 @@ void loop() {
         } else {
           moveBackward();
           Serial.println("ACK:BACKWARD");
+        }
+        break;
+
+      case 'J': // Orqaga + O'ngga differensial yoy
+        if (distRear > 0 && distRear < SAFE_STOP_DISTANCE) {
+          stopAll();
+          Serial.println("WARN:OBSTACLE_REAR");
+        } else {
+          moveBackwardRight();
+          Serial.println("ACK:BACKWARD_RIGHT");
+        }
+        break;
+
+      case 'H': // Orqaga + Chapga differensial yoy
+        if (distRear > 0 && distRear < SAFE_STOP_DISTANCE) {
+          stopAll();
+          Serial.println("WARN:OBSTACLE_REAR");
+        } else {
+          moveBackwardLeft();
+          Serial.println("ACK:BACKWARD_LEFT");
         }
         break;
 
@@ -175,8 +215,29 @@ void loop() {
 }
 
 // ----------------- 4WD DIFFERENSIAL HARAKAT -----------------
+// Burilishda ichki g'ildiraklarning kamaytirilgan quvvat koeffitsiyenti (40% quvvat)
+const float CURVE_POWER_RATIO = 0.40;
 
 void moveForward() {
+  applyTrimmedSpeeds(currentSpeed);
+  motorFL.run(FORWARD);
+  motorRL.run(FORWARD);
+  motorRR.run(FORWARD);
+  motorFR.run(FORWARD);
+}
+
+// Oldinga + O'ngga ravon yoy (Chap g'ildiraklar 100%, o'ng g'ildiraklar 40% quvvatda oldinga aylanadi, teskari aylanmaydi!)
+void moveForwardRight() {
+  applyDifferentialSpeeds(currentSpeed, (int)(currentSpeed * CURVE_POWER_RATIO));
+  motorFL.run(FORWARD);
+  motorRL.run(FORWARD);
+  motorRR.run(FORWARD);
+  motorFR.run(FORWARD);
+}
+
+// Oldinga + Chapga ravon yoy (O'ng g'ildiraklar 100%, chap g'ildiraklar 40% quvvatda oldinga aylanadi, teskari aylanmaydi!)
+void moveForwardLeft() {
+  applyDifferentialSpeeds((int)(currentSpeed * CURVE_POWER_RATIO), currentSpeed);
   motorFL.run(FORWARD);
   motorRL.run(FORWARD);
   motorRR.run(FORWARD);
@@ -184,6 +245,25 @@ void moveForward() {
 }
 
 void moveBackward() {
+  applyTrimmedSpeeds(currentSpeed);
+  motorFL.run(BACKWARD);
+  motorRL.run(BACKWARD);
+  motorRR.run(BACKWARD);
+  motorFR.run(BACKWARD);
+}
+
+// Orqaga + O'ngga ravon yoy
+void moveBackwardRight() {
+  applyDifferentialSpeeds(currentSpeed, (int)(currentSpeed * CURVE_POWER_RATIO));
+  motorFL.run(BACKWARD);
+  motorRL.run(BACKWARD);
+  motorRR.run(BACKWARD);
+  motorFR.run(BACKWARD);
+}
+
+// Orqaga + Chapga ravon yoy
+void moveBackwardLeft() {
+  applyDifferentialSpeeds((int)(currentSpeed * CURVE_POWER_RATIO), currentSpeed);
   motorFL.run(BACKWARD);
   motorRL.run(BACKWARD);
   motorRR.run(BACKWARD);
@@ -191,6 +271,7 @@ void moveBackward() {
 }
 
 void turnLeft() {
+  applyTrimmedSpeeds(currentSpeed);
   motorFL.run(BACKWARD);
   motorRL.run(BACKWARD);
   motorRR.run(FORWARD);
@@ -198,6 +279,7 @@ void turnLeft() {
 }
 
 void turnRight() {
+  applyTrimmedSpeeds(currentSpeed);
   motorFL.run(FORWARD);
   motorRL.run(FORWARD);
   motorRR.run(BACKWARD);
@@ -212,11 +294,15 @@ void stopAll() {
 }
 
 void applyTrimmedSpeeds(int baseSpeed) {
+  applyDifferentialSpeeds(baseSpeed, baseSpeed);
+}
+
+void applyDifferentialSpeeds(int leftBase, int rightBase) {
   float lRatio = (float)speedTrimLeft / 200.0;
   float rRatio = (float)speedTrimRight / 200.0;
 
-  int leftSpd  = constrain((int)(baseSpeed * lRatio), 0, 255);
-  int rightSpd = constrain((int)(baseSpeed * rRatio), 0, 255);
+  int leftSpd  = constrain((int)(leftBase * lRatio), 0, 255);
+  int rightSpd = constrain((int)(rightBase * rRatio), 0, 255);
 
   motorFL.setSpeed(leftSpd);
   motorRL.setSpeed(leftSpd);

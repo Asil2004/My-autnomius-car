@@ -193,6 +193,13 @@ graph TD
 - [x] **5.4.** 🛡️ Anti-Brick avto-rollback tizimi kiritildi: yangi kod nosozlik bersa, avtomatik ravishda barqaror commitga qaytariladi.
 - [x] **5.5.** `install_autonomous_services.sh` 1-bosqichli o'rnatish skripti tayyorlandi va [AVTONOM_YANGILANISH_VA_TIZIM_QOLLANMASI.md](docs/AVTONOM_YANGILANISH_VA_TIZIM_QOLLANMASI.md) hujjatlashtirildi.
 
+### 6. 360° Uzluksiz Joystik va Differensial Yoy Burilish Kinetikasi (Smooth Arc Steering)
+- [x] **6.1.** `frontend/src/types/robot.ts` va `RobotContext.tsx` ga `G` (Oldinga-Chapga), `I` (Oldinga-O'ngga), `H` (Orqaga-Chapga), `J` (Orqaga-O'ngga) yoy buyruqlari kiritildi.
+- [x] **6.2.** Multi-key qo'shma klaviatura mantiqi joriy qilindi: `ArrowUp + ArrowRight` yoki `W + D` bosilganda robot joyida to'xtab aylanmaydi, oldinga harakatni davom ettirgan holda ravon o'ngga buriladi.
+- [x] **6.3.** Motor quvvatini kamaytirish kinetikasi: O'ngga burilishda o'ng motorlar teskari aylanmaydi, quvvati 40% ga pasaytiriladi (chap motorlar 100% oldinga, o'ng motorlar 40% oldinga).
+- [x] **6.4.** `HUDView.tsx` da virtual joystik 360° burchaklar bo'yicha 8 yo'nalishli uzluksiz vektorli differensial nazoratga o'tkazildi.
+- [x] **6.5.** `arduino_l293d_patrol.ino`, `arduino_bridge.py` va `qalqon_brain.py` to'liq sinxronlashtirildi va avtotormoz himoyasi yoy buyruqlariga tatbiq etildi.
+
 ---
 
 ## 🤝 Jamoa A'zolari Bilan Bog'lanish

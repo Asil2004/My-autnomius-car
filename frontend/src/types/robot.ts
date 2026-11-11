@@ -1,4 +1,4 @@
-export type MecanumCommand = 'F' | 'B' | 'L' | 'R' | 'Q' | 'E' | 'S' | 'U' | 'D';
+export type MecanumCommand = 'F' | 'B' | 'L' | 'R' | 'Q' | 'E' | 'G' | 'I' | 'H' | 'J' | 'S' | 'U' | 'D';
 export type SpeedLevel = 1 | 2 | 3;
 
 export interface SonarSensors {

@@ -183,8 +183,8 @@ class ArduinoBridge:
         cmd = cmd.upper().strip()
         with self.lock:
             # Oldinda to'siq bo'lsa oldinga yurishni bloklash (orqaga va burilishlar OCHIQ)
-            if cmd == 'F' and (self.sonars["front"] <= 25 or self.obstacle_warning):
-                print(f"[Arduino] [!] Oldinda to'siq bor ({self.sonars['front']} sm)! Oldinga yurish to'xtatildi.")
+            if cmd in ('F', 'G', 'I') and (self.sonars["front"] <= 25 or self.obstacle_warning):
+                print(f"[Arduino] [!] Oldinda to'siq bor ({self.sonars['front']} sm)! Harakat to'xtatildi.")
                 self.last_cmd = 'S'
                 self._add_log(f"BLOKLANDI: Oldinda to'siq ({self.sonars['front']} sm)!")
                 return False
@@ -202,6 +202,8 @@ class ArduinoBridge:
                 cmd_names = {
                     'F': "Oldinga (F)", 'B': "Orqaga (B)", 'L': "Chapga burilish (L)",
                     'R': "O'ngga burilish (R)", 'Q': "Chapga Strafe (Q)", 'E': "O'ngga Strafe (E)",
+                    'G': "Oldinga-Chapga Yoy (G)", 'I': "Oldinga-O'ngga Yoy (I)",
+                    'H': "Orqaga-Chapga Yoy (H)", 'J': "Orqaga-O'ngga Yoy (J)",
                     'S': "To'xtash (S)", 'U': "Minora Ko'tarish (U)", 'D': "Minora Tushirish (D)"
                 }
                 desc = cmd_names.get(cmd, f"Buyruq {cmd}")

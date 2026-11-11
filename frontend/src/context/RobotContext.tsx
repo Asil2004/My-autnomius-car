@@ -447,6 +447,10 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         R: 'O\'ngga Burilish (R)',
         Q: 'Chapga Strafe Yonlama (Q)',
         E: 'O\'ngga Strafe Yonlama (E)',
+        G: 'Oldinga-Chapga Yoy (G)',
+        I: 'Oldinga-O\'ngga Yoy (I)',
+        H: 'Orqaga-Chapga Yoy (H)',
+        J: 'Orqaga-O\'ngga Yoy (J)',
         S: 'To\'xtash (S)',
         U: 'Minora Yuqoriga (U)',
         D: 'Minora Pastga (D)'
@@ -454,7 +458,7 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       addLog('SERIAL', 'info', `Buyruq uzatildi: ${cmdNames[cmd]}`);
     }
 
-    if (cmd === 'F' && (sonars.front <= 28 || cameraObstacle.isBlocked)) {
+    if (['F', 'G', 'I'].includes(cmd) && (sonars.front <= 28 || cameraObstacle.isBlocked)) {
       tacticalAudio.playObstacleAlert();
       addLog('AI', 'error', `🛑 AVTOTORMOZ: Kamera "Ko'zi" to'siqni aniqladi (${sonars.front} sm)! Oldinga harakat qulflandi!`);
       setLastCommand('S');
@@ -469,29 +473,86 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [addLog, isSimulationMode, sonars.front, system.rpiIp, system.rpiPort]);
 
-  // Keyboard navigation listener (W, A, S, D, Q, E, Space, 1, 2, 3)
+  // Keyboard navigation listener (W, A, S, D, Arrow keys: qo'shma tugmalarni qo'llab-quvvatlaydi)
+  // To'g'ri va o'ngga bir vaqtda bosilganda o'ng g'ildiraklar teskari aylanmaydi, quvvati pasayib yoy hosil qiladi
   useEffect(() => {
+    const activeKeys = new Set<string>();
+
+    const evaluateMovement = () => {
+      const up = activeKeys.has('ARROWUP') || activeKeys.has('KEYW');
+      const down = activeKeys.has('ARROWDOWN') || activeKeys.has('KEYS');
+      const left = activeKeys.has('ARROWLEFT') || activeKeys.has('KEYA');
+      const right = activeKeys.has('ARROWRIGHT') || activeKeys.has('KEYD');
+      const strafeLeft = activeKeys.has('KEYQ');
+      const strafeRight = activeKeys.has('KEYE');
+
+      if (up && right) {
+        sendMecanumCommand('I'); // Oldinga + O'ngga (differensial ravon burilish)
+      } else if (up && left) {
+        sendMecanumCommand('G'); // Oldinga + Chapga (differensial ravon burilish)
+      } else if (down && right) {
+        sendMecanumCommand('J'); // Orqaga + O'ngga
+      } else if (down && left) {
+        sendMecanumCommand('H'); // Orqaga + Chapga
+      } else if (up) {
+        sendMecanumCommand('F');
+      } else if (down) {
+        sendMecanumCommand('B');
+      } else if (strafeLeft) {
+        sendMecanumCommand('Q');
+      } else if (strafeRight) {
+        sendMecanumCommand('E');
+      } else if (right) {
+        sendMecanumCommand('R'); // Faqat o'ng tugma bosilganda joyida o'q atrofida buriladi
+      } else if (left) {
+        sendMecanumCommand('L'); // Faqat chap tugma bosilganda joyida o'q atrofida buriladi
+      } else {
+        sendMecanumCommand('S');
+      }
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) return;
 
-      const key = e.key.toUpperCase();
-      if (key === 'W' || key === 'ARROWUP') sendMecanumCommand('F');
-      else if (key === 'S' && e.key !== 's') sendMecanumCommand('B');
-      else if (key === 'ARROWDOWN') sendMecanumCommand('B');
-      else if (key === 'A' || key === 'ARROWLEFT') sendMecanumCommand('L');
-      else if (key === 'D' || key === 'ARROWRIGHT') sendMecanumCommand('R');
-      else if (key === 'Q') sendMecanumCommand('Q');
-      else if (key === 'E') sendMecanumCommand('E');
-      else if (key === ' ') {
+      const code = e.code.toUpperCase();
+      const moveCodes = ['ARROWUP', 'ARROWDOWN', 'ARROWLEFT', 'ARROWRIGHT', 'KEYW', 'KEYS', 'KEYA', 'KEYD', 'KEYQ', 'KEYE'];
+
+      if (moveCodes.includes(code)) {
         e.preventDefault();
+        if (!activeKeys.has(code)) {
+          activeKeys.add(code);
+          evaluateMovement();
+        }
+      } else if (e.key === ' ') {
+        e.preventDefault();
+        activeKeys.clear();
         sendMecanumCommand('S');
-      } else if (key === '1') setSpeedLevel(1);
-      else if (key === '2') setSpeedLevel(2);
-      else if (key === '3') setSpeedLevel(3);
+      } else if (e.key === '1') setSpeedLevel(1);
+      else if (e.key === '2') setSpeedLevel(2);
+      else if (e.key === '3') setSpeedLevel(3);
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) return;
+
+      const code = e.code.toUpperCase();
+      const moveCodes = ['ARROWUP', 'ARROWDOWN', 'ARROWLEFT', 'ARROWRIGHT', 'KEYW', 'KEYS', 'KEYA', 'KEYD', 'KEYQ', 'KEYE'];
+
+      if (moveCodes.includes(code)) {
+        e.preventDefault();
+        if (activeKeys.has(code)) {
+          activeKeys.delete(code);
+          evaluateMovement();
+        }
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
   }, [sendMecanumCommand]);
 
   // WebSocket ulanishi (Haqiqiy robot rejimida jonli telemetriya)

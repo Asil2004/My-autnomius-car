@@ -168,6 +168,13 @@ def select_active_camera(source: int):
     ok = camera.select_camera(source)
     return {"status": "ok" if ok else "error", "active_source": camera.active_source}
 
+@app.get("/api/camera/auto_discover")
+@app.post("/api/camera/auto_discover")
+def auto_discover_camera(password: str = ""):
+    """Wi-Fi tarmog'idagi CP-159-1-WIFI (V380 Pro / iCSee) kamerasini avtomatik qidirish va ulash"""
+    res = camera.auto_discover_wifi_camera(password=password)
+    return res
+
 @app.get("/video_feed/quad")
 @app.get("/stream.mjpg/quad")
 def video_feed_quad():
@@ -248,8 +255,8 @@ def handle_command(request: Request, c: Optional[str] = None, speed: Optional[in
         lidar_sectors = lidar.get_sectors()
         is_blocked = (lidar_sectors["front"] <= 0.45) or (sonars["front"] <= 25) or arduino.obstacle_warning
 
-        if cmd_char == 'F' and is_blocked:
-            arduino._add_log(f"⚠️ 'F' (Oldinga) rad etildi: to'siq {sonars['front']} sm!")
+        if cmd_char in ('F', 'G', 'I') and is_blocked:
+            arduino._add_log(f"⚠️ '{cmd_char}' (Oldinga harakat) rad etildi: to'siq {sonars['front']} sm!")
             return {
                 "status": "blocked",
                 "cmd": cmd_char,
@@ -600,6 +607,15 @@ COCKPIT_HTML = """<!DOCTYPE html>
           <span>📹 KAMERA (JONLI OQIM)</span>
           <span id="fpsBadge" style="font-size:0.72rem; color:var(--cyan)">-- FPS</span>
         </div>
+
+        <!-- Kamera linzalari va Wi-Fi Avto-Ulanish paneli -->
+        <div style="display:flex; gap:6px; margin-bottom:8px; flex-wrap:wrap;">
+          <button class="btn-test" style="flex:1;" onclick="switchCam(0)">Linz 1 (PTZ)</button>
+          <button class="btn-test" style="flex:1;" onclick="switchCam(1)">Linz 2 (PTZ)</button>
+          <button class="btn-test" style="flex:1;" onclick="switchCam(2)">Linz 3 (Gumbaz)</button>
+          <button class="btn-test" style="flex:1.2; background:rgba(16,185,129,0.25); border-color:#10b981; color:#34d399;" onclick="autoDiscoverWifiCamera()" id="btnAutoDisc">🔍 Wi-Fi Avto-Ulanish</button>
+        </div>
+
         <div class="video-box">
           <img id="streamImg" src="/stream.mjpg" alt="Video stream" />
           <div class="video-overlay">
@@ -749,21 +765,50 @@ COCKPIT_HTML = """<!DOCTYPE html>
       setTimeout(() => { b.style.transform = 'scale(1)'; }, 150);
     }
 
-    // Keyboard support
+    // Keyboard multi-key support (To'g'ri va burilish strelkalari bir vaqtda bosilganda differensial yoy)
+    const activeKeys = new Set();
+    function evaluateMovement() {
+      const up = activeKeys.has('KeyW') || activeKeys.has('ArrowUp');
+      const down = activeKeys.has('KeyS') || activeKeys.has('ArrowDown');
+      const left = activeKeys.has('KeyA') || activeKeys.has('ArrowLeft');
+      const right = activeKeys.has('KeyD') || activeKeys.has('ArrowRight');
+
+      if (up && right) sendCmd('I');
+      else if (up && left) sendCmd('G');
+      else if (down && right) sendCmd('J');
+      else if (down && left) sendCmd('H');
+      else if (up) sendCmd('F');
+      else if (down) sendCmd('B');
+      else if (right) sendCmd('R');
+      else if (left) sendCmd('L');
+      else sendCmd('S');
+    }
+
     window.addEventListener('keydown', (e) => {
-      const map = {
-        'KeyW': 'F', 'ArrowUp': 'F',
-        'KeyS': 'B', 'ArrowDown': 'B',
-        'KeyA': 'L', 'ArrowLeft': 'L',
-        'KeyD': 'R', 'ArrowRight': 'R',
-        'KeyQ': 'Q', 'KeyE': 'E',
-        'Space': 'S',
-        'Digit1': 1, 'Digit2': 2, 'Digit3': 3
-      };
-      if (typeof map[e.code] === 'number') {
-        setSpeed(map[e.code]);
-      } else if (map[e.code]) {
-        sendCmd(map[e.code]);
+      const moveKeys = ['KeyW', 'ArrowUp', 'KeyS', 'ArrowDown', 'KeyA', 'ArrowLeft', 'KeyD', 'ArrowRight'];
+      if (moveKeys.includes(e.code)) {
+        e.preventDefault();
+        if (!activeKeys.has(e.code)) {
+          activeKeys.add(e.code);
+          evaluateMovement();
+        }
+      } else if (e.code === 'Space') {
+        e.preventDefault();
+        activeKeys.clear();
+        sendCmd('S');
+      } else if (e.code === 'Digit1') setSpeed(1);
+      else if (e.code === 'Digit2') setSpeed(2);
+      else if (e.code === 'Digit3') setSpeed(3);
+    });
+
+    window.addEventListener('keyup', (e) => {
+      const moveKeys = ['KeyW', 'ArrowUp', 'KeyS', 'ArrowDown', 'KeyA', 'ArrowLeft', 'KeyD', 'ArrowRight'];
+      if (moveKeys.includes(e.code)) {
+        e.preventDefault();
+        if (activeKeys.has(e.code)) {
+          activeKeys.delete(e.code);
+          evaluateMovement();
+        }
       }
     });
 
@@ -902,6 +947,42 @@ COCKPIT_HTML = """<!DOCTYPE html>
         });
         document.getElementById('logBox').innerHTML = html;
       }
+    }
+
+    function switchCam(sourceId) {
+      fetch('/api/camera/select?source=' + sourceId, {method: 'POST'})
+        .then(r => r.json())
+        .then(d => {
+          const img = document.getElementById('streamImg');
+          img.src = '/stream.mjpg?t=' + Date.now();
+        })
+        .catch(e => console.error(e));
+    }
+
+    function autoDiscoverWifiCamera() {
+      const btn = document.getElementById('btnAutoDisc');
+      btn.innerText = "⏳ Qidirilmoqda...";
+      btn.disabled = true;
+      fetch('/api/camera/auto_discover', {method: 'POST'})
+        .then(r => r.json())
+        .then(d => {
+          btn.disabled = false;
+          if (d.status === 'ok') {
+            btn.innerText = "✓ Ulandi (" + d.config.camera_ip + ")";
+            const img = document.getElementById('streamImg');
+            setTimeout(() => {
+              img.src = '/stream.mjpg?t=' + Date.now();
+            }, 1000);
+          } else {
+            btn.innerText = "🔍 Wi-Fi Avto-Ulanish";
+            alert("Xatolik: " + (d.message || "Wi-Fi tarmoqda kamera topilmadi"));
+          }
+        })
+        .catch(e => {
+          btn.disabled = false;
+          btn.innerText = "🔍 Wi-Fi Avto-Ulanish";
+          alert("Tarmoq xatosi: " + e);
+        });
     }
 
     connectWS();

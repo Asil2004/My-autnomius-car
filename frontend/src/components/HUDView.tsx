@@ -1081,18 +1081,23 @@ export const HUDView: React.FC = () => {
     }
 
     const deg = (angle * 180) / Math.PI;
-    if (deg >= -120 && deg <= -60) {
-      sendMecanumCommand('F'); // Oldinga
-    } else if (deg > -160 && deg < -120) {
-      sendMecanumCommand('Q'); // Chap-oldinga yonlama
-    } else if (deg > -60 && deg < -20) {
-      sendMecanumCommand('E'); // O'ng-oldinga yonlama
-    } else if (deg >= -20 && deg <= 35) {
-      sendMecanumCommand('R'); // O'ngga burilish
-    } else if (deg >= 45 && deg <= 135) {
-      sendMecanumCommand('B'); // Orqaga
-    } else if (deg > 135 || deg < -160) {
-      sendMecanumCommand('L'); // Chapga burilish
+    // 360° uzluksiz differensial yo'nalishlar (burchakli harakatda motorlar teskari aylanmasdan quvvati kamaytiriladi)
+    if (deg >= -112.5 && deg < -67.5) {
+      sendMecanumCommand('F'); // Sof Oldinga (100% chap, 100% o'ng)
+    } else if (deg >= -67.5 && deg < -22.5) {
+      sendMecanumCommand('I'); // Oldinga + O'ngga Yoy (100% chap, 40% o'ng - o'ng motor teskari aylanmaydi!)
+    } else if (deg >= -22.5 && deg < 22.5) {
+      sendMecanumCommand('R'); // Sof Joyida O'ngga aylanish
+    } else if (deg >= 22.5 && deg < 67.5) {
+      sendMecanumCommand('J'); // Orqaga + O'ngga Yoy
+    } else if (deg >= 67.5 && deg < 112.5) {
+      sendMecanumCommand('B'); // Sof Orqaga
+    } else if (deg >= 112.5 && deg < 157.5) {
+      sendMecanumCommand('H'); // Orqaga + Chapga Yoy
+    } else if (deg >= 157.5 || deg < -157.5) {
+      sendMecanumCommand('L'); // Sof Joyida Chapga aylanish
+    } else if (deg >= -157.5 && deg < -112.5) {
+      sendMecanumCommand('G'); // Oldinga + Chapga Yoy (40% chap, 100% o'ng - chap motor teskari aylanmaydi!)
     }
   };
 
