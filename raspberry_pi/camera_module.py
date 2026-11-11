@@ -93,8 +93,13 @@ class CameraModule:
             return
 
         try:
+            # Agar manba RTSP yoki HTTP oqim bo'lsa
+            if isinstance(self.source, str) and (self.source.startswith("rtsp://") or self.source.startswith("http://")):
+                os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|analyzeduration;5000000|max_delay;500000"
+                self.cap = cv2.VideoCapture(self.source, cv2.CAP_FFMPEG)
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             # DirectShow (Windows) yoki V4L2 (Linux) orqali ochish
-            if sys.platform.startswith('win'):
+            elif sys.platform.startswith('win'):
                 self.cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW)
                 if not self.cap.isOpened():
                     self.cap = cv2.VideoCapture(self.source)
@@ -376,27 +381,66 @@ class MultiCameraManager:
     Kamera mavjud bo'lmaganda avtomatik sintetik test oqimini beradi.
     """
     CAMERA_NAMES = {
-        0: "Oldi Kamera (Front)",
-        1: "Orqa Kamera (Rear)",
-        2: "Chap Yon Kamera (Left)",
+        0: "Oldi Kamera / Linz-1 PTZ",
+        1: "Orqa Kamera / Linz-2 PTZ",
+        2: "Chap Yon / Linz-3 Gumbaz",
         3: "O'ng Yon Kamera (Right)"
     }
 
-    def __init__(self, default_source: int = 0, width: int = 640, height: int = 480):
+    def __init__(self, default_source=0, width: int = 640, height: int = 480):
         self.active_source = default_source
         self.width = width
         self.height = height
         self.running = True
-        self.cameras: dict[int, CameraModule] = {}
+        self.cameras: dict[any, CameraModule] = {}
         self.lock = threading.Lock()
+        self.config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "camera_config.json")
+        self.wifi_camera_cfg = self._load_wifi_camera_config()
         
         # Tizimda mavjud kameralarni aniqlash
         self.available_cams = self.scan_available_cameras()
         
         # Asosiy kamerani ishga tushirish
-        main_name = self.CAMERA_NAMES.get(default_source, f"Kamera #{default_source}")
-        self.main_camera = CameraModule(source=default_source, width=width, height=height, name=main_name)
-        self.cameras[default_source] = self.main_camera
+        initial_source = default_source
+        if self.wifi_camera_cfg and self.wifi_camera_cfg.get("channels"):
+            initial_source = self.wifi_camera_cfg["channels"][0].get("url", default_source)
+
+        main_name = self.CAMERA_NAMES.get(0, "Asosiy Kamera")
+        self.main_camera = CameraModule(source=initial_source, width=width, height=height, name=main_name)
+        self.cameras[0] = self.main_camera
+
+    def _load_wifi_camera_config(self) -> dict:
+        """camera_config.json faylidan Wi-Fi kamera parametrlarini yuklash"""
+        if os.path.exists(self.config_path):
+            try:
+                import json
+                with open(self.config_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"[MultiCameraManager] camera_config.json o'qishda xato: {e}")
+        return None
+
+    def auto_discover_wifi_camera(self, password: str = "") -> dict:
+        """Wi-Fi tarmog'ini skanerlab CP-159-1-WIFI kamerasini topish va unga avtomatik ulanish"""
+        try:
+            from auto_connect_camera import run_auto_discovery
+            cfg = run_auto_discovery(custom_password=password)
+            if cfg and cfg.get("channels"):
+                self.wifi_camera_cfg = cfg
+                self.available_cams = self.scan_available_cameras()
+                # 0-kanalga darhol ulanamiz
+                ch0_url = cfg["channels"][0]["url"]
+                with self.lock:
+                    if 0 in self.cameras:
+                        self.cameras[0].stop()
+                    self.cameras[0] = CameraModule(source=ch0_url, width=self.width, height=self.height, name="Kamera 1 (PTZ Oqim)")
+                    self.main_camera = self.cameras[0]
+                    self.active_source = 0
+                print(f"[MultiCameraManager] Wi-Fi kamera avtomatik ulandi: {ch0_url}")
+                return {"status": "ok", "config": cfg}
+            return {"status": "error", "message": "Tarmoqda kamera topilmadi"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
     @property
     def latest_frame(self):
@@ -422,20 +466,39 @@ class MultiCameraManager:
         return cam.is_synthetic
 
     def scan_available_cameras(self) -> list:
-        """Tizimdagi barcha apparat web kameralarni skanerlaydi"""
+        """Tizimdagi barcha apparat web kameralar va Wi-Fi IP kameralarni skanerlaydi"""
         found = []
+
+        # Agar Wi-Fi kamera konfiguratsiyasi mavjud bo'lsa, uning kanallarini qo'shamiz
+        if self.wifi_camera_cfg and self.wifi_camera_cfg.get("channels"):
+            cam_ip = self.wifi_camera_cfg.get("camera_ip", "Wi-Fi")
+            for ch in self.wifi_camera_cfg["channels"]:
+                ch_id = ch["id"]
+                found.append({
+                    "id": ch_id,
+                    "name": f"{ch.get('name', f'Linz #{ch_id}')} ({cam_ip})",
+                    "status": "ONLINE (Wi-Fi RTSP)",
+                    "is_synthetic": False,
+                    "resolution": f"{self.width}x{self.height}",
+                    "url": ch["url"]
+                })
+
         if not HAS_OPENCV or cv2 is None:
-            found.append({
-                "id": 0,
-                "name": self.CAMERA_NAMES.get(0, "Asosiy Kamera"),
-                "status": "SYNTHETIC",
-                "is_synthetic": True,
-                "resolution": f"{self.width}x{self.height}"
-            })
+            if not found:
+                found.append({
+                    "id": 0,
+                    "name": self.CAMERA_NAMES.get(0, "Asosiy Kamera"),
+                    "status": "SYNTHETIC",
+                    "is_synthetic": True,
+                    "resolution": f"{self.width}x{self.height}"
+                })
             return found
 
-        # 0 dan 3 gacha bo'lgan portlarni tekshirish
+        # 0 dan 3 gacha bo'lgan USB portlarni tekshirish
         for idx in range(4):
+            # Agar bu ID allaqachon Wi-Fi kamera bilan band bo'lsa, USB ga boshqa ID kerak bo'lmasa o'tkazamiz
+            if any(c["id"] == idx for c in found):
+                continue
             try:
                 if sys.platform.startswith('win'):
                     test_cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
@@ -460,7 +523,7 @@ class MultiCameraManager:
             except Exception:
                 pass
 
-        # Agar birorta ham apparat kamera topilmasa, virtual simulyatorni qo'shamiz
+        # Agar birorta ham kamera topilmasa, virtual simulyatorni qo'shamiz
         if not found:
             found.append({
                 "id": 0,
@@ -496,14 +559,24 @@ class MultiCameraManager:
         return cams
 
     def select_camera(self, source: int) -> bool:
-        """Asosiy video oqim manbasini almashtirish (0: Oldi, 1: Gumbaz, 2: Orqa)"""
+        """Asosiy video oqim manbasini almashtirish (0: Linz-1, 1: Linz-2, 2: Linz-3 yoki USB)"""
         with self.lock:
+            # Agar bu kanal Wi-Fi kameraga tegishli bo'lsa
+            target_source = source
+            if self.wifi_camera_cfg and self.wifi_camera_cfg.get("channels"):
+                for ch in self.wifi_camera_cfg["channels"]:
+                    if ch["id"] == source:
+                        target_source = ch["url"]
+                        break
+
             if source not in self.cameras:
-                cam_name = self.CAMERA_NAMES.get(source, f"USB Kamera #{source}")
-                new_cam = CameraModule(source=source, width=self.width, height=self.height, name=cam_name)
+                cam_name = self.CAMERA_NAMES.get(source, f"Kamera #{source}")
+                new_cam = CameraModule(source=target_source, width=self.width, height=self.height, name=cam_name)
                 self.cameras[source] = new_cam
 
             self.active_source = source
+            print(f"[MultiCameraManager] Faol kamera manbasi o'zgartirildi: #{source} ({target_source})")
+            return True
             print(f"[MultiCameraManager] Faol kamera manbasi o'zgartirildi: #{source}")
             return True
 
