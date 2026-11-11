@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { autopilotService } from './services/autopilotService';
+import { situationService } from './services/situationService';
 import { RobotProvider, useRobot } from './context/RobotContext';
 import { Navbar } from './components/Navbar';
 import { TabNavigation } from './components/TabNavigation';
@@ -11,7 +13,30 @@ import { RobotFaceView } from './components/RobotFaceView';
 import { OperatorAuthModal } from './components/OperatorAuthModal';
 import { AdminLoginModal } from './components/AdminLoginModal';
 import { AdminPanelView } from './components/AdminPanelView';
+import { ESP32RemoteView } from './components/ESP32RemoteView';
 import type { RemoteLink } from './services/remoteClient';
+import { robotCamBroadcaster, fleetWatcher, AUTOPILOT_REMOTE_EVENT } from './services/robotCamLink';
+import { navigationService } from './services/navigationService';
+import { headingService } from './services/headingService';
+
+// Faqat ishlab chiqish rejimida: sinov skriptlari ilova ishlatayotgan servis nusxalarini ko'ra olsin
+if (import.meta.env.DEV) {
+  (window as unknown as { __qalqon: unknown }).__qalqon = { robotCamBroadcaster, fleetWatcher, navigationService, headingService };
+}
+
+/** Robot holatidan (batareya, sonar, buyruq) telemetriyaga: navigatsiya esa navigationService dan to'g'ridan-to'g'ri */
+const RobotTelemetryBridge: React.FC = () => {
+  const { battery, sonars, lastCommand } = useRobot();
+  useEffect(() => {
+    robotCamBroadcaster.setTelemetryExtra({
+      battery: { v: battery.voltage, pct: battery.percentage },
+      sonars: { front: sonars.front, rear: sonars.rear, left: sonars.left, right: sonars.right },
+      cmd: lastCommand
+    });
+  }, [battery.voltage, battery.percentage, sonars.front, sonars.rear, sonars.left, sonars.right, lastCommand]);
+  return null;
+};
+import { camLinkSettings } from './services/camLinkSettings';
 
 const MainContent: React.FC = () => {
   const { activeTab } = useRobot();
@@ -28,11 +53,87 @@ const MainContent: React.FC = () => {
 };
 
 const AppShell: React.FC = () => {
-  const [isUnlocked, setIsUnlocked] = useState(false);
+  // Vaqt, GPS manzil va ob-havoni ilova ochilgandan boshlab kuzatib, saqlab boradi (robot savollarga javob berishi uchun)
+  useEffect(() => situationService.start(), []);
+  // PARK ALOQASI (qaysi sahifa ochiq bo'lishidan qat'i nazar):
+  //  - robot planshet: kamera tasviri va telemetriya operatorlarga uzatiladi;
+  //  - operator: barcha robotlar ro'yxati va telemetriyasi kuzatiladi.
+  useEffect(() => {
+    const apply = (s: { role: string }) => {
+      robotCamBroadcaster.stop();
+      fleetWatcher.stop();
+      if (s.role === 'robot') void robotCamBroadcaster.start();
+      else void fleetWatcher.start();
+    };
+    apply(camLinkSettings.get());
+    const unsub = camLinkSettings.subscribe(apply);
+    return () => {
+      unsub();
+      robotCamBroadcaster.stop();
+      fleetWatcher.stop();
+    };
+  }, []);
+  const [isUnlocked, setIsUnlocked] = useState(() =>
+    window.location.hash === '#hud' || localStorage.getItem('qalqon_auto_unlock') === 'true'
+  );
+  // Operator masofadan GPS avtopilotni yoqsa: robot plansheti HUD ga o'tadi (to'siqni kamera aniqlashi shu yerda ishlaydi).
+  // Avtopilot tugagach, avval yuz ekrani bo'lgan bo'lsa unga qaytadi
+  const { setActiveTab } = useRobot();
+  const relockAfterAutopilotRef = useRef(false);
+  useEffect(() => {
+    const onRemote = () => {
+      setIsUnlocked((was) => {
+        if (!was) relockAfterAutopilotRef.current = true;
+        return true;
+      });
+      setActiveTab('hud');
+    };
+    window.addEventListener(AUTOPILOT_REMOTE_EVENT, onRemote);
+    const unsub = autopilotService.subscribe((s) => {
+      if (!s.active && relockAfterAutopilotRef.current) {
+        relockAfterAutopilotRef.current = false;
+        setIsUnlocked(false);
+      }
+    });
+    return () => {
+      window.removeEventListener(AUTOPILOT_REMOTE_EVENT, onRemote);
+      unsub();
+    };
+  }, [setActiveTab]);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   // Masofaviy admin: ikkinchi planshet saytni #admin bilan ochsa, kirish oynasi darhol chiqadi
   const [adminLoginOpen, setAdminLoginOpen] = useState(() => window.location.hash === '#admin');
   const [adminLink, setAdminLink] = useState<RemoteLink | null>(null);
+  const [controllerOpen, setControllerOpen] = useState(() =>
+    ['#controller', '#esp32', '#remote'].includes(window.location.hash)
+  );
+
+  useEffect(() => {
+    const handleHash = () => {
+      if (['#controller', '#esp32', '#remote'].includes(window.location.hash)) {
+        setControllerOpen(true);
+      } else if (window.location.hash === '#admin') {
+        setAdminLoginOpen(true);
+      } else if (window.location.hash === '#hud') {
+        setIsUnlocked(true);
+      }
+    };
+    window.addEventListener('hashchange', handleHash);
+    return () => window.removeEventListener('hashchange', handleHash);
+  }, []);
+
+  if (controllerOpen) {
+    return (
+      <ESP32RemoteView
+        onExit={() => {
+          setControllerOpen(false);
+          if (['#controller', '#esp32', '#remote'].includes(window.location.hash)) {
+            history.replaceState(null, '', window.location.pathname);
+          }
+        }}
+      />
+    );
+  }
 
   if (adminLink) {
     return <AdminPanelView link={adminLink} onExit={() => setAdminLink(null)} />;
@@ -41,8 +142,12 @@ const AppShell: React.FC = () => {
   // DEFAULT VIEW: Robot yuzi (2D ko'zlar, kamera yoqilgach odamni kuzatadi)
   if (!isUnlocked) {
     return (
-      <div className="relative h-screen w-screen bg-tactical-950 overflow-hidden select-none">
-        <RobotFaceView onUnlockRequest={() => setAuthModalOpen(true)} onAdminRequest={() => setAdminLoginOpen(true)} />
+      <div className="relative app-viewport bg-tactical-950 overflow-hidden select-none">
+        <RobotFaceView
+          onUnlockRequest={() => setAuthModalOpen(true)}
+          onAdminRequest={() => setAdminLoginOpen(true)}
+          onControllerRequest={() => setControllerOpen(true)}
+        />
         {adminLoginOpen && (
           <AdminLoginModal
             onClose={() => setAdminLoginOpen(false)}
@@ -56,6 +161,7 @@ const AppShell: React.FC = () => {
           isOpen={authModalOpen}
           onClose={() => setAuthModalOpen(false)}
           onSuccess={() => {
+            localStorage.setItem('qalqon_auto_unlock', 'true');
             setAuthModalOpen(false);
             setIsUnlocked(true);
           }}
@@ -66,8 +172,8 @@ const AppShell: React.FC = () => {
 
   // UNLOCKED VIEW: Full Operator Command Center
   return (
-    <div className="flex flex-col h-screen w-screen bg-tactical-950 text-slate-100 overflow-hidden font-sans select-none">
-      <Navbar onLockScreen={() => setIsUnlocked(false)} />
+    <div className="flex flex-col app-viewport bg-tactical-950 text-slate-100 overflow-hidden font-sans select-none">
+      <Navbar onLockScreen={() => { localStorage.removeItem('qalqon_auto_unlock'); setIsUnlocked(false); }} onOpenController={() => setControllerOpen(true)} />
       <MainContent />
       <TabNavigation />
     </div>
@@ -77,6 +183,7 @@ const AppShell: React.FC = () => {
 export function App() {
   return (
     <RobotProvider>
+      <RobotTelemetryBridge />
       <AppShell />
     </RobotProvider>
   );

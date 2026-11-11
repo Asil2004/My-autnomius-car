@@ -14,6 +14,10 @@ import type {
   RemoteStatus
 } from '../types/robot';
 import { tacticalAudio } from '../services/audioService';
+import { headingService } from '../services/headingService';
+import { navigationService } from '../services/navigationService';
+import { autopilotService } from '../services/autopilotService';
+import { esp32Service } from '../services/esp32Service';
 
 export interface LogMessage {
   id: string;
@@ -22,8 +26,6 @@ export interface LogMessage {
   level: 'info' | 'warn' | 'error' | 'success';
   text: string;
 }
-
-import { esp32Service } from '../services/esp32Service';
 
 interface RobotContextType {
   activeTab: 'hud' | 'ai' | 'telemetry' | 'maps' | 'settings';
@@ -103,6 +105,14 @@ interface RobotContextType {
   gps: GPSState;
   startRealGPS: () => void;
   toggleGPSMode: () => void;
+
+  // ESP32 Direct MQTT & Local HTTP Control
+  esp32Status: string;
+  esp32Connected: boolean;
+  hornActive: boolean;
+  lightActive: boolean;
+  toggleHorn: () => void;
+  toggleLight: () => void;
 }
 
 const RobotContext = createContext<RobotContextType | null>(null);
@@ -115,6 +125,163 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const lastAdminLogRef = useRef({ cmd: '', t: 0 });
   const [speedLevel, setSpeedLevelState] = useState<SpeedLevel>(2);
   const [isMoving, setIsMoving] = useState<boolean>(false);
+  // Navigatsiya: faqat buyruq O'ZGARGANDA xabar beriladi ("to'xta" -> dead reckoning siljimaydi, tezlik 0).
+  // Boshlang'ich 'S' hisobga olinmaydi: robot avtonom yurayotgan bo'lishi mumkin
+  const prevCmdRef = useRef<MecanumCommand>('S');
+  useEffect(() => {
+    if (lastCommand === prevCmdRef.current) return;
+    prevCmdRef.current = lastCommand;
+    navigationService.setMoving(lastCommand !== 'S');
+  }, [lastCommand]);
+
+  // ESP32 Direct MQTT & Local HTTP boshqaruv holatlari
+  const [esp32Connected, setEsp32Connected] = useState<boolean>(false);
+  const [esp32Status, setEsp32Status] = useState<string>('ULANMOQDA...');
+  const [hornActive, setHornActive] = useState<boolean>(false);
+  const [lightActive, setLightActive] = useState<boolean>(false);
+  const mqttClientRef = useRef<any>(null);
+  const heartbeatRef = useRef<number | null>(null);
+  const currentCmdRef = useRef<MecanumCommand>('S');
+  const pressedKeysRef = useRef<{ [key: string]: boolean }>({});
+
+  // ESP32 MQTT Ulanishi (HiveMQ broker orqali planshet va ESP32 simsiz aloqasi)
+  useEffect(() => {
+    let isMounted = true;
+    const topic = localStorage.getItem('qalqon_mqtt_topic') || 'qalqon/robot/cmd';
+
+    const initMqtt = async () => {
+      try {
+        if (!(window as any).mqtt) {
+          await new Promise<void>((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = 'https://unpkg.com/mqtt@5.10.4/dist/mqtt.min.js';
+            script.onload = () => resolve();
+            script.onerror = () => reject(new Error("MQTT yuklab bo'lmadi"));
+            document.head.appendChild(script);
+          });
+        }
+        if (!isMounted) return;
+
+        const mqttLib = (window as any).mqtt;
+        const clientId = 'qalqon_hud_' + Math.random().toString(16).substring(2, 10);
+        const client = mqttLib.connect('wss://broker.hivemq.com:8884/mqtt', {
+          clientId,
+          clean: true,
+          connectTimeout: 5000,
+          reconnectPeriod: 3000
+        });
+
+        mqttClientRef.current = client;
+
+        client.on('connect', () => {
+          if (!isMounted) return;
+          setEsp32Connected(true);
+          setEsp32Status('ONLINE (MQTT)');
+          addLogRef.current('SYSTEM', 'success', `ESP32 MQTT brokerga ulandi (${topic})`);
+        });
+
+        client.on('error', (err: any) => {
+          if (!isMounted) return;
+          console.warn('[RobotContext] MQTT xatosi:', err);
+          setEsp32Connected(false);
+          setEsp32Status('XATOLIK');
+        });
+
+        client.on('close', () => {
+          if (!isMounted) return;
+          setEsp32Connected(false);
+          setEsp32Status('UZILDI');
+        });
+      } catch {
+        if (!isMounted) return;
+        setEsp32Connected(false);
+        setEsp32Status('ULANMADI');
+      }
+    };
+
+    initMqtt();
+
+    return () => {
+      isMounted = false;
+      if (mqttClientRef.current) {
+        try {
+          mqttClientRef.current.end();
+        } catch {}
+      }
+      if (heartbeatRef.current) {
+        clearInterval(heartbeatRef.current);
+      }
+    };
+  }, []);
+
+  
+  // ESP32 Wi-Fi boshqaruvi holati
+  const [esp32Ip, setEsp32IpState] = useState<string>(() => esp32Service.getIp());
+  const [esp32Enabled, setEsp32EnabledState] = useState<boolean>(() => esp32Service.getEnabled());
+
+  const setEsp32Ip = (ip: string) => {
+    esp32Service.setIp(ip);
+    setEsp32IpState(esp32Service.getIp());
+    addLog('SERIAL', 'info', `ESP32 IP manzili yangilandi: ${esp32Service.getIp()}`);
+  };
+
+  const setEsp32Enabled = (enabled: boolean) => {
+    esp32Service.setEnabled(enabled);
+    setEsp32EnabledState(enabled);
+    addLog('SERIAL', 'info', `ESP32 to'g'ridan-to'g'ri aloqa: ${enabled ? 'YOQILDI' : 'O`CHIRILDI'}`);
+  };
+
+  // 360° Analog Joystik koordinatalari (-100 dan +100 gacha)
+  const sendJoystickCoordinates = useCallback((x: number, y: number) => {
+    if (x === 0 && y === 0) {
+      setIsMoving(false);
+      setLastCommand('S');
+    } else {
+      setIsMoving(true);
+    }
+    // 1. esp32Service orqali lokal Wi-Fi HTTP ga tezkor yuborish
+    esp32Service.sendJoystick(x, y);
+    // 2. MQTT orqali ham joystik vektorini yuborish ("J:x,y")
+    const topic = localStorage.getItem('qalqon_mqtt_topic') || 'qalqon/robot/cmd';
+    if (mqttClientRef.current && mqttClientRef.current.connected) {
+      try {
+        mqttClientRef.current.publish(topic, `J:${x},${y}`);
+      } catch {}
+    }
+  }, []);
+
+  const sendRawToESP32 = useCallback((cmdStr: string) => {
+    const topic = localStorage.getItem('qalqon_mqtt_topic') || 'qalqon/robot/cmd';
+    if (mqttClientRef.current && mqttClientRef.current.connected) {
+      try {
+        mqttClientRef.current.publish(topic, cmdStr);
+      } catch (e) {
+        console.error('MQTT publish error:', e);
+      }
+    }
+    const espIp = localStorage.getItem('qalqon_esp_ip');
+    if (espIp) {
+      fetch('http://' + espIp + '/move?dir=' + cmdStr, { mode: 'no-cors' }).catch(() => {});
+    }
+  }, []);
+
+  const toggleHorn = useCallback(() => {
+    setHornActive((prev) => {
+      const next = !prev;
+      sendRawToESP32(next ? 'HORN_ON' : 'HORN_OFF');
+      addLogRef.current('SYSTEM', 'info', `Signal (Horn): ${next ? "YOQILDI" : "O'CHIRILDI"}`);
+      return next;
+    });
+  }, [sendRawToESP32]);
+
+  const toggleLight = useCallback(() => {
+    setLightActive((prev) => {
+      const next = !prev;
+      sendRawToESP32(next ? 'LIGHT_ON' : 'LIGHT_OFF');
+      addLogRef.current('SYSTEM', 'info', `Fara (Light): ${next ? "YOQILDI" : "O'CHIRILDI"}`);
+      return next;
+    });
+  }, [sendRawToESP32]);
 
   const [sonars, setSonars] = useState<SonarSensors>({
     front: 58,
@@ -323,6 +490,16 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const speedKmH = pos.coords.speed !== null && pos.coords.speed !== undefined
           ? +(pos.coords.speed * 3.6).toFixed(1)
           : 0;
+        headingService.pushGps(pos.coords.heading, speedKmH);
+        // Markaziy navigatsiya (GPS + tezlik + giroskop): GPS uzilsa dead reckoning bilan davom etadi
+        navigationService.pushGps({
+          lat: pos.coords.latitude,
+          lon: pos.coords.longitude,
+          accuracyM: pos.coords.accuracy,
+          // Qurilma tezlik bermasa (null) navigatsiya o'zi GPS nuqtalaridan hisoblaydi
+          speedKmh: pos.coords.speed !== null && pos.coords.speed !== undefined ? speedKmH : null,
+          courseDeg: pos.coords.heading
+        });
 
         setGps({
           latitude: pos.coords.latitude,
@@ -425,172 +602,185 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
   };
 
-  const setSpeedLevel = (lvl: SpeedLevel) => {
+  const setSpeedLevel = useCallback((lvl: SpeedLevel) => {
     setSpeedLevelState(lvl);
     tacticalAudio.playClick();
-    const pwmMap = { 1: 130, 2: 190, 3: 250 };
-    addLog('SERIAL', 'info', `Tezlik rejimiga o'tildi: ${lvl} (${pwmMap[lvl]} PWM)`);
+    const pwmMap: Record<SpeedLevel, number> = { 1: 130, 2: 190, 3: 250 };
+    const pwm = pwmMap[lvl];
+    addLog('SERIAL', 'info', `Tezlik rejimiga o'tildi: ${lvl} (${pwm} PWM)`);
+    // ESP32 ga tezlikni uzatish
+    sendRawToESP32(`V:${pwm}`);
+    const espIp = localStorage.getItem('qalqon_esp_ip');
+    if (espIp) {
+      fetch(`http://${espIp}/speed?val=${pwm}`, { mode: 'no-cors' }).catch(() => {});
+    }
     if (!isSimulationMode) {
       fetch(`http://${system.rpiIp}:${system.rpiPort}/cmd?speed=${lvl}`).catch(() => {});
     }
-  };
+  }, [isSimulationMode, sendRawToESP32, system.rpiIp, system.rpiPort, addLog]);
 
   const isFrontBlocked = sonars.front <= 28 || cameraObstacle.isBlocked;
 
-  // Mecanum Command Handler
+  // Mecanum Command Handler (ESP32 MQTT + Heartbeat + Local Fallback)
   const sendMecanumCommand = useCallback((cmd: MecanumCommand) => {
+    // Qo'lda buyruq (joystik, klaviatura, ovoz) GPS avtopilotni darhol bekor qiladi
+    if (!autopilotService.isSending() && autopilotService.getState().active) {
+      autopilotService.stop('Qo‘lda boshqaruv: avtopilot o‘chirildi');
+    }
     setLastCommand(cmd);
     setIsMoving(cmd !== 'S');
 
+    const cmdNames: Record<MecanumCommand, string> = {
+      F: 'Oldinga (F)',
+      B: 'Orqaga (B)',
+      L: 'Chapga Burilish (L)',
+      R: "O'ngga Burilish (R)",
+      Q: 'Chapga Strafe / Egri (Q)',
+      E: "O'ngga Strafe / Egri (E)",
+      G: 'Oldinga-Chapga Egri (G)',
+      I: "Oldinga-O'ngga Egri (I)",
+      H: 'Orqaga-Chapga (H)',
+      J: "Orqaga-O'ngga (J)",
+      S: "To'xtash (S)",
+      U: 'Minora Yuqoriga (U)',
+      D: 'Minora Pastga (D)'
+    };
+
     if (cmd === 'S') {
       tacticalAudio.playClick();
-      addLog('SERIAL', 'info', 'STOP (S) komandasi yuborildi. Shassi to\'xtadi.');
+      addLog('SERIAL', 'info', "STOP (S) komandasi yuborildi. Shassi to'xtadi.");
     } else {
       tacticalAudio.playCommandBeep();
-      const cmdNames: Record<MecanumCommand, string> = {
-        F: 'Oldinga (F)',
-        B: 'Orqaga (B)',
-        L: 'Chapga Burilish (L)',
-        R: 'O\'ngga Burilish (R)',
-        Q: 'Chapga Strafe Yonlama (Q)',
-        E: 'O\'ngga Strafe Yonlama (E)',
-        G: 'Oldinga-Chapga Yoy (G)',
-        I: 'Oldinga-O\'ngga Yoy (I)',
-        H: 'Orqaga-Chapga Yoy (H)',
-        J: 'Orqaga-O\'ngga Yoy (J)',
-        S: 'To\'xtash (S)',
-        U: 'Minora Yuqoriga (U)',
-        D: 'Minora Pastga (D)'
-      };
-      addLog('SERIAL', 'info', `Buyruq uzatildi: ${cmdNames[cmd]}`);
+      addLog('SERIAL', 'info', `Buyruq uzatildi: ${cmdNames[cmd] || cmd}`);
     }
 
-    if (['F', 'G', 'I'].includes(cmd) && (sonars.front <= 28 || cameraObstacle.isBlocked)) {
+    // Oldinga harakatda avtotormoz to'siq tekshiruvi
+    const isGoingForward = cmd === 'F' || cmd === 'G' || cmd === 'I' || cmd === 'Q' || cmd === 'E';
+    if (isGoingForward && (sonars.front <= 28 || cameraObstacle.isBlocked)) {
       tacticalAudio.playObstacleAlert();
       addLog('AI', 'error', `🛑 AVTOTORMOZ: Kamera "Ko'zi" to'siqni aniqladi (${sonars.front} sm)! Oldinga harakat qulflandi!`);
       setLastCommand('S');
       setIsMoving(false);
+      currentCmdRef.current = 'S';
+      if (heartbeatRef.current) {
+        clearInterval(heartbeatRef.current);
+        heartbeatRef.current = null;
+      }
+      sendRawToESP32('S');
       return;
     }
 
-    // ESP32 to'g'ridan-to'g'ri Wi-Fi moduliga buyruq yuborish
+    if (heartbeatRef.current) {
+      clearInterval(heartbeatRef.current);
+      heartbeatRef.current = null;
+    }
+
+    currentCmdRef.current = cmd;
+
+    // Skid-steer robot uchun moslash
+    let espCmd: string = cmd;
+    if (cmd === 'Q') espCmd = 'G';
+    if (cmd === 'E') espCmd = 'I';
+
     esp32Service.sendCommand(cmd);
+    sendRawToESP32(espCmd);
+
+    // ESP32 safety taymeri uzilib qolmasligi uchun harakat davomida har 250ms da keep-alive yuboriladi
+    if (cmd !== 'S') {
+      heartbeatRef.current = window.setInterval(() => {
+        sendRawToESP32(espCmd);
+      }, 250);
+    }
 
     if (!isSimulationMode) {
       fetch(`http://${system.rpiIp}:${system.rpiPort}/cmd?c=${cmd}`).catch((err) => {
         console.error('RPi connection err:', err);
       });
     }
-  }, [addLog, isSimulationMode, sonars.front, system.rpiIp, system.rpiPort]);
+  }, [addLog, cameraObstacle.isBlocked, isSimulationMode, sendRawToESP32, sonars.front, system.rpiIp, system.rpiPort]);
 
-  // ESP32 Wi-Fi boshqaruvi holati
-  const [esp32Ip, setEsp32IpState] = useState<string>(() => esp32Service.getIp());
-  const [esp32Enabled, setEsp32EnabledState] = useState<boolean>(() => esp32Service.getEnabled());
-
-  const setEsp32Ip = (ip: string) => {
-    esp32Service.setIp(ip);
-    setEsp32IpState(esp32Service.getIp());
-    addLog('SERIAL', 'info', `ESP32 IP manzili yangilandi: ${esp32Service.getIp()}`);
-  };
-
-  const setEsp32Enabled = (enabled: boolean) => {
-    esp32Service.setEnabled(enabled);
-    setEsp32EnabledState(enabled);
-    addLog('SERIAL', 'info', `ESP32 to'g'ridan-to'g'ri aloqa: ${enabled ? 'YOQILDI' : 'O`CHIRILDI'}`);
-  };
-
-  // 360° Analog Joystik koordinatalari (-100 dan +100 gacha)
-  const sendJoystickCoordinates = useCallback((x: number, y: number) => {
-    if (x === 0 && y === 0) {
-      setIsMoving(false);
-      setLastCommand('S');
-    } else {
-      setIsMoving(true);
-    }
-    esp32Service.sendJoystick(x, y);
-  }, []);
-
-  // Keyboard navigation listener (W, A, S, D, Arrow keys: qo'shma tugmalarni qo'llab-quvvatlaydi)
-  // To'g'ri va o'ngga bir vaqtda bosilganda o'ng g'ildiraklar teskari aylanmaydi, quvvati pasayib yoy hosil qiladi
+  // Keyboard navigation listener (Multi-key W, A, S, D, Q, E, Space, 1, 2, 3)
   useEffect(() => {
-    const activeKeys = new Set<string>();
+    const evaluateKeys = (): MecanumCommand => {
+      const p = pressedKeysRef.current;
+      const fwd = !!(p['W'] || p['ARROWUP']);
+      const back = !!(p['S'] || p['ARROWDOWN']);
+      const left = !!(p['A'] || p['ARROWLEFT']);
+      const right = !!(p['D'] || p['ARROWRIGHT']);
+      const q = !!p['Q'];
+      const e = !!p['E'];
 
-    const evaluateMovement = () => {
-      const up = activeKeys.has('ARROWUP') || activeKeys.has('KEYW');
-      const down = activeKeys.has('ARROWDOWN') || activeKeys.has('KEYS');
-      const left = activeKeys.has('ARROWLEFT') || activeKeys.has('KEYA');
-      const right = activeKeys.has('ARROWRIGHT') || activeKeys.has('KEYD');
-      const strafeLeft = activeKeys.has('KEYQ');
-      const strafeRight = activeKeys.has('KEYE');
-
-      if (up && right) {
-        sendMecanumCommand('I'); // Oldinga + O'ngga (differensial ravon burilish)
-      } else if (up && left) {
-        sendMecanumCommand('G'); // Oldinga + Chapga (differensial ravon burilish)
-      } else if (down && right) {
-        sendMecanumCommand('J'); // Orqaga + O'ngga
-      } else if (down && left) {
-        sendMecanumCommand('H'); // Orqaga + Chapga
-      } else if (up) {
-        sendMecanumCommand('F');
-      } else if (down) {
-        sendMecanumCommand('B');
-      } else if (strafeLeft) {
-        sendMecanumCommand('Q');
-      } else if (strafeRight) {
-        sendMecanumCommand('E');
-      } else if (right) {
-        sendMecanumCommand('R'); // Faqat o'ng tugma bosilganda joyida o'q atrofida buriladi
-      } else if (left) {
-        sendMecanumCommand('L'); // Faqat chap tugma bosilganda joyida o'q atrofida buriladi
-      } else {
-        sendMecanumCommand('S');
+      if (fwd && !back) {
+        if (left && !right) return 'G';
+        if (right && !left) return 'I';
+        return 'F';
       }
+      if (back && !fwd) {
+        if (left && !right) return 'H';
+        if (right && !left) return 'J';
+        return 'B';
+      }
+      if (left && !right) return 'L';
+      if (right && !left) return 'R';
+      if (q) return 'G';
+      if (e) return 'I';
+      return 'S';
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) return;
 
-      const code = e.code.toUpperCase();
-      const moveCodes = ['ARROWUP', 'ARROWDOWN', 'ARROWLEFT', 'ARROWRIGHT', 'KEYW', 'KEYS', 'KEYA', 'KEYD', 'KEYQ', 'KEYE'];
-
-      if (moveCodes.includes(code)) {
-        e.preventDefault();
-        if (!activeKeys.has(code)) {
-          activeKeys.add(code);
-          evaluateMovement();
+      const key = e.key.toUpperCase();
+      if (['W', 'A', 'S', 'D', 'Q', 'E', 'ARROWUP', 'ARROWDOWN', 'ARROWLEFT', 'ARROWRIGHT'].includes(key)) {
+        if (pressedKeysRef.current[key]) return;
+        pressedKeysRef.current[key] = true;
+        const nextCmd = evaluateKeys();
+        if (nextCmd !== currentCmdRef.current) {
+          sendMecanumCommand(nextCmd);
         }
-      } else if (e.key === ' ') {
+      } else if (key === ' ' || key === 'ESCAPE') {
         e.preventDefault();
-        activeKeys.clear();
+        pressedKeysRef.current = {};
         sendMecanumCommand('S');
-      } else if (e.key === '1') setSpeedLevel(1);
-      else if (e.key === '2') setSpeedLevel(2);
-      else if (e.key === '3') setSpeedLevel(3);
+      } else if (key === '1') setSpeedLevel(1);
+      else if (key === '2') setSpeedLevel(2);
+      else if (key === '3') setSpeedLevel(3);
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
       if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) return;
 
-      const code = e.code.toUpperCase();
-      const moveCodes = ['ARROWUP', 'ARROWDOWN', 'ARROWLEFT', 'ARROWRIGHT', 'KEYW', 'KEYS', 'KEYA', 'KEYD', 'KEYQ', 'KEYE'];
-
-      if (moveCodes.includes(code)) {
-        e.preventDefault();
-        if (activeKeys.has(code)) {
-          activeKeys.delete(code);
-          evaluateMovement();
+      const key = e.key.toUpperCase();
+      if (['W', 'A', 'S', 'D', 'Q', 'E', 'ARROWUP', 'ARROWDOWN', 'ARROWLEFT', 'ARROWRIGHT'].includes(key)) {
+        pressedKeysRef.current[key] = false;
+        const nextCmd = evaluateKeys();
+        if (nextCmd !== currentCmdRef.current) {
+          sendMecanumCommand(nextCmd);
         }
+      }
+    };
+
+    const handleBlur = () => {
+      pressedKeysRef.current = {};
+      if (currentCmdRef.current !== 'S') {
+        sendMecanumCommand('S');
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleBlur);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleBlur);
     };
-  }, [sendMecanumCommand]);
+  }, [sendMecanumCommand,
+        sendJoystickCoordinates,
+        esp32Ip,
+        setEsp32Ip,
+        esp32Enabled,
+        setEsp32Enabled, setSpeedLevel]);
 
   // WebSocket ulanishi (Haqiqiy robot rejimida jonli telemetriya)
   useEffect(() => {
@@ -640,7 +830,17 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 status: 'ONLINE'
               }));
             }
+            // Robot IMU / giroskop (imu.yaw, yaw, compass ...): xaritadagi marker yo'nalishi shu bilan boshqariladi
+            headingService.ingestTelemetry(d);
             if (d.gps && d.gps.has_fix) {
+              headingService.pushGps(d.gps.heading, d.gps.speed);
+              navigationService.pushGps({
+                lat: d.gps.latitude,
+                lon: d.gps.longitude,
+                accuracyM: d.gps.accuracy ?? d.gps.hdop ?? null,
+                speedKmh: d.gps.speed,
+                courseDeg: d.gps.heading
+              });
               setGps((prev) => ({
                 ...prev,
                 latitude: d.gps.latitude,
@@ -758,6 +958,30 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     [addLog, isSimulationMode, system.rpiIp, system.rpiPort]
   );
 
+  // GPS avtopilot: ESP32 buyrug'i va to'siq ma'lumoti (kamera + sonar) shu kontekstdan olinadi
+  const sendCmdRef = useRef(sendMecanumCommand);
+  sendCmdRef.current = sendMecanumCommand;
+  const obstacleRef = useRef({ cameraObstacle, sonars });
+  obstacleRef.current = { cameraObstacle, sonars };
+  useEffect(() => {
+    autopilotService.setDriver((cmd) => sendCmdRef.current(cmd));
+    autopilotService.setObstacleProvider(() => {
+      const { cameraObstacle: c, sonars: s } = obstacleRef.current;
+      return {
+        distanceCm: c.distanceCm,
+        label: c.label,
+        evasion: c.evasionDirection,
+        cameraT: lastCameraObstacleUpdateRef.current,
+        sonarFrontCm: s.front
+      };
+    });
+    return () => {
+      autopilotService.stop();
+      autopilotService.setDriver(null);
+      autopilotService.setObstacleProvider(null);
+    };
+  }, []);
+
   const setRpiConfig = (ip: string, port: number) => {
     setSystem((prev) => ({ ...prev, rpiIp: ip, rpiPort: port }));
     addLog('SYSTEM', 'info', `RPi konfiguratsiyasi yangilandi: ${ip}:${port}`);
@@ -810,7 +1034,13 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         toggleSimulationMode,
         gps,
         startRealGPS,
-        toggleGPSMode
+        toggleGPSMode,
+        esp32Status,
+        esp32Connected,
+        hornActive,
+        lightActive,
+        toggleHorn,
+        toggleLight
       }}
     >
       {children}

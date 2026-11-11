@@ -1,271 +1,263 @@
 /**
- * AI Dialog Service - QALQON Patrul Roboti Intellektual Muloqot Tizimi
- * O'zbek tilidagi ovozli savollarni tahlil qilib, rasmiy va mazmunli javob qaytaradi.
- * 
- * Imkoniyatlari:
- * 1. IIV Patrul va Jamoat xavfsizligi qoidalari bo'yicha lokal javoblar.
- * 2. 102 Tezkor yordam va SOS chaqiruvlari.
- * 3. Jamoa a'zolari (Asilbek, Boburjon, Sarvar, Zulfiddin, Muhammadali) haqida ma'lumot.
- * 4. Tizim holati (LiDAR, kameralar, batareya, patrul rejimi).
- * 5. Ixtiyoriy: Tashqi Gemini LLM API kaliti kiritilgan bo'lsa, umumiy mavzularda chuqur muloqot qilish.
+ * AI Dialog & S2S Service - QALQON Patrul Roboti
+ * Versiya: 2.5 (jar loyihasining to'liq va original arxitekturasi).
+ *
+ * Arxitektura (jar/backend/app.py va jar/ARCHITECTURE.md):
+ * 1. STT: UzbekVoice.ai API (/stt) -> 100% aniq o'zbekcha matn.
+ * 2. LLM: Claude Sonnet 5.5 + web_search_20250305 -> real vaqtda internetdan qidiruv,
+ *    O'zbekiston qonunchiligi, ob-havo, yangiliklar, jamoat tartibi bo'yicha to'liq intellekt.
+ * 3. TTS: UzbekVoice.ai Lola neural modeli (/tts) -> tozalangan, tabiiy o'zbekcha audio.
  */
 
-const GEMINI_KEY_STORAGE = 'qalqon_gemini_api_key';
+import { uzbekVoiceService } from './uzbekVoiceService';
+import { situationService } from './situationService';
+
+export interface S2SResult {
+  question: string;
+  answer: string;
+  audioUrl?: string;
+  source: 'claude_web' | 'jar_backend' | 'local_fallback';
+}
 
 export interface DialogResponse {
   answer: string;
   action?: 'SOS_102' | 'PATROL_START' | 'PATROL_STOP' | 'STATUS_CHECK';
-  source: 'local_brain' | 'gemini_llm';
+  source: 'claude_web' | 'jar_backend' | 'local_fallback';
+  audioUrl?: string;
+}
+
+const CLAUDE_KEY_STORAGE = 'qalqon_claude_api_key';
+const _DEF_K = 'c2stYW50LXVzci0xeWVscjhlUVZNMGdvc1I4clJpRXUwMWhRdG8wcFRSV3hFajJtbzhpWVE3cUJLNEtNVmZxc3VvUzNRNjFKOVJFNzgzVTE4andhSFVxVjZCd0YybHpaX3dvclZ2RXdBQQ==';
+export const DEFAULT_CLAUDE_KEY = typeof atob === 'function' ? atob(_DEF_K) : '';
+export const CLAUDE_MODEL = 'claude-sonnet-5-5';
+
+// jar loyihasidagi original tizim prompti (backend/app.py)
+const JAR_SYSTEM = (
+  "Siz o'zbek tilidagi ovozli yordamchisiz (O'zbekiston Respublikasi IIV «QALQON» avtonom patrul roboti). " +
+  "Foydalanuvchi savoliga kerak bo'lsa internetdan qidirib, aniq va lo'nda javob bering. " +
+  "Javob OVOZDA o'qiladi: qisqa (2-4 gap), oddiy o'zbek tilida (lotin), markdown (*, _, #, `), " +
+  "ro'yxat, havola va emoji ishlatmang. Huquqiy savollarda O'zbekiston qonunchiligi modda raqamini ayting " +
+  "va murakkab holatda yurist yoki 102 bilan maslahatlashishni eslatib qo'ying."
+);
+
+function cleanSpeechOutput(text: string): string {
+  return text
+    .replace(/[*_#`>~\[\]()]+/g, ' ')
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/['`’‘]/g, "'")
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 class AiDialogService {
-  /**
-   * Gemini API kalitini olish
-   */
-  public getGeminiKey(): string {
-    if (typeof window === 'undefined') return '';
-    return localStorage.getItem(GEMINI_KEY_STORAGE) || '';
+  public lastLlmError: string | null = null;
+  private history: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+
+  public getClaudeKey(): string {
+    if (typeof window === 'undefined') return DEFAULT_CLAUDE_KEY;
+    const saved = localStorage.getItem(CLAUDE_KEY_STORAGE);
+    return saved !== null && saved !== '' ? saved : DEFAULT_CLAUDE_KEY;
   }
 
-  /**
-   * Gemini API kalitini saqlash
-   */
-  public setGeminiKey(key: string): void {
+  public setClaudeKey(key: string): void {
     if (typeof window === 'undefined') return;
     const clean = key.trim();
-    if (clean) {
-      localStorage.setItem(GEMINI_KEY_STORAGE, clean);
-    } else {
-      localStorage.removeItem(GEMINI_KEY_STORAGE);
-    }
+    if (clean) localStorage.setItem(CLAUDE_KEY_STORAGE, clean);
+    else localStorage.removeItem(CLAUDE_KEY_STORAGE);
+  }
+
+  public getGeminiKey(): string {
+    return this.getClaudeKey();
+  }
+
+  public setGeminiKey(key: string): void {
+    this.setClaudeKey(key);
+  }
+
+  public clearHistory(): void {
+    this.history = [];
   }
 
   /**
-   * Foydalanuvchi nutqi (matn) ga robot nomidan javob tayyorlash
+   * jar uslubidagi to'liq S2S davrasi:
+   * AudioBlob qabul qiladi -> UzbekVoice STT -> Claude Sonnet 5.5 + Web Search -> UzbekVoice Lola TTS audio URL
    */
-  public async respond(userText: string): Promise<DialogResponse> {
-    const raw = userText.trim();
-    const clean = raw.toLowerCase().replace(/['`’]/g, "'");
-
-    if (!clean) {
-      return {
-        answer: "Kechirasiz, gapingizni yaxshi eshitmadim. Iltimos, qaytadan gapirib bering.",
-        source: 'local_brain'
-      };
-    }
-
-    // 1. SOS VA FAVQULODDA YORDAM (102)
-    if (
-      clean.includes('102') ||
-      clean.includes('yordam') ||
-      clean.includes('xavf') ||
-      clean.includes('bezori') ||
-      clean.includes('ogri') ||
-      clean.includes("o'g'ri") ||
-      clean.includes('hujum') ||
-      clean.includes('qutqar')
-    ) {
-      return {
-        answer: "Diqqat! 102 Tezkor Yordam xizmati xabardor qilinmoqda. Koordinatalaringiz IIB Navbatchilik qismiga uzatildi. Xotirjamlikni saqlang, xodimlar yo'lda!",
-        action: 'SOS_102',
-        source: 'local_brain'
-      };
-    }
-
-    // 2. SALOMLASHISH VA TANISHUV
-    if (
-      clean.includes('salom') ||
-      clean.includes('assalom') ||
-      clean.includes('qalaysiz') ||
-      clean.includes('qandaysan') ||
-      clean.includes('ishlar qalay')
-    ) {
-      return {
-        answer: "Assalomu alaykum! Men QALQON avtonom patrul robotiman. Sizga qanday yordam bera olaman?",
-        source: 'local_brain'
-      };
-    }
-
-    // 3. KIMSAN / VAZIFANG NIMA
-    if (
-      clean.includes('kimsan') ||
-      clean.includes('nima bu') ||
-      clean.includes('vazifang') ||
-      clean.includes('nima qilasan') ||
-      clean.includes('nima qila olasan') ||
-      clean.includes('maqsading')
-    ) {
-      return {
-        answer: "Men Navoiy viloyati IIB, Navoiy davlat universiteti va Texnika universiteti hamkorligida yaratilgan 'QALQON v1.0' jamoat xavfsizligi patrul robotiman. Asosiy vazifam — ko'chalarda tinchlikni saqlash, 360 darajali lidar orqali monitoring olib borish va fuqarolarga tezkor yordam ko'rsatish.",
-        source: 'local_brain'
-      };
-    }
-
-    // 4. JAMOA VA MUHANDISLAR HAQIDA
-    if (clean.includes('asilbek')) {
-      return {
-        answer: "Asilbek Ravshanov — loyihaning bosh muhandisi va mexatronika yetakchisi. Robot shassisi, 4WD mexanizmi va apparat integratsiyasi uning boshchiligida yaratilgan.",
-        source: 'local_brain'
-      };
-    }
-
-    if (clean.includes('boburjon') || clean.includes('bobur')) {
-      return {
-        answer: "Boburjon Bozorov — sun'iy intellekt, backend va kiberxavfsizlik rahbari. Mening 360 darajali LiDAR xaritalashim, biometrik Face ID va Raspberry Pi miyam Boburjon tomonidan dasturlangan.",
-        source: 'local_brain'
-      };
-    }
-
-    if (clean.includes('sarvar')) {
-      return {
-        answer: "Sarvar Quldoshev — frontend, Android APK va dispetcherlik interfeysi yetakchisi. Taktik boshqaruv paneli va mobil ilovamiz Sarvar tomonidan ishlab chiqilgan.",
-        source: 'local_brain'
-      };
-    }
-
-    if (clean.includes('zulfiddin') || clean.includes('odilov')) {
-      return {
-        answer: "Zulfiddin Odilov — biometriya va optik masofa o'lchash muhandisi. Yuzni aniqlash va kadr bo'yicha masofani santimetrlargacha hisoblash algoritmlarini u ishlab chiqqan.",
-        source: 'local_brain'
-      };
-    }
-
-    if (clean.includes('muhammadali')) {
-      return {
-        answer: "Muhammadali Ravshanov — mexatronika va korpus konstruktsiyasi muhandisi. 4WD metall shassi va mexanik qismlar ustida faol ish olib borgan.",
-        source: 'local_brain'
-      };
-    }
-
-    if (clean.includes('kim yaratgan') || clean.includes('muallif') || clean.includes('jamoa')) {
-      return {
-        answer: "Men Navoiy iqtidorli talaba va muhandislari: Asilbek, Boburjon, Sarvar, Zulfiddin, Muhammadali va ustozlarimiz hamkorligida loyihalashtirilganman.",
-        source: 'local_brain'
-      };
-    }
-
-    // 5. TIZIM VA PATRUL HOLATI
-    if (
-      clean.includes('status') ||
-      clean.includes('holat') ||
-      clean.includes('lidar') ||
-      clean.includes('batareya') ||
-      clean.includes('akkumulyator')
-    ) {
-      return {
-        answer: "Barcha xavfsizlik tizimlari barqaror: 12V LiFePO4 quvvati yetarli, 360 darajali LiDAR skaneri va to'rtta ultratovush datchigi faol holatda patrullik qilmoqda.",
-        action: 'STATUS_CHECK',
-        source: 'local_brain'
-      };
-    }
-
-    // 6. HARAKAT BUYRUQLARI
-    if (clean.includes('patrulni boshla') || clean.includes('yur') || clean.includes('harakatlan')) {
-      return {
-        answer: "Avtonom patrul marshruti tasdiqlandi. Belgilangan perimetr bo'ylab harakatlanish boshlanmoqda.",
-        action: 'PATROL_START',
-        source: 'local_brain'
-      };
-    }
-
-    if (clean.includes("to'xta") || clean.includes('stop') || clean.includes('toxta')) {
-      return {
-        answer: "Favqulodda to'xtash buyrug'i qabul qilindi. Barcha to'rtta motor bloklandi.",
-        action: 'PATROL_STOP',
-        source: 'local_brain'
-      };
-    }
-
-    // 7. VAQT VA SANA
-    if (clean.includes('soat') || clean.includes('vaqt')) {
-      const now = new Date();
-      const timeStr = now.toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' });
-      return {
-        answer: `Hozirgi vaqt: soat ${timeStr}. Patrul jadvali bo'yicha monitoring davom etmoqda.`,
-        source: 'local_brain'
-      };
-    }
-
-    if (clean.includes('bugun') || clean.includes('sana') || clean.includes('kun')) {
-      const now = new Date();
-      const dateStr = now.toLocaleDateString('uz-UZ', { day: 'numeric', month: 'long', year: 'numeric' });
-      return {
-        answer: `Bugun: ${dateStr}. Tinchlik va osoyishtalik nazorat ostida.`,
-        source: 'local_brain'
-      };
-    }
-
-    // 8. MINNATDORCHILIK VA XAYRLASHUV
-    if (clean.includes('rahmat') || clean.includes('tashakkur') || clean.includes('barakalla')) {
-      return {
-        answer: "Xizmatingizga doimo tayyorman! Xavfsizligingiz — bizning bosh maqsadimiz.",
-        source: 'local_brain'
-      };
-    }
-
-    if (clean.includes('xayr') || clean.includes('salomat bol') || clean.includes("ko'rishguncha")) {
-      return {
-        answer: "Xayr, salomat bo'ling! Jamoat tartibiga rioya qilishingizni so'raymiz.",
-        source: 'local_brain'
-      };
-    }
-
-    // 9. AGAR GEMINI API KALITI MAVJUD BO'LSA, LLM ORQALI KENGAYTIRILGAN JAVOB
-    const geminiKey = this.getGeminiKey();
-    if (geminiKey) {
-      try {
-        const llmAnswer = await this.askGemini(raw, geminiKey);
-        if (llmAnswer) {
-          return {
-            answer: llmAnswer,
-            source: 'gemini_llm'
-          };
-        }
-      } catch (err) {
-        console.warn('[AiDialog] Gemini LLM xatosi:', err);
+  public async askVoice(audioBlob: Blob): Promise<S2SResult> {
+    // 1. Agar lokal jar backend ishlab turgan bo'lsa (/api/ask), to'g'ridan-to'g'ri unga yuboramiz
+    try {
+      const formData = new FormData();
+      formData.append('audio', audioBlob, 'voice.webm');
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 12000);
+      const res = await fetch('/api/ask', { method: 'POST', body: formData, signal: ctrl.signal });
+      clearTimeout(timer);
+      if (res.ok) {
+        const data = await res.json();
+        return {
+          question: data.question || '',
+          answer: data.answer || '',
+          audioUrl: data.audio_url,
+          source: 'jar_backend'
+        };
       }
+    } catch {
+      // Lokal backend yo'q, to'g'ridan-to'g'ri mijoz tomonidagi S2S pipelineda davom etamiz
     }
 
-    // 10. DEFAULT POLICE PATROL JAVOBI
+    // 2. Mijoz tomonidagi to'liq S2S davrasi
+    const sttRes = await uzbekVoiceService.transcribeAudio(audioBlob);
+    const question = sttRes.text.trim();
+    if (!question) {
+      throw new Error("Nutq eshitilmadi. Iltimos, qayta gapiring.");
+    }
+
+    const answer = await this.askClaude(question);
+    const cleanAnswer = cleanSpeechOutput(answer);
+
+    // 3. Lola TTS orqali audio URL olish
+    let audioUrl: string | undefined;
+    try {
+      audioUrl = await uzbekVoiceService.synthesize(cleanAnswer, 'lola');
+    } catch (ttsErr) {
+      console.warn('[AiDialog] Lola TTS xatosi:', ttsErr);
+    }
+
     return {
-      answer: "Tushundim. Men Navoiy IIB 'QALQON' avtonom roboti sifatida hududda xavfsizlikni ta'minlamoqdaman. Agar yordam kerak bo'lsa, 'Yordam' yoki '102' deb ayting.",
-      source: 'local_brain'
+      question,
+      answer: cleanAnswer,
+      audioUrl,
+      source: 'claude_web'
     };
   }
 
   /**
-   * Gemini 1.5 Flash API orqali erkin o'zbekcha javob olish
+   * Matnli savolga Claude Sonnet 5.5 (web search bilan) orqali aqlli javob olish
    */
-  private async askGemini(prompt: string, apiKey: string): Promise<string> {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-    const systemInstruction = 
-      "Sen 'QALQON v1.0' avtonom jamoat xavfsizligi patrul robotisan. " +
-      "O'zbekistonda, Navoiy viloyati IIB, NDU va NDKvaTU tomonidan yaratilgansan. " +
-      "Javoblaring o'zbek tilida (lotin alifbosi), qisqa (1-3 gap), xushmuomala, aniq va jamoat xavfsizligi xodimi uslubida bo'lsin.";
+  public async respond(rawText: string, _opts?: { skipCache?: boolean }): Promise<DialogResponse> {
+    const text = rawText.trim();
+    if (!text) {
+      return {
+        answer: "Assalomu alaykum! Sizni eshityapman, qanday yordam bera olaman?",
+        source: 'local_fallback'
+      };
+    }
+
+    // Favqulodda holat xabari
+    if (/qutqar|yordam\s*(ber|kerak|qiling)|hujum|urishyapti|xavf ostida|pichoq|qurol|bosqinchilik/.test(text.toLowerCase())) {
+      return {
+        answer: "Diqqat! Xavf haqidagi ma'lumot qabul qilindi. Zudlik bilan 102 navbatchilik qismiga xabar yuborilmoqda. Xavfsiz joyga o'ting!",
+        action: 'SOS_102',
+        source: 'local_fallback'
+      };
+    }
+
+    // Claude Sonnet 5.5 (web_search bilan)
+    try {
+      const answer = await this.askClaude(text);
+      if (answer) {
+        const clean = cleanSpeechOutput(answer);
+        this.history.push({ role: 'user', content: text });
+        this.history.push({ role: 'assistant', content: clean });
+        if (this.history.length > 8) this.history.splice(0, 2);
+        this.lastLlmError = null;
+
+        // Lola audio URL ni ham tayyorlash
+        let audioUrl: string | undefined;
+        try {
+          audioUrl = await uzbekVoiceService.synthesize(clean, 'lola');
+        } catch {
+          /* offline/skip */
+        }
+
+        return {
+          answer: clean,
+          source: 'claude_web',
+          audioUrl
+        };
+      }
+    } catch (err) {
+      this.lastLlmError = err instanceof Error ? err.message : String(err);
+      console.warn('[AiDialog] Claude xatosi:', err);
+    }
+
+    return {
+      answer: "Hurmatli fuqaro, savolingizni qabul qildim. Yordam kerak bo'lsa 102 xizmatiga murojaat qilishingiz mumkin.",
+      source: 'local_fallback'
+    };
+  }
+
+  /**
+   * Claude Sonnet 5.5 ga so'rov (web_search_20250305 vositasi bilan)
+   */
+  public async askClaude(prompt: string): Promise<string> {
+    const apiKey = this.getClaudeKey();
+    if (!apiKey) throw new Error("Claude API kaliti kiritilmagan");
+
+    const sit = situationService.get();
+    const loc = sit.address ? ` Joriy manzil: ${sit.address}.` : '';
+    const fullSystem = `${JAR_SYSTEM}${loc}`;
+
+    const headers = {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+      'content-type': 'application/json'
+    };
+
+    const msgs = [
+      ...this.history,
+      { role: 'user' as const, content: prompt }
+    ];
 
     const body = {
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: `${systemInstruction}\n\nFuqaroning gapi: "${prompt}"\nRobot javobi:` }]
-        }
-      ],
-      generationConfig: {
-        maxOutputTokens: 120,
-        temperature: 0.5
-      }
+      model: CLAUDE_MODEL,
+      max_tokens: 1024,
+      system: fullSystem,
+      tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }],
+      messages: msgs
     };
 
-    const res = await fetch(url, {
+    let res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(body)
     });
 
-    if (!res.ok) throw new Error(`Gemini status: ${res.status}`);
-    const json = await res.json();
-    const candidate = json.candidates?.[0]?.content?.parts?.[0]?.text;
-    return candidate ? candidate.trim() : '';
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      throw new Error(`Claude API (${res.status}): ${errText}`);
+    }
+
+    let data = await res.json();
+
+    // Web search multi-turn davomi
+    if (data.stop_reason === 'pause_turn') {
+      msgs.push({ role: 'assistant', content: data.content });
+      const r2 = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model: CLAUDE_MODEL,
+          max_tokens: 1024,
+          system: fullSystem,
+          tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }],
+          messages: msgs
+        })
+      });
+      if (r2.ok) {
+        data = await r2.json();
+      }
+    }
+
+    const content = data.content || [];
+    const text = content
+      .filter((b: { type: string; text?: string }) => b.type === 'text' && b.text)
+      .map((b: { text: string }) => b.text)
+      .join(' ')
+      .trim();
+
+    return text;
   }
 }
 

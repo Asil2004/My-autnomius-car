@@ -44,6 +44,8 @@ dependencies {
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
+    // USB web-kamera (UVC): Android tizimi tashqi kamerani bermaydigan planshetlarda kamerani to'g'ridan-to'g'ri o'qish
+    implementation 'com.herohan:UVCAndroid:1.0.12'
 }
 
 apply from: 'capacitor.build.gradle'

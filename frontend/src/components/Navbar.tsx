@@ -10,15 +10,17 @@ import {
   BatteryCharging,
   BatteryMedium,
   OctagonAlert,
-  LogOut
+  LogOut,
+  Gamepad2
 } from 'lucide-react';
 import { tacticalAudio } from '../services/audioService';
 
 interface NavbarProps {
   onLockScreen?: () => void;
+  onOpenController?: () => void;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ onLockScreen }) => {
+export const Navbar: React.FC<NavbarProps> = ({ onLockScreen, onOpenController }) => {
   const {
     battery,
     system,
@@ -137,6 +139,21 @@ export const Navbar: React.FC<NavbarProps> = ({ onLockScreen }) => {
           <OctagonAlert className="w-4 h-4" />
           <span className="hidden sm:inline">E-STOP</span>
         </button>
+
+        {/* ESP32 Masofaviy Boshqaruv Pulti */}
+        {onOpenController && (
+          <button
+            onClick={() => {
+              tacticalAudio.playClick();
+              onOpenController();
+            }}
+            title="ESP32 Masofaviy Boshqaruv Pulti"
+            className="px-2.5 py-1.5 rounded bg-teal-900/40 hover:bg-teal-800/60 border border-teal-500/60 text-teal-300 font-mono text-xs flex items-center space-x-1 transition-all"
+          >
+            <Gamepad2 className="w-4 h-4" />
+            <span className="hidden md:inline">PULT</span>
+          </button>
+        )}
 
         {/* Lock Screen / Return to 3D Robot Face View */}
         {onLockScreen && (

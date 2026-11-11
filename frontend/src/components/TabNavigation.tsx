@@ -28,7 +28,7 @@ export const TabNavigation: React.FC = () => {
   ];
 
   return (
-    <nav className="w-full bg-tactical-950/95 border-t border-tactical-700/60 backdrop-blur-md px-2 py-1.5 flex items-center justify-around z-30 select-none">
+    <nav className="w-full shrink-0 bg-tactical-950/95 border-t border-tactical-700/60 backdrop-blur-md px-2 pt-1.5 safe-bottom flex items-center justify-around z-30 select-none">
       {tabs.map((tab) => {
         const Icon = tab.icon;
         const isActive = activeTab === tab.id;

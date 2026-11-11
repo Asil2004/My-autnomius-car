@@ -381,6 +381,43 @@ async def proxy_stt(request: Request):
     except Exception as e:
         return Response(content=json.dumps({"error": str(e)}), status_code=500, media_type="application/json")
 
+
+@app.post("/api/tts")
+async def proxy_tts(request: Request):
+    """UzbekVoice.ai TTS (Text-to-Speech) Proksi Endpointi (CORS cheklovisiz, Lola modeli)"""
+    auth = request.headers.get("Authorization") or "7d1160ed-180a-4107-a1d0-5aafaa492964:4e3f03b5-9c42-4da6-9d3d-da889e63c40d"
+    body_data = await request.json()
+    raw_text = body_data.get("text", "")
+    model = body_data.get("model", "lola")
+    
+    # Normalizatsiya (jar qoidalari)
+    clean_text = re.sub(r"[*_#`>~\[\]()]+", " ", raw_text)
+    clean_text = re.sub(r"https?://\S+", "", clean_text)
+    clean_text = re.sub(r"['`’‘]", "'", clean_text).strip()
+    
+    payload = json.dumps({"text": clean_text, "model": model, "blocking": "true"}).encode("utf-8")
+    
+    import urllib.request, ssl
+    req = urllib.request.Request(
+        "https://uzbekvoice.ai/api/v1/tts",
+        data=payload,
+        headers={
+            "Authorization": auth,
+            "Content-Type": "application/json"
+        },
+        method="POST"
+    )
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    try:
+        with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
+            data = resp.read()
+            return Response(content=data, status_code=resp.status, media_type="application/json")
+    except Exception as e:
+        return Response(content=json.dumps({"error": str(e)}), status_code=500, media_type="application/json")
+
+
 @app.post("/api/failsafe/stop")
 @app.get("/api/failsafe/stop")
 def trigger_failsafe_stop(reason: str = "MANUAL_PANIC"):
