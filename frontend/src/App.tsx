@@ -24,12 +24,14 @@ const ViewLoading: React.FC = () => (
 );
 import type { RemoteLink } from './services/remoteClient';
 import { robotCamBroadcaster, fleetWatcher, AUTOPILOT_REMOTE_EVENT } from './services/robotCamLink';
+import { robotCall, operatorCalls } from './services/voiceCall';
+import { IncomingCallOverlay } from './components/IncomingCallOverlay';
 import { navigationService } from './services/navigationService';
 import { headingService } from './services/headingService';
 
 // Faqat ishlab chiqish rejimida: sinov skriptlari ilova ishlatayotgan servis nusxalarini ko'ra olsin
 if (import.meta.env.DEV) {
-  (window as unknown as { __qalqon: unknown }).__qalqon = { robotCamBroadcaster, fleetWatcher, navigationService, headingService, autopilotService };
+  (window as unknown as { __qalqon: unknown }).__qalqon = { robotCamBroadcaster, fleetWatcher, navigationService, headingService, autopilotService, robotCall, operatorCalls };
 }
 
 /** Robot holatidan (batareya, sonar, buyruq) telemetriyaga: navigatsiya esa navigationService dan to'g'ridan-to'g'ri */
@@ -79,11 +81,19 @@ const AppShell: React.FC = () => {
   //  - robot planshet: kamera tasviri va telemetriya operatorlarga uzatiladi;
   //  - operator: barcha robotlar ro'yxati va telemetriyasi kuzatiladi.
   useEffect(() => {
-    const apply = (s: { role: string }) => {
+    const apply = (s: ReturnType<typeof camLinkSettings.get>) => {
       robotCamBroadcaster.stop();
       fleetWatcher.stop();
-      if (s.role === 'robot') void robotCamBroadcaster.start();
-      else void fleetWatcher.start();
+      robotCall.stop();
+      operatorCalls.stop();
+      setRole(s.role);
+      if (s.role === 'robot') {
+        void robotCamBroadcaster.start();
+        void robotCall.start().catch(() => {});
+      } else {
+        void fleetWatcher.start();
+        void operatorCalls.start().catch(() => {});
+      }
     };
     apply(camLinkSettings.get());
     const unsub = camLinkSettings.subscribe(apply);
@@ -91,8 +101,12 @@ const AppShell: React.FC = () => {
       unsub();
       robotCamBroadcaster.stop();
       fleetWatcher.stop();
+      robotCall.stop();
+      operatorCalls.stop();
     };
   }, []);
+  const [role, setRole] = useState(() => camLinkSettings.get().role);
+  const callOverlay = role === 'operator' ? <IncomingCallOverlay /> : null;
   const [isUnlocked, setIsUnlocked] = useState(() =>
     window.location.hash === '#hud' || localStorage.getItem('qalqon_auto_unlock') === 'true'
   );
@@ -183,6 +197,7 @@ const AppShell: React.FC = () => {
             />
           </Suspense>
         )}
+        {callOverlay}
         <OperatorAuthModal
           isOpen={authModalOpen}
           onClose={() => setAuthModalOpen(false)}
@@ -202,6 +217,7 @@ const AppShell: React.FC = () => {
       <Navbar onLockScreen={() => { localStorage.removeItem('qalqon_auto_unlock'); setIsUnlocked(false); }} onOpenController={() => setControllerOpen(true)} />
       <MainContent />
       <TabNavigation />
+      {callOverlay}
     </div>
   );
 };

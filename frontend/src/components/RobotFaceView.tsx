@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Lock, ShieldCheck, Gamepad2 } from 'lucide-react';
+import { robotCall, type CallInfo } from '../services/voiceCall';
 import { faceRecognitionService } from '../services/faceRecognitionService';
 import { faceViewSettings } from '../services/faceViewSettings';
 import { HandsFreeListener } from '../services/handsFreeListener';
@@ -13,7 +13,6 @@ import { camLinkSettings } from '../services/camLinkSettings';
 import { faceCameraSettings } from '../services/faceCameraSettings';
 import { createAnnotatedStream, type AnnotatedStream, type OverlayBox } from '../services/nvrOverlayCompositor';
 import { RobotAvatar, type EyeInput } from './RobotAvatar';
-import { JarVoiceOrb } from './JarVoiceOrb';
 
 // Avto-salom oraliqlari
 const GREET_ANY_MS = 60 * 1000; // har qanday ikki salom orasida (yangi odam tanilsa ham) kamida 1 daqiqa
@@ -28,7 +27,7 @@ interface RobotFaceViewProps {
   onControllerRequest?: () => void;
 }
 
-export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, onAdminRequest, onControllerRequest }) => {
+export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -39,6 +38,8 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
   const [camRole, setCamRole] = useState(() => camLinkSettings.get().role);
   useEffect(() => camLinkSettings.subscribe((s) => setCamRole(s.role)), []);
   const isSpeakingRef = useRef(false);
+  /** 102 chaqiruvi kutilmoqda yoki suhbat ketmoqda */
+  const callBusyRef = useRef(false);
   // Qo'l tegizmasdan suhbat: mikrofon tinglovchisi, javob tayyorlanmoqdami, oxirgi suhbat vaqti
   const listenerRef = useRef<HandsFreeListener | null>(null);
   const processingRef = useRef(false);
@@ -75,6 +76,8 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
   // ==========================================================================
   const finishRef = useRef<(() => void) | null>(null);
   const speakDemoPhrase = useCallback((phraseText: string, opts?: { force?: boolean; onDone?: () => void }) => {
+    // 102 suhbati paytida robot o'zi gapirmaydi (salomlashuv ham)
+    if (callBusyRef.current) return;
     if (isSpeakingRef.current) {
       if (!opts?.force) return;
       // Suhbat javobi salomlashuvdan muhimroq: joriy gapni to'xtatamiz
@@ -120,7 +123,7 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
       isSpeakingRef.current = false;
       // Aks-sado so'nguncha biroz kutib, tinglashni qayta yoqamiz
       window.setTimeout(() => {
-        if (!isSpeakingRef.current && !processingRef.current) listenerRef.current?.setPaused(false);
+        if (!isSpeakingRef.current && !processingRef.current && !callBusyRef.current) listenerRef.current?.setPaused(false);
       }, 500);
       opts?.onDone?.();
     };
@@ -156,7 +159,7 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
           console.warn('[Suhbat] Nutqni aniqlab bo\'lmadi:', err instanceof Error ? err.message : err);
         } finally {
           processingRef.current = false;
-          if (!isSpeakingRef.current) listener.setPaused(false);
+          if (!isSpeakingRef.current && !callBusyRef.current) listener.setPaused(false);
         }
       }
     });
@@ -182,6 +185,39 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
   useEffect(() => {
     speakRef.current = speakDemoPhrase;
   }, [speakDemoPhrase]);
+
+  // 102 CHAQIRUV: suhbat davomida robotning o'z ovozli yordamchisi jim turadi (operator bilan gaplashilmoqda)
+  const [call, setCall] = useState<CallInfo>(() => robotCall.getState());
+  useEffect(
+    () =>
+      robotCall.subscribe((c) => {
+        setCall(c);
+        const busy = c.state === 'ringing' || c.state === 'active';
+        callBusyRef.current = busy;
+        if (busy) {
+          edgeTtsService.stop();
+          finishRef.current?.();
+        }
+        listenerRef.current?.setPaused(busy || isSpeakingRef.current);
+        eyeInputRef.current.happy = c.state === 'active';
+      }),
+    []
+  );
+
+  // Ko'rinmas operator kirishi: o'ng yuqori burchakni 3 soniya bosib turish
+  const hiddenPressRef = useRef<number | null>(null);
+  const startHiddenPress = useCallback(() => {
+    if (hiddenPressRef.current) window.clearTimeout(hiddenPressRef.current);
+    hiddenPressRef.current = window.setTimeout(() => {
+      hiddenPressRef.current = null;
+      tacticalAudio.playClick();
+      onUnlockRequest();
+    }, 3000);
+  }, [onUnlockRequest]);
+  const cancelHiddenPress = useCallback(() => {
+    if (hiddenPressRef.current) window.clearTimeout(hiddenPressRef.current);
+    hiddenPressRef.current = null;
+  }, []);
 
   // ==========================================================================
   // OLD KAMERA ORQALI INSON YUZINI KUZATISH VA TANISH
@@ -394,59 +430,37 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest, o
         style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
       />
 
-      {/* Bosh sahifada faqat robot yuzi va ikkita kirish tugmasi. Kamera, avto-salom, ovozni sinash va
-          ovozli muloqot AI & Avtonom bo'limida */}
+      {/* Yuz ekranida faqat robot yuzi va "102" tugmasi. Operator paneli: o'ng yuqori burchakni 3 soniya bosib turish
+          (ko'rinmas). Admin va pult: sayt manzili oxiriga #admin yoki #controller */}
+      <div
+        onPointerDown={startHiddenPress}
+        onPointerUp={cancelHiddenPress}
+        onPointerLeave={cancelHiddenPress}
+        onPointerCancel={cancelHiddenPress}
+        aria-hidden
+        className="absolute top-0 right-0 w-24 h-24 z-30"
+      />
 
-      {/* ESP32 Masofaviy Boshqaruv pulti tugmasi */}
-      {onControllerRequest && (
+      {/* 102: barcha operatorlarga ovozli chaqiruv (yana bosilsa tugatiladi) */}
+      <div className="absolute bottom-6 sm:bottom-10 left-0 right-0 z-30 flex justify-center pointer-events-none">
         <button
-          onClick={() => {
-            tacticalAudio.playClick();
-            onControllerRequest();
+          onClick={(e) => {
+            e.stopPropagation();
+            handleUnlockAudio();
+            if (call.state === 'ringing' || call.state === 'active') robotCall.hangup();
+            else void robotCall.ring();
           }}
-          title="ESP32 Masofaviy Boshqaruv Pulti"
-          aria-label="ESP32 Masofaviy Boshqaruv Pulti"
-          className="absolute top-4 right-28 z-30 p-2.5 rounded-xl bg-tactical-900 border border-teal-500/50 text-teal-400 hover:text-white hover:bg-teal-900/60 transition-transform active:scale-90 shadow-[0_0_10px_rgba(20,184,166,0.25)]"
+          aria-label={call.state === 'active' ? '102: operator bilan suhbat (tugatish)' : call.state === 'ringing' ? '102: operator chaqirilmoqda (bekor qilish)' : '102: operatorga ulanish'}
+          className={`pointer-events-auto w-32 h-32 sm:w-36 sm:h-36 rounded-full font-mono font-black text-5xl sm:text-6xl text-white border-4 transition-transform active:scale-95 select-none ${
+            call.state === 'active'
+              ? 'bg-emerald-600 border-emerald-300 shadow-[0_0_40px_rgba(16,185,129,0.7)]'
+              : call.state === 'ringing'
+              ? 'bg-red-600 border-red-300 call-102-ring'
+              : 'bg-red-700 border-red-400/80 shadow-[0_0_30px_rgba(239,68,68,0.45)] hover:bg-red-600'
+          }`}
         >
-          <Gamepad2 className="w-4 h-4" />
+          102
         </button>
-      )}
-
-      {/* Admin (masofaviy) kirish tugmasi */}
-      {onAdminRequest && (
-        <button
-          onClick={() => {
-            tacticalAudio.playClick();
-            onAdminRequest();
-          }}
-          title="Admin kirishi (masofaviy boshqaruv)"
-          aria-label="Admin kirishi"
-          className="absolute top-4 right-16 z-30 p-2.5 rounded-xl bg-tactical-900 border border-tactical-700 text-slate-300 hover:text-white hover:bg-tactical-800 transition-transform active:scale-90"
-        >
-          <ShieldCheck className="w-4 h-4" />
-        </button>
-      )}
-
-      {/* Operator kirish tugmasi */}
-      <button
-        onClick={() => {
-          tacticalAudio.playClick();
-          onUnlockRequest();
-        }}
-        title="Operator paneli"
-        aria-label="Operator paneli"
-        className="absolute top-4 right-4 z-30 p-2.5 rounded-xl bg-tactical-900 border border-tactical-700 text-slate-300 hover:text-white hover:bg-tactical-800 transition-transform active:scale-90"
-      >
-        <Lock className="w-4 h-4" />
-      </button>
-
-      {/* JAR OVOZLI YORDAMCHI (Claude Sonnet 5.5 + Web Search + Lola TTS) */}
-      <div className="absolute bottom-5 sm:bottom-7 left-0 right-0 z-30 flex justify-center pointer-events-auto px-4">
-        <JarVoiceOrb
-          onSpeechLevel={(level) => {
-            eyeInputRef.current.speech = level;
-          }}
-        />
       </div>
     </div>
   );

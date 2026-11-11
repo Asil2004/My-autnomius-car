@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { autopilotService, type AutopilotState } from '../services/autopilotService';
+import { mapFocus } from '../services/mapFocus';
 import {
   Layers,
   Square,
@@ -444,19 +445,47 @@ export const GoogleMapsPatrolView: React.FC = () => {
     []
   );
 
+  // TELEPORT: xarita nuqtaga uchib boradi va diqqatni tortuvchi miltillovchi halqa chiqadi
+  const attentionRef = useRef<{ marker: L.Marker; timer: number } | null>(null);
+  const teleport = useCallback((lat: number, lon: number, opts: { label?: string; alert?: boolean } = {}) => {
+    const map = mapRef.current;
+    if (!map || !isFinite(lat) || !isFinite(lon)) return;
+    map.flyTo([lat, lon], 19, { duration: 1.2 });
+    if (attentionRef.current) {
+      window.clearTimeout(attentionRef.current.timer);
+      attentionRef.current.marker.remove();
+    }
+    const color = opts.alert ? '#ef4444' : '#22d3ee';
+    const icon = L.divIcon({
+      className: '',
+      iconSize: [0, 0],
+      html: `<div class="qalqon-attention" style="--c:${color}">
+        <span></span><span></span><span></span>
+        ${opts.label ? `<b>${opts.label.replace(/[<>&"]/g, '')}</b>` : ''}
+      </div>`
+    });
+    const marker = L.marker([lat, lon], { icon, interactive: false, zIndexOffset: 2000 }).addTo(map);
+    const timer = window.setTimeout(() => {
+      marker.remove();
+      if (attentionRef.current?.marker === marker) attentionRef.current = null;
+    }, opts.alert ? 30_000 : 5000);
+    attentionRef.current = { marker, timer };
+  }, []);
+
+  // Tashqi so'rovlar (masalan robotdan 102 chaqiruvi): xarita robot joylashuviga teleport bo'ladi
+  useEffect(() => mapFocus.subscribe((r) => {
+    // Xarita endigina yaratilayotgan bo'lsa, bir lahza kutamiz
+    window.setTimeout(() => teleport(r.lat, r.lon, { label: r.label, alert: r.alert }), mapRef.current ? 0 : 400);
+  }), [teleport]);
+
+  // "Haqiqiy joylashuvim": robot belgisi turgan joyga teleport (operatorda tanlangan robot, robotda o'zi)
   const goToRealGPS = useCallback(() => {
-    if (!mapRef.current) return;
-    startRealGPS();
-    mapRef.current.setView([gps.latitude, gps.longitude], 19);
-    setRobotVisual(gps.latitude, gps.longitude, gps.heading || fallbackHeadingRef.current);
-    setTelemetry(prev => ({
-      ...prev,
-      lat: gps.latitude,
-      lon: gps.longitude,
-      speed: gps.speed || 0,
-      heading: gps.heading || prev.heading
-    }));
-  }, [gps, startRealGPS, setRobotVisual]);
+    if (!isOperator) startRealGPS();
+    const p = robotMarkerRef.current?.getLatLng();
+    const lat = p ? p.lat : gps.latitude;
+    const lon = p ? p.lng : gps.longitude;
+    teleport(lat, lon, { label: isOperator ? watchedRobot || undefined : undefined });
+  }, [gps.latitude, gps.longitude, isOperator, startRealGPS, teleport, watchedRobot]);
 
   // HAQIQIY GPS AVTOPILOT (ESP32): chizilgan marshrut bo'ylab robotni haqiqatan yurgizadi
   const [ap, setAp] = useState<AutopilotState>(() => autopilotService.getState());
@@ -624,7 +653,7 @@ export const GoogleMapsPatrolView: React.FC = () => {
                 className="w-full py-1.5 px-2 bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-500/60 text-emerald-200 hover:text-white rounded font-mono text-[11px] flex items-center gap-1.5 transition-all text-left truncate"
               >
                 <Crosshair className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                <span>🎯 Haqiqiy GPS Joylashuvim ({gps.latitude.toFixed(4)}, {gps.longitude.toFixed(4)})</span>
+                <span>🎯 {isOperator ? `${watchedRobot || 'Robot'} joylashuvi` : 'Haqiqiy joylashuvim'} ({telemetry.lat.toFixed(4)}, {telemetry.lon.toFixed(4)})</span>
               </button>
 
             {/* Operator marshrut chizishi */}
