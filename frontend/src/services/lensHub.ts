@@ -165,6 +165,3 @@ export class LensHub {
 }
 
 export const lensHub = new LensHub((gen) => ptzCameraService.fullStreamUrl(gen));
-
-/** APK ichidagi USB web-kamera oqimi (Face ID manbai, planshet Android tashqi kamerani bermaganda) */
-export const usbWebcamHub = new LensHub((gen) => `${ptzCameraService.getBase()}/webcam/stream?_=${gen}`);

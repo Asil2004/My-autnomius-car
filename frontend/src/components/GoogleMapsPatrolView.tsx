@@ -934,7 +934,7 @@ export const GoogleMapsPatrolView: React.FC = () => {
                       ? 'Robot planshet onlayn emas: unda Qalqon ochiq va "Robot" rolida bo\'lishi kerak.'
                       : waypoints.length < 1
                       ? "Avval \"Marshrut chizish\" bilan manzil nuqtasini qo'ying."
-                      : 'Robot planshet o\'z GPS + giroskopi bo\'yicha ESP32 ga buyruq beradi, to\'siqni kamerasi bilan aniqlaydi (planshet avtomatik HUD ga o\'tadi).'}
+                      : 'Robot planshet o\'z GPS + giroskopi bo\'yicha ESP32 ga buyruq beradi, to\'siqni kamerasi bilan aniqlaydi (planshetda istalgan bo\'lim ochiq bo\'lishi mumkin).'}
                   </div>
                 </div>
               );
@@ -978,7 +978,7 @@ export const GoogleMapsPatrolView: React.FC = () => {
                   </button>
                 )}
                 <div className="text-[9px] font-mono text-slate-400 leading-snug">
-                  Planshet GPS + giroskop bo'yicha ESP32'ga buyruq beradi. To'siq bo'lsa to'xtaydi va chetlab o'tadi. Kamera tahlili uchun HUD oynasi ochiq bo'lishi kerak. Joystik yoki klaviatura avtopilotni darhol o'chiradi.
+                  Planshet GPS + giroskop bo'yicha ESP32'ga buyruq beradi. To'siq bo'lsa to'xtaydi va chetlab o'tadi. Kamera to'siq tahlili istalgan bo'limda fonda ishlaydi. Joystik yoki klaviatura avtopilotni darhol o'chiradi.
                 </div>
               </div>
             )}

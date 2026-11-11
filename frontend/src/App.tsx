@@ -1,19 +1,27 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { autopilotService } from './services/autopilotService';
 import { situationService } from './services/situationService';
 import { RobotProvider, useRobot } from './context/RobotContext';
 import { Navbar } from './components/Navbar';
 import { TabNavigation } from './components/TabNavigation';
 import { HUDView } from './components/HUDView';
-import { AIAutonomousView } from './components/AIAutonomousView';
-import { LidarRadarView } from './components/LidarRadarView';
-import { GoogleMapsPatrolView } from './components/GoogleMapsPatrolView';
-import { SettingsView } from './components/SettingsView';
 import { RobotFaceView } from './components/RobotFaceView';
 import { OperatorAuthModal } from './components/OperatorAuthModal';
-import { AdminLoginModal } from './components/AdminLoginModal';
-import { AdminPanelView } from './components/AdminPanelView';
-import { ESP32RemoteView } from './components/ESP32RemoteView';
+
+// Kamdan-kam ochiladigan bo'limlar alohida fayllarda: faqat ochilganda yuklanadi (xarita kutubxonasi va h.k.)
+const AIAutonomousView = lazy(() => import('./components/AIAutonomousView').then((m) => ({ default: m.AIAutonomousView })));
+const LidarRadarView = lazy(() => import('./components/LidarRadarView').then((m) => ({ default: m.LidarRadarView })));
+const GoogleMapsPatrolView = lazy(() =>
+  import('./components/GoogleMapsPatrolView').then((m) => ({ default: m.GoogleMapsPatrolView }))
+);
+const SettingsView = lazy(() => import('./components/SettingsView').then((m) => ({ default: m.SettingsView })));
+const AdminLoginModal = lazy(() => import('./components/AdminLoginModal').then((m) => ({ default: m.AdminLoginModal })));
+const AdminPanelView = lazy(() => import('./components/AdminPanelView').then((m) => ({ default: m.AdminPanelView })));
+const ESP32RemoteView = lazy(() => import('./components/ESP32RemoteView').then((m) => ({ default: m.ESP32RemoteView })));
+
+const ViewLoading: React.FC = () => (
+  <div className="flex-1 flex items-center justify-center text-slate-500 font-mono text-xs">Yuklanmoqda…</div>
+);
 import type { RemoteLink } from './services/remoteClient';
 import { robotCamBroadcaster, fleetWatcher, AUTOPILOT_REMOTE_EVENT } from './services/robotCamLink';
 import { navigationService } from './services/navigationService';
@@ -21,7 +29,7 @@ import { headingService } from './services/headingService';
 
 // Faqat ishlab chiqish rejimida: sinov skriptlari ilova ishlatayotgan servis nusxalarini ko'ra olsin
 if (import.meta.env.DEV) {
-  (window as unknown as { __qalqon: unknown }).__qalqon = { robotCamBroadcaster, fleetWatcher, navigationService, headingService };
+  (window as unknown as { __qalqon: unknown }).__qalqon = { robotCamBroadcaster, fleetWatcher, navigationService, headingService, autopilotService };
 }
 
 /** Robot holatidan (batareya, sonar, buyruq) telemetriyaga: navigatsiya esa navigationService dan to'g'ridan-to'g'ri */
@@ -40,14 +48,26 @@ import { camLinkSettings } from './services/camLinkSettings';
 
 const MainContent: React.FC = () => {
   const { activeTab } = useRobot();
+  // ROBOT qurilmasi: HUD (kamera, to'siq/yuz aniqlash, operatorlarga tasvir uzatish, yozuv) doim ishlab turadi,
+  // boshqa bo'lim ochilganda faqat ekrandan yashiriladi. Shunda tasvir uzatish va GPS avtopilot istalgan bo'limda ishlaydi
+  const [isRobot, setIsRobot] = useState(() => camLinkSettings.get().role === 'robot');
+  useEffect(() => camLinkSettings.subscribe((s) => setIsRobot(s.role === 'robot')), []);
 
   return (
     <main className="flex-1 flex flex-col overflow-hidden relative">
-      {activeTab === 'hud' && <HUDView />}
-      {activeTab === 'maps' && <GoogleMapsPatrolView />}
-      {activeTab === 'ai' && <AIAutonomousView />}
-      {activeTab === 'telemetry' && <LidarRadarView />}
-      {activeTab === 'settings' && <SettingsView />}
+      {isRobot ? (
+        <div className={activeTab === 'hud' ? 'contents' : 'hidden'} aria-hidden={activeTab !== 'hud'}>
+          <HUDView />
+        </div>
+      ) : (
+        activeTab === 'hud' && <HUDView />
+      )}
+      <Suspense fallback={<ViewLoading />}>
+        {activeTab === 'maps' && <GoogleMapsPatrolView />}
+        {activeTab === 'ai' && <AIAutonomousView />}
+        {activeTab === 'telemetry' && <LidarRadarView />}
+        {activeTab === 'settings' && <SettingsView />}
+      </Suspense>
     </main>
   );
 };
@@ -76,9 +96,8 @@ const AppShell: React.FC = () => {
   const [isUnlocked, setIsUnlocked] = useState(() =>
     window.location.hash === '#hud' || localStorage.getItem('qalqon_auto_unlock') === 'true'
   );
-  // Operator masofadan GPS avtopilotni yoqsa: robot plansheti HUD ga o'tadi (to'siqni kamera aniqlashi shu yerda ishlaydi).
-  // Avtopilot tugagach, avval yuz ekrani bo'lgan bo'lsa unga qaytadi
-  const { setActiveTab } = useRobot();
+  // Operator masofadan GPS avtopilotni yoqsa va robot yuz ekranida bo'lsa: boshqaruv paneli ochiladi (unda kamera
+  // to'siq tahlili doim ishlaydi, qaysi bo'lim ochiqligidan qat'i nazar). Avtopilot tugagach yuz ekraniga qaytadi
   const relockAfterAutopilotRef = useRef(false);
   useEffect(() => {
     const onRemote = () => {
@@ -86,7 +105,6 @@ const AppShell: React.FC = () => {
         if (!was) relockAfterAutopilotRef.current = true;
         return true;
       });
-      setActiveTab('hud');
     };
     window.addEventListener(AUTOPILOT_REMOTE_EVENT, onRemote);
     const unsub = autopilotService.subscribe((s) => {
@@ -99,7 +117,7 @@ const AppShell: React.FC = () => {
       window.removeEventListener(AUTOPILOT_REMOTE_EVENT, onRemote);
       unsub();
     };
-  }, [setActiveTab]);
+  }, []);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   // Masofaviy admin: ikkinchi planshet saytni #admin bilan ochsa, kirish oynasi darhol chiqadi
   const [adminLoginOpen, setAdminLoginOpen] = useState(() => window.location.hash === '#admin');
@@ -124,19 +142,25 @@ const AppShell: React.FC = () => {
 
   if (controllerOpen) {
     return (
-      <ESP32RemoteView
-        onExit={() => {
-          setControllerOpen(false);
-          if (['#controller', '#esp32', '#remote'].includes(window.location.hash)) {
-            history.replaceState(null, '', window.location.pathname);
-          }
-        }}
-      />
+      <Suspense fallback={<ViewLoading />}>
+        <ESP32RemoteView
+          onExit={() => {
+            setControllerOpen(false);
+            if (['#controller', '#esp32', '#remote'].includes(window.location.hash)) {
+              history.replaceState(null, '', window.location.pathname);
+            }
+          }}
+        />
+      </Suspense>
     );
   }
 
   if (adminLink) {
-    return <AdminPanelView link={adminLink} onExit={() => setAdminLink(null)} />;
+    return (
+      <Suspense fallback={<ViewLoading />}>
+        <AdminPanelView link={adminLink} onExit={() => setAdminLink(null)} />
+      </Suspense>
+    );
   }
 
   // DEFAULT VIEW: Robot yuzi (2D ko'zlar, kamera yoqilgach odamni kuzatadi)
@@ -149,13 +173,15 @@ const AppShell: React.FC = () => {
           onControllerRequest={() => setControllerOpen(true)}
         />
         {adminLoginOpen && (
-          <AdminLoginModal
-            onClose={() => setAdminLoginOpen(false)}
-            onConnected={(link) => {
-              setAdminLoginOpen(false);
-              setAdminLink(link);
-            }}
-          />
+          <Suspense fallback={null}>
+            <AdminLoginModal
+              onClose={() => setAdminLoginOpen(false)}
+              onConnected={(link) => {
+                setAdminLoginOpen(false);
+                setAdminLink(link);
+              }}
+            />
+          </Suspense>
         )}
         <OperatorAuthModal
           isOpen={authModalOpen}

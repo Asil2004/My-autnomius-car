@@ -247,7 +247,7 @@ class AutopilotService {
     const cameraFresh = !!obs && obs.cameraT > 0 && now - obs.cameraT < cfg.cameraTimeoutMs;
     if (!cameraFresh) {
       this.drive('S');
-      this.enter('waiting-camera', 'Kamera to‘siq tahlili kutilmoqda: HUD (kamera) oynasini oching');
+      this.enter('waiting-camera', 'Kamera to‘siq tahlili kutilmoqda (kamera yoki HUD dagi AI yoqilmagan)');
       return;
     }
     const frontCm = Math.min(obs!.distanceCm, obs!.sonarFrontCm);

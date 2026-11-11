@@ -1,5 +1,22 @@
-import * as tf from '@tensorflow/tfjs';
-import * as faceapi from '@vladmandic/face-api/dist/face-api.esm-nobundle.js';
+// TensorFlow va face-api faqat birinchi kerak bo'lganda yuklanadi (asosiy JS fayl yengil, sahifa tez ochiladi).
+// Barcha yo'llar initDatabase() -> loadEverything() orqali o'tadi, u esa avval loadFaceLib() ni chaqiradi
+type FaceApi = typeof import('@vladmandic/face-api/dist/face-api.esm-nobundle.js');
+let faceapi: FaceApi = null as unknown as FaceApi;
+let faceLibPromise: Promise<void> | null = null;
+function loadFaceLib(): Promise<void> {
+  if (!faceLibPromise) {
+    faceLibPromise = Promise.all([import('@tensorflow/tfjs'), import('@vladmandic/face-api/dist/face-api.esm-nobundle.js')])
+      .then(async ([tf, fa]) => {
+        await (tf as unknown as { ready?: () => Promise<void> }).ready?.();
+        faceapi = fa;
+      })
+      .catch((e) => {
+        faceLibPromise = null;
+        throw e;
+      });
+  }
+  return faceLibPromise;
+}
 import sarvarPhotoUrl from '../assets/faces/koldoshev_sarvar.jpg';
 import asilbekPhotoUrl from '../assets/faces/asilbek_ravshanov.png';
 import boburjonPhotoUrl from '../assets/faces/boburjon_bozorov.jpg';
@@ -252,7 +269,7 @@ class FaceRecognitionEngine {
       this.timings[name] = Math.round(now - t);
       t = now;
     };
-    await (tf as any).ready?.();
+    await loadFaceLib();
     lap('tf');
     await Promise.all([
       faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
@@ -760,7 +777,11 @@ class FaceRecognitionEngine {
   // =========================================================================
   // RobotFaceView (qulf ekrani) bilan moslik: jamoaning asl API si va parametrlari
   // =========================================================================
-  private compatOptions = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.2 });
+  private compatOptionsCache: InstanceType<FaceApi['TinyFaceDetectorOptions']> | null = null;
+  private get compatOptions() {
+    if (!this.compatOptionsCache) this.compatOptionsCache = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.2 });
+    return this.compatOptionsCache;
+  }
 
   /** Modellarni yuklaydi (initDatabase ning ichida). Eski nom saqlangan */
   public async loadModels(): Promise<void> {

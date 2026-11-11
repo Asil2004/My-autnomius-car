@@ -1,12 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ScanFace } from 'lucide-react';
-import {
-  faceCameraSettings,
-  APK_WEBCAM,
-  type ApkWebcamStatus,
-  type CameraOption,
-  type FaceCameraChoice
-} from '../services/faceCameraSettings';
+import { faceCameraSettings, type CameraOption, type FaceCameraChoice } from '../services/faceCameraSettings';
 
 /** Sozlamalar: Face ID kamerasi manbai (frontal yoki USB web-kamera) */
 export const FaceCameraCard: React.FC = () => {
@@ -43,23 +37,7 @@ export const FaceCameraCard: React.FC = () => {
   }, [refresh]);
   useEffect(() => faceCameraSettings.subscribe(setChoice), []);
 
-  // APK ichidagi USB web-kamera holati (har 3 s)
-  const [apk, setApk] = useState<ApkWebcamStatus | null>(null);
-  useEffect(() => {
-    let alive = true;
-    const poll = async () => {
-      const s = await faceCameraSettings.apkWebcamStatus();
-      if (alive) setApk(s);
-    };
-    void poll();
-    const t = window.setInterval(poll, 3000);
-    return () => {
-      alive = false;
-      window.clearInterval(t);
-    };
-  }, []);
-
-  const hasExternal = cams.some((c) => c.external) || !!apk?.connected;
+  const hasExternal = cams.some((c) => c.external);
 
   return (
     <div className="hud-panel rounded-xl p-4 space-y-3 font-mono" data-face-camera-settings>
@@ -78,11 +56,6 @@ export const FaceCameraCard: React.FC = () => {
         >
           <option value="auto">Avtomatik (USB web-kamera bo'lsa o'sha, bo'lmasa frontal)</option>
           <option value="front">Planshet frontal kamerasi</option>
-          {apk && (
-            <option value={APK_WEBCAM}>
-              🔌 USB web-kamera (APK){apk.name ? `: ${apk.name}` : ''}
-            </option>
-          )}
           {cams.map((c) => (
             <option key={c.deviceId} value={c.deviceId}>
               {c.external ? '🔌 ' : ''}
@@ -99,20 +72,6 @@ export const FaceCameraCard: React.FC = () => {
           {busy ? 'Qidirilmoqda…' : 'Qayta qidirish'}
         </button>
       </div>
-      {apk && (
-        <div className={`text-[11px] ${apk.connected ? 'text-police-green' : apk.error ? 'text-rose-400' : 'text-amber-300'}`}>
-          APK USB web-kamera:{' '}
-          {apk.connected
-            ? `ulangan • ${apk.name || 'kamera'} • ${apk.width}x${apk.height}`
-            : apk.waitingPermission
-            ? 'planshet ekranida USB ruxsatini bering ("OK")'
-            : apk.error
-            ? apk.error
-            : apk.device
-            ? 'topildi, ochilmoqda…'
-            : "ulanmagan (web-kamerani planshetga USB orqali ulang)"}
-        </div>
-      )}
       <p className={`text-[11px] ${hasExternal ? 'text-police-green' : 'text-slate-500'}`}>
         {hasExternal
           ? 'USB web-kamera topildi. Tanlov darhol HUD va robot yuzi ekranida qo\'llanadi.'

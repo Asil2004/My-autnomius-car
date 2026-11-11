@@ -751,11 +751,18 @@ export const HUDView: React.FC = () => {
       }
     };
 
+    // Operator qurilmasi aniqlash qilmaydi (ramkalar robotdan tayyor keladi): ~30 MB model va TensorFlow yuklanmaydi.
+    // Bazaga yangi shaxs qo'shilsa, yuz modeli o'sha paytda o'zi yuklanadi
+    if (isViewer) {
+      setAiModelLoading(false);
+      setFaceStatus('ready');
+      return;
+    }
     loadAiServices();
     return () => {
       isMounted = false;
     };
-  }, [addLog, setDetectedObjects]);
+  }, [addLog, setDetectedObjects, isViewer]);
 
   // =========================================================================
   // 2. FRONTAL KAMERA (WEBCAM) OQIMINI BOSHQARISH
