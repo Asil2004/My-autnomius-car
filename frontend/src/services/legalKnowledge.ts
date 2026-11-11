@@ -92,6 +92,18 @@ export const LEGAL_ENTRIES: LegalEntry[] = [
       "Uchuvchisiz uchadigan apparatlarni qonunga xilof olib kirish, ulardan foydalanish yoki saqlash tartibini buzish uchun Jinoyat kodeksining 244⁴ va 248¹-moddalarida javobgarlik bor. Dron uchirishdan oldin tegishli ruxsatni oling."
   },
   {
+    id: 'tezlik-jarima',
+    keys: ['tezlik oshir', 'tezlik jarima', 'tezlikni oshir', 'radarga tush', 'yol harakati', 'tezlik qoidalari'],
+    answer:
+      "Ma'muriy javobgarlik to'g'risidagi kodeksning 128³-moddasiga muvofiq: tezlikni 20 km/soatgacha oshirish — BHMning 1 baravari, 20 dan 40 km/soatgacha — 5 baravari, 40 km/soatdan yuqori oshirish esa 9 baravari miqdorida jarimaga sabab bo'ladi."
+  },
+  {
+    id: 'iiv-xodim-majburiyat',
+    keys: ['xodim majburiyat', 'iiv xodimi majburiyat', 'xodimning majburiyat', 'politsiya majburiyat', 'inspektor majburiyat', 'xodim vazifasi'],
+    answer:
+      "\"Ichki ishlar organlari to'g'risida\"gi qonunning 8-moddasiga ko'ra, xodim fuqaroga murojaat etganda lavozimi, unvoni, familiyasini aytishi, xizmat guvohnomasini ko'rsatishi va murojaat maqsadini bayon qilishi, fuqaro erkinliklari va sha'nini hurmat qilishi shart."
+  },
+  {
     id: 'iio-vazifa',
     keys: ['politsiya vazifa', 'militsiya vazifa', 'ichki ishlar vazifa', 'ichki ishlar organlari', 'profilaktika inspektor', 'uchastka'],
     answer:

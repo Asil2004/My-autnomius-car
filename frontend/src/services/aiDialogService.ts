@@ -1,37 +1,45 @@
 /**
  * AI Dialog & S2S Service - QALQON Patrul Roboti
- * Versiya: 2.5 (jar loyihasining to'liq va original arxitekturasi).
+ * Versiya: 3.0 (Ko'p pog'onali barqaror gibrid arxitektura).
  *
- * Arxitektura (jar/backend/app.py va jar/ARCHITECTURE.md):
- * 1. STT: UzbekVoice.ai API (/stt) -> 100% aniq o'zbekcha matn.
- * 2. LLM: Claude Sonnet 5.5 + web_search_20250305 -> real vaqtda internetdan qidiruv,
- *    O'zbekiston qonunchiligi, ob-havo, yangiliklar, jamoat tartibi bo'yicha to'liq intellekt.
- * 3. TTS: UzbekVoice.ai Lola neural modeli (/tts) -> tozalangan, tabiiy o'zbekcha audio.
+ * Mantiq:
+ * 1. Favqulodda holatlar (102, yordam, qutqar, qurol) -> 0 ms darhol SOS.
+ * 2. Real vaqt vaziyati (soat, sana, ob-havo, manzil, GPS) -> situationService (oflayn, 0 ms).
+ * 3. Huquqiy va IIV bilimlari bazasi -> legalKnowledge (MJtK, JK, IIO to'g'risida qonun, O'RQ-407).
+ * 4. Lokal umumiy Q&A bazasi -> localKnowledge (favqulodda xizmatlar, yo'qolgan hujjatlar, robot tafsilotlari).
+ * 5. Kesh -> answerCache (ilgari berilgan javoblar internetsiz darhol olinadi).
+ * 6. Bulutli LLM: Claude Sonnet 5.5 (web search bilan) yoki lokal jar backend (/api/ask).
+ *    AGAR Claude 401 (noto'g'ri kalit), kvota tugashi yoki oflayn bo'lsa, tizim qulab tushmaydi,
+ *    balki silliq tarzda lokal bilimlar va muloyim IIV patrul javobiga o'tadi!
+ * 7. Nutq sintezi: UzbekVoice.ai Lola TTS neyromodeli orqali eshitiladi.
  */
 
 import { uzbekVoiceService } from './uzbekVoiceService';
 import { situationService } from './situationService';
+import { findLegalAnswer } from './legalKnowledge';
+import { findQa } from './localKnowledge';
+import { answerCache } from './answerCache';
 
 export interface S2SResult {
   question: string;
   answer: string;
   audioUrl?: string;
-  source: 'claude_web' | 'jar_backend' | 'local_fallback';
+  source: 'claude_web' | 'jar_backend' | 'local_legal' | 'local_situation' | 'local_cache' | 'local_fallback';
 }
 
 export interface DialogResponse {
   answer: string;
   action?: 'SOS_102' | 'PATROL_START' | 'PATROL_STOP' | 'STATUS_CHECK';
-  source: 'claude_web' | 'jar_backend' | 'local_fallback';
+  source: 'claude_web' | 'jar_backend' | 'local_legal' | 'local_situation' | 'local_cache' | 'local_fallback';
   audioUrl?: string;
 }
 
 const CLAUDE_KEY_STORAGE = 'qalqon_claude_api_key';
+// Default zaxira kaliti (agar foydalanuvchi o'z kalitini kiritmagan bo'lsa)
 const _DEF_K = 'c2stYW50LXVzci0xeWVscjhlUVZNMGdvc1I4clJpRXUwMWhRdG8wcFRSV3hFajJtbzhpWVE3cUJLNEtNVmZxc3VvUzNRNjFKOVJFNzgzVTE4andhSFVxVjZCd0YybHpaX3dvclZ2RXdBQQ==';
 export const DEFAULT_CLAUDE_KEY = typeof atob === 'function' ? atob(_DEF_K) : '';
 export const CLAUDE_MODEL = 'claude-sonnet-5-5';
 
-// jar loyihasidagi original tizim prompti (backend/app.py)
 const JAR_SYSTEM = (
   "Siz o'zbek tilidagi ovozli yordamchisiz (O'zbekiston Respublikasi IIV «QALQON» avtonom patrul roboti). " +
   "Foydalanuvchi savoliga kerak bo'lsa internetdan qidirib, aniq va lo'nda javob bering. " +
@@ -80,61 +88,95 @@ class AiDialogService {
   }
 
   /**
+   * Situatsion savollar (vaqt, ob-havo, sana, manzil, holat)
+   */
+  private checkSituational(t: string): string | null {
+    const norm = t.toLowerCase();
+    const s = situationService;
+
+    if (/ob[\s-]?havo|havo (qanday|qanaqa)|harorat|necha daraja|yomg'ir|shamol/.test(norm)) {
+      return s.weatherAnswer(/ertaga/.test(norm));
+    }
+    if (/soat ne\w*|vaqt ne\w*|hozir soat|soat qancha|nechchi bo'ldi/.test(norm)) {
+      return s.timeAnswer();
+    }
+    if (/haftaning qaysi kuni|bugun qaysi kun/.test(norm)) {
+      return s.weekdayAnswer();
+    }
+    if (/bugun (nechanchi|sana)|bugungi sana|qaysi sana|qaysi oy/.test(norm)) {
+      return s.dateAnswer();
+    }
+    if (/qayerdamiz|qayerdaman|qayerda turibmiz|bu yer qayer|manzil|hozirgi manzil/.test(norm)) {
+      return s.locationAnswer();
+    }
+    if (/koordinata|\bgps\b|kenglik|uzunlik/.test(norm)) {
+      return s.coordsAnswer();
+    }
+    if (/batareya|akkumulyator|quvvat|quvvating/.test(norm)) {
+      return "Tizim quvvati barqaror, barcha sensorlar va patrul modullari faol holatda.";
+    }
+    if (/kim yaratgan|kim yasagan|muallif|yaratuvchi/.test(norm)) {
+      return "Meni Navoiy viloyati IIB bilan hamkorlikda iqtidorli talabalar va muhandislar jamoasi yaratgan.";
+    }
+    return null;
+  }
+
+  /**
    * jar uslubidagi to'liq S2S davrasi:
-   * AudioBlob qabul qiladi -> UzbekVoice STT -> Claude Sonnet 5.5 + Web Search -> UzbekVoice Lola TTS audio URL
+   * AudioBlob qabul qiladi -> UzbekVoice STT -> Ko'p pog'onali aqlli mantiq -> UzbekVoice Lola TTS audio URL
    */
   public async askVoice(audioBlob: Blob): Promise<S2SResult> {
-    // 1. Agar lokal jar backend ishlab turgan bo'lsa (/api/ask), to'g'ridan-to'g'ri unga yuboramiz
+    // 1. Agar lokal jar backend ishlab turgan bo'lsa (/api/ask), unga sinab ko'ramiz
     try {
       const formData = new FormData();
       formData.append('audio', audioBlob, 'voice.webm');
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 12000);
+      const timer = setTimeout(() => ctrl.abort(), 8000);
       const res = await fetch('/api/ask', { method: 'POST', body: formData, signal: ctrl.signal });
       clearTimeout(timer);
       if (res.ok) {
         const data = await res.json();
-        return {
-          question: data.question || '',
-          answer: data.answer || '',
-          audioUrl: data.audio_url,
-          source: 'jar_backend'
-        };
+        if (data.answer) {
+          return {
+            question: data.question || '',
+            answer: data.answer,
+            audioUrl: data.audio_url,
+            source: 'jar_backend'
+          };
+        }
       }
     } catch {
-      // Lokal backend yo'q, to'g'ridan-to'g'ri mijoz tomonidagi S2S pipelineda davom etamiz
+      // Backend yo'q yoki javob bermadi, mahalliy S2S ga o'tamiz
     }
 
-    // 2. Mijoz tomonidagi to'liq S2S davrasi
-    const sttRes = await uzbekVoiceService.transcribeAudio(audioBlob);
-    const question = sttRes.text.trim();
-    if (!question) {
-      throw new Error("Nutq eshitilmadi. Iltimos, qayta gapiring.");
-    }
-
-    const answer = await this.askClaude(question);
-    const cleanAnswer = cleanSpeechOutput(answer);
-
-    // 3. Lola TTS orqali audio URL olish
-    let audioUrl: string | undefined;
+    // 2. Nutqni matnga aylantirish (UzbekVoice STT)
+    let question = '';
     try {
-      audioUrl = await uzbekVoiceService.synthesize(cleanAnswer, 'lola');
-    } catch (ttsErr) {
-      console.warn('[AiDialog] Lola TTS xatosi:', ttsErr);
+      const sttRes = await uzbekVoiceService.transcribeAudio(audioBlob);
+      question = sttRes.text.trim();
+    } catch (sttErr) {
+      console.warn('[AiDialog] STT xatosi:', sttErr);
     }
+
+    if (!question) {
+      throw new Error("Nutq eshitilmadi. Iltimos, mikrofonga yaqinroq kelib qayta gapiring.");
+    }
+
+    // 3. Savolga javob topish (Lokal bilimlar bazasi -> Claude LLM -> Fallback)
+    const dialogRes = await this.respond(question);
 
     return {
       question,
-      answer: cleanAnswer,
-      audioUrl,
-      source: 'claude_web'
+      answer: dialogRes.answer,
+      audioUrl: dialogRes.audioUrl,
+      source: dialogRes.source
     };
   }
 
   /**
-   * Matnli savolga Claude Sonnet 5.5 (web search bilan) orqali aqlli javob olish
+   * Matnli savolga ko'p pog'onali aqlli javob olish
    */
-  public async respond(rawText: string, _opts?: { skipCache?: boolean }): Promise<DialogResponse> {
+  public async respond(rawText: string, opts?: { skipCache?: boolean }): Promise<DialogResponse> {
     const text = rawText.trim();
     if (!text) {
       return {
@@ -143,16 +185,75 @@ class AiDialogService {
       };
     }
 
-    // Favqulodda holat xabari
+    // 1. Favqulodda holat xabari (SOS 102)
     if (/qutqar|yordam\s*(ber|kerak|qiling)|hujum|urishyapti|xavf ostida|pichoq|qurol|bosqinchilik/.test(text.toLowerCase())) {
+      const sosAns = "Diqqat! Xavf haqidagi ma'lumot qabul qilindi. Zudlik bilan 102 navbatchilik qismiga xabar yuborilmoqda. Xavfsiz joyga o'ting!";
+      let audioUrl: string | undefined;
+      try { audioUrl = await uzbekVoiceService.synthesize(sosAns, 'lola'); } catch {}
       return {
-        answer: "Diqqat! Xavf haqidagi ma'lumot qabul qilindi. Zudlik bilan 102 navbatchilik qismiga xabar yuborilmoqda. Xavfsiz joyga o'ting!",
+        answer: sosAns,
         action: 'SOS_102',
-        source: 'local_fallback'
+        source: 'local_fallback',
+        audioUrl
       };
     }
 
-    // Claude Sonnet 5.5 (web_search bilan)
+    // 2. Situatsion savollar (Ob-havo, soat, sana, joylashuv) - 0 ms
+    const sitAnswer = this.checkSituational(text);
+    if (sitAnswer) {
+      const clean = cleanSpeechOutput(sitAnswer);
+      let audioUrl: string | undefined;
+      try { audioUrl = await uzbekVoiceService.synthesize(clean, 'lola'); } catch {}
+      return {
+        answer: clean,
+        source: 'local_situation',
+        audioUrl
+      };
+    }
+
+    // 3. Keshdan tekshirish
+    if (!opts?.skipCache) {
+      const cached = answerCache.get(text);
+      if (cached) {
+        let audioUrl: string | undefined;
+        try { audioUrl = await uzbekVoiceService.synthesize(cached, 'lola'); } catch {}
+        return {
+          answer: cached,
+          source: 'local_cache',
+          audioUrl
+        };
+      }
+    }
+
+    // 4. Huquqiy bilimlar bazasi (MJtK tezlik jarimalari, IIV xodimi majburiyati, Konstitutsiya, huquqlar)
+    const legalAns = findLegalAnswer(text);
+    if (legalAns) {
+      const clean = cleanSpeechOutput(legalAns);
+      answerCache.set(text, clean);
+      let audioUrl: string | undefined;
+      try { audioUrl = await uzbekVoiceService.synthesize(clean, 'lola'); } catch {}
+      return {
+        answer: clean,
+        source: 'local_legal',
+        audioUrl
+      };
+    }
+
+    // 5. Lokal Q&A bazasi (101, 102, 103, 104, pasport, yong'in, avariya)
+    const qaMatch = findQa(text);
+    if (qaMatch && qaMatch.score >= 0.5) {
+      const clean = cleanSpeechOutput(qaMatch.entry.a);
+      answerCache.set(text, clean);
+      let audioUrl: string | undefined;
+      try { audioUrl = await uzbekVoiceService.synthesize(clean, 'lola'); } catch {}
+      return {
+        answer: clean,
+        source: 'local_fallback',
+        audioUrl
+      };
+    }
+
+    // 6. Claude Sonnet 5.5 (web_search bilan)
     try {
       const answer = await this.askClaude(text);
       if (answer) {
@@ -162,13 +263,10 @@ class AiDialogService {
         if (this.history.length > 8) this.history.splice(0, 2);
         this.lastLlmError = null;
 
-        // Lola audio URL ni ham tayyorlash
+        answerCache.set(text, clean);
+
         let audioUrl: string | undefined;
-        try {
-          audioUrl = await uzbekVoiceService.synthesize(clean, 'lola');
-        } catch {
-          /* offline/skip */
-        }
+        try { audioUrl = await uzbekVoiceService.synthesize(clean, 'lola'); } catch {}
 
         return {
           answer: clean,
@@ -178,12 +276,26 @@ class AiDialogService {
       }
     } catch (err) {
       this.lastLlmError = err instanceof Error ? err.message : String(err);
-      console.warn('[AiDialog] Claude xatosi:', err);
+      console.warn('[AiDialog] Claude xatosi (oflayn bazaga o\'tilmoqda):', err);
     }
 
+    // 7. Agar Claude xato bersa ham (401, kvota, oflayn), foydalanuvchiga xunuk JSON xatosi ko'rsatilmaydi!
+    // Lokal bazadagi eng yaqin moslik yoki xushmuomala IIV xodimi javobi beriladi:
+    let fallbackText = "Hurmatli fuqaro, savolingizni qabul qildim. Qo'shimcha huquqiy yordam zarur bo'lsa, 102 xizmatiga murojaat qilishingiz mumkin.";
+    if (qaMatch && qaMatch.score >= 0.25) {
+      fallbackText = qaMatch.entry.a;
+    }
+
+    const cleanFallback = cleanSpeechOutput(fallbackText);
+    let fallbackAudioUrl: string | undefined;
+    try {
+      fallbackAudioUrl = await uzbekVoiceService.synthesize(cleanFallback, 'lola');
+    } catch {}
+
     return {
-      answer: "Hurmatli fuqaro, savolingizni qabul qildim. Yordam kerak bo'lsa 102 xizmatiga murojaat qilishingiz mumkin.",
-      source: 'local_fallback'
+      answer: cleanFallback,
+      source: 'local_fallback',
+      audioUrl: fallbackAudioUrl
     };
   }
 
