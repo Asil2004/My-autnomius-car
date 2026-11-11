@@ -23,7 +23,6 @@ interface NavbarProps {
 export const Navbar: React.FC<NavbarProps> = ({ onLockScreen, onOpenController }) => {
   const {
     battery,
-    system,
     strobeActive,
     toggleStrobe,
     sirenActive,
@@ -55,8 +54,6 @@ export const Navbar: React.FC<NavbarProps> = ({ onLockScreen, onOpenController }
           <div className="text-[11px] font-mono text-tactical-500 flex items-center space-x-1.5">
             <Radio className="w-3 h-3 text-emerald-400" />
             <span className="text-emerald-400">OPERATOR PANEL</span>
-            <span>•</span>
-            <span>{system.pingMs}ms</span>
           </div>
         </div>
       </div>
@@ -80,16 +77,18 @@ export const Navbar: React.FC<NavbarProps> = ({ onLockScreen, onOpenController }
 
       {/* Right Controls: Battery, Sound, Strobe & Emergency Stop & Lock to Face */}
       <div className="flex items-center space-x-2">
-        {/* LiFePO4 Battery */}
-        <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded bg-tactical-900 border border-tactical-700/60 font-mono text-xs">
-          {battery.isCharging ? (
-            <BatteryCharging className="w-4 h-4 text-emerald-400 animate-pulse" />
-          ) : (
-            <BatteryMedium className={`w-4 h-4 ${battery.percentage < 25 ? 'text-rose-500' : 'text-emerald-400'}`} />
-          )}
-          <span className="text-white font-bold">{battery.voltage.toFixed(1)}V</span>
-          <span className="text-slate-400 text-[10px]">({battery.percentage}%)</span>
-        </div>
+        {/* Batareya: faqat haqiqiy o'lchov kelganda ko'rsatiladi */}
+        {battery && (
+          <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded bg-tactical-900 border border-tactical-700/60 font-mono text-xs">
+            {battery.isCharging ? (
+              <BatteryCharging className="w-4 h-4 text-emerald-400 animate-pulse" />
+            ) : (
+              <BatteryMedium className={`w-4 h-4 ${battery.percentage < 25 ? 'text-rose-500' : 'text-emerald-400'}`} />
+            )}
+            <span className="text-white font-bold">{battery.voltage.toFixed(1)}V</span>
+            <span className="text-slate-400 text-[10px]">({battery.percentage}%)</span>
+          </div>
+        )}
 
         {/* Strobe Toggle */}
         <button

@@ -138,22 +138,28 @@ const SONAR_ARROW = { front: ArrowUp, rear: ArrowDown, left: ArrowLeft, right: A
 const SonarChip: React.FC<{
   side: 'front' | 'rear' | 'left' | 'right';
   label: string;
-  value: number;
+  /** null = datchik yo'q / ma'lumot kelmagan */
+  value: number | null;
   pins?: string;
   critical?: boolean;
 }> = ({ side, label, value, pins, critical = false }) => {
-  const danger = critical || value <= 22;
+  const danger = critical || (value !== null && value <= 22);
   const Arrow = SONAR_ARROW[side];
-  const title = `${label} sonar${pins ? ` (${pins})` : ''}: ${value} sm. Chegara: <22 sm = avtotormoz`;
+  const title =
+    value === null
+      ? `${label}: ma'lumot yo'q (datchik ulanmagan)`
+      : `${label} sonar${pins ? ` (${pins})` : ''}: ${value} sm. Chegara: <22 sm = avtotormoz`;
   return (
     <div
-      className={`px-2.5 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap transition-colors ${getSonarColor(value, critical)}`}
+      className={`px-2.5 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap transition-colors ${
+        value === null ? 'border-tactical-700 text-slate-500 bg-tactical-900/60' : getSonarColor(value, critical)
+      }`}
       title={title}
       data-sonar={side}
     >
       {danger ? <ShieldAlert className="w-3 h-3 shrink-0" /> : <Arrow className="w-3 h-3 shrink-0" />}
       <span className="text-[10px] font-medium text-slate-300">{label}</span>
-      <span className="ml-auto">{value} sm</span>
+      <span className="ml-auto">{value === null ? '—' : `${value} sm`}</span>
     </div>
   );
 };
@@ -187,11 +193,9 @@ export const HUDView: React.FC = () => {
     setPTZ,
     detectedObjects,
     setDetectedObjects,
-    system,
     logs,
     gps,
     startRealGPS,
-    toggleGPSMode,
     addLog,
     remote,
     setRemoteAllowed,
@@ -550,14 +554,6 @@ export const HUDView: React.FC = () => {
     return () => window.removeEventListener('keydown', onKey);
   }, [isFullscreen]);
 
-  // Old kamera = robotning RPi oqimi. Ulanmagan bo'lsa "Signal yo'q" ko'rsatiladi va vaqti-vaqti bilan qayta uriniladi
-  const [rpiOk, setRpiOk] = useState(false);
-  const [rpiRetry, setRpiRetry] = useState(0);
-  useEffect(() => {
-    if (rpiOk) return;
-    const t = window.setInterval(() => setRpiRetry((n) => n + 1), 10000);
-    return () => clearInterval(t);
-  }, [rpiOk]);
   // Ochiq suzuvchi panellar (oxirgisi eng ustida). Hech narsa ochiq bo'lmasa, kadr toza qoladi
   const [openPanels, setOpenPanels] = useState<PanelId[]>(() => {
     try {
@@ -1621,23 +1617,7 @@ export const HUDView: React.FC = () => {
       className={`relative flex-none rounded-lg overflow-hidden bg-tactical-950 border-2 border-tactical-700 hover:border-police-cyan transition-all shadow-md group ${extraClass}`}
       style={{ aspectRatio: '16 / 9' }}
     >
-      {cam.id === 'front' ? (
-        <>
-          <img
-            src={`http://${system.rpiIp}:${system.rpiPort}/stream.mjpg?r=${rpiRetry}`}
-            alt=""
-            onLoad={() => setRpiOk(true)}
-            onError={() => setRpiOk(false)}
-            className={`absolute inset-0 w-full h-full object-cover ${rpiOk ? '' : 'hidden'}`}
-          />
-          {!rpiOk && (
-            <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-slate-500">
-              <VideoOff className="w-4 h-4" />
-              <span className="text-[10px]">Signal yo'q</span>
-            </span>
-          )}
-        </>
-      ) : MODULE_LENS[cam.id] !== undefined ? (
+      {MODULE_LENS[cam.id] !== undefined ? (
         // Kamera moduli linzalari (PTZ / o'ng / chap): jonli video
         <PtzLensView lens={MODULE_LENS[cam.id]!} variant="tile" label={cam.long} className="absolute inset-0" />
       ) : cam.id === 'face' ? (
@@ -2037,13 +2017,7 @@ export const HUDView: React.FC = () => {
               className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-tactical-950 text-center overflow-hidden"
             >
               <div className="w-full h-full flex items-center justify-center px-6" style={zoomStyle}>
-                {activeCam === 'front' && rpiOk ? (
-                  <img
-                    src={`http://${system.rpiIp}:${system.rpiPort}/stream.mjpg?r=${rpiRetry}`}
-                    alt="Old kamera (RPi)"
-                    className="w-full h-full object-contain bg-black"
-                  />
-                ) : MODULE_LENS[activeCam] !== undefined ? (
+                {MODULE_LENS[activeCam] !== undefined ? (
                   // Kamera moduli linzasi katta oynada (PTZ da nishon chiziqlari va joystik holati ustida)
                   <div className="relative w-full h-full">
                     <PtzLensView
@@ -2739,21 +2713,21 @@ export const HUDView: React.FC = () => {
 
               <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
                 <dt className="text-slate-400 flex items-center gap-1"><Compass className="w-3 h-3" /> Azimut</dt>
-                <dd className="text-right text-slate-100">{String(gps.heading || 42).padStart(3, '0')}°{gps.isReal ? ' (kompas)' : ''}</dd>
+                <dd className="text-right text-slate-100">{gps.isReal && gps.heading !== null ? `${String(gps.heading).padStart(3, '0')}°` : '—'}</dd>
                 <dt className="text-slate-400">Komanda</dt>
                 <dd className="text-right text-police-cyan font-semibold">{lastCommand}</dd>
                 <dt className="text-slate-400 flex items-center gap-1"><MapPin className="w-3 h-3" /> GPS</dt>
-                <dd className="text-right text-slate-100">{gps.latitude.toFixed(5)}, {gps.longitude.toFixed(5)}</dd>
+                <dd className="text-right text-slate-100">{gps.isReal ? `${gps.latitude.toFixed(5)}, ${gps.longitude.toFixed(5)}` : gps.status === 'SEARCHING' ? 'qidirilmoqda…' : gps.error || "GPS yo'q"}</dd>
                 <dt className="text-slate-400">Aniqlik</dt>
-                <dd className="text-right text-slate-100">±{gps.accuracy || 3.5} m</dd>
+                <dd className="text-right text-slate-100">{gps.isReal && gps.accuracy ? `±${gps.accuracy} m` : '—'}</dd>
               </dl>
 
               <button
-                onClick={gps.isReal ? toggleGPSMode : startRealGPS}
+                onClick={startRealGPS}
                 className="w-full px-3 py-1.5 rounded-lg border border-tactical-700 bg-tactical-850 text-xs font-medium text-slate-200 hover:bg-tactical-800 flex items-center justify-center gap-1.5"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${gps.status === 'SEARCHING' ? 'animate-spin' : ''}`} />
-                {gps.isReal ? 'Simulyatsiya GPS ga o\'tish' : 'Haqiqiy GPS ni yoqish'}
+                GPS ni qayta ulash
               </button>
             </div>
           </FloatingPanel>
@@ -2844,7 +2818,6 @@ export const HUDView: React.FC = () => {
           </FloatingPanel>
           <FloatingPanel id="log" title="Serial jurnal" icon={<ScrollText className="w-4 h-4" />} open={isOpen('log')} onClose={() => closePanel('log')} anchor="tr" width={380}>
             <div className="flex flex-col gap-2 text-[11px]">
-              <div className="text-slate-400">{system.arduinoPort}</div>
               <div className="rounded-lg bg-tactical-950 border border-tactical-800 p-2 overflow-y-auto max-h-64 space-y-1">
                 {logs.slice(0, 15).map((log) => (
                   <div key={log.id} className="flex items-start gap-1.5">

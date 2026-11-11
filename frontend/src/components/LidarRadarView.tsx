@@ -13,9 +13,10 @@ import { lidarSerialService, type LidarFrameData } from '../services/lidarSerial
 import type { LidarPoint } from '../types/robot';
 
 export const LidarRadarView: React.FC = () => {
-  const { lidarPoints, lidarInfo, setLidarMode, battery, addLog } = useRobot();
+  const { battery, addLog } = useRobot();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const pointsRef = useRef<LidarPoint[]>(lidarPoints);
+  // Nuqtalar faqat haqiqiy LiDAR dan (Web Serial). Port yopiq bo'lsa radar bo'sh
+  const pointsRef = useRef<LidarPoint[]>([]);
 
   // Web Serial Port Holati
   const [isPortOpen, setIsPortOpen] = useState(false);
@@ -27,21 +28,9 @@ export const LidarRadarView: React.FC = () => {
   const [liveRateHz, setLiveRateHz] = useState<number>(10.0);
   const [liveSpeedRpm, setLiveSpeedRpm] = useState<number>(600);
   const [livePackets, setLivePackets] = useState<number>(0);
-  const [hardwareSectors, setHardwareSectors] = useState({
-    front: 2.80,
-    right: 2.40,
-    rear: 3.50,
-    left: 2.10
-  });
+  const [hardwareSectors, setHardwareSectors] = useState<{ front: number; right: number; rear: number; left: number } | null>(null);
 
   const isSerialSupported = lidarSerialService.isSupported();
-
-  // Simulyatsiya nuqtalarini sinxronlash (agar apparat ulanmagan bo'lsa)
-  useEffect(() => {
-    if (!isPortOpen) {
-      pointsRef.current = lidarPoints;
-    }
-  }, [lidarPoints, isPortOpen]);
 
   // Portni ochish (Web Serial API @ 230400 bps)
   const handleOpenPort = useCallback(async () => {
@@ -52,7 +41,6 @@ export const LidarRadarView: React.FC = () => {
       const res = await lidarSerialService.openPort(230400);
       setIsPortOpen(true);
       setPortName(res.portName);
-      setLidarMode('HARDWARE');
       addLog('SERIAL', 'success', `LiDAR porti ochildi: ${res.portName} @ 230400 bps`);
 
       // Kadrlar kelganda qabul qilish
@@ -70,7 +58,7 @@ export const LidarRadarView: React.FC = () => {
     } finally {
       setIsOpening(false);
     }
-  }, [addLog, setLidarMode]);
+  }, [addLog]);
 
   // Portni yopish
   const handleClosePort = useCallback(async () => {
@@ -78,6 +66,8 @@ export const LidarRadarView: React.FC = () => {
       await lidarSerialService.closePort();
       setIsPortOpen(false);
       setPortName('');
+      setHardwareSectors(null);
+      pointsRef.current = [];
       addLog('SERIAL', 'info', 'LiDAR apparat porti yopildi.');
     } catch (err: any) {
       console.warn('Portni yopishda xatolik:', err);
@@ -228,8 +218,9 @@ export const LidarRadarView: React.FC = () => {
     return () => cancelAnimationFrame(animationId);
   }, []);
 
-  const activeSectors = isPortOpen ? hardwareSectors : (lidarInfo.sectors || hardwareSectors);
-  const isDangerBlocked = activeSectors.front <= 0.45;
+  const activeSectors = isPortOpen ? hardwareSectors : null;
+  const isDangerBlocked = !!activeSectors && activeSectors.front <= 0.45;
+  const fmtM = (v: number | undefined) => (v === undefined ? '—' : `${v.toFixed(2)} m`);
 
   return (
     <div className="flex-1 flex flex-col lg:flex-row gap-4 p-3 sm:p-5 overflow-y-auto max-w-6xl mx-auto w-full select-none">
@@ -269,14 +260,6 @@ export const LidarRadarView: React.FC = () => {
                 <span>{isOpening ? 'Port qidirilmoqda...' : '⚡ LIDAR PORTINI OCHISH'}</span>
               </button>
             )}
-
-            <button
-              onClick={() => setLidarMode(lidarInfo.mode === 'HARDWARE' ? 'SIMULATION' : 'HARDWARE')}
-              className="text-[10px] px-2 py-1 rounded bg-tactical-800 hover:bg-tactical-700 text-slate-300 border border-tactical-600 transition-all active:scale-95"
-              title="Simulyator yoki Apparat rejimini almashtirish"
-            >
-              {lidarInfo.mode === 'HARDWARE' ? 'Rejim: Apparat' : 'Rejim: Simulyator'}
-            </button>
           </div>
         </div>
 
@@ -316,27 +299,27 @@ export const LidarRadarView: React.FC = () => {
         {/* 4 Sektorli Masofa Kartochkalari */}
         <div className="w-full grid grid-cols-4 gap-2 my-2 font-mono text-center">
           <div className={`p-1.5 rounded border ${
-            activeSectors.front <= 0.45
+            isDangerBlocked
               ? 'bg-rose-950/80 border-rose-600 text-rose-300 animate-pulse'
               : 'bg-tactical-950/80 border-tactical-800 text-police-cyan'
           }`}>
             <div className="text-[9px] text-slate-400 font-bold">OLD (0°)</div>
-            <div className="text-xs font-bold mt-0.5">{activeSectors.front.toFixed(2)} m</div>
+            <div className="text-xs font-bold mt-0.5">{fmtM(activeSectors?.front)}</div>
           </div>
 
           <div className="p-1.5 rounded bg-tactical-950/80 border border-tactical-800 text-police-cyan">
             <div className="text-[9px] text-slate-400 font-bold">O'NG (90°)</div>
-            <div className="text-xs font-bold mt-0.5">{activeSectors.right.toFixed(2)} m</div>
+            <div className="text-xs font-bold mt-0.5">{fmtM(activeSectors?.right)}</div>
           </div>
 
           <div className="p-1.5 rounded bg-tactical-950/80 border border-tactical-800 text-police-cyan">
             <div className="text-[9px] text-slate-400 font-bold">ORQA (180°)</div>
-            <div className="text-xs font-bold mt-0.5">{activeSectors.rear.toFixed(2)} m</div>
+            <div className="text-xs font-bold mt-0.5">{fmtM(activeSectors?.rear)}</div>
           </div>
 
           <div className="p-1.5 rounded bg-tactical-950/80 border border-tactical-800 text-police-cyan">
             <div className="text-[9px] text-slate-400 font-bold">CHAP (270°)</div>
-            <div className="text-xs font-bold mt-0.5">{activeSectors.left.toFixed(2)} m</div>
+            <div className="text-xs font-bold mt-0.5">{fmtM(activeSectors?.left)}</div>
           </div>
         </div>
 
@@ -480,12 +463,12 @@ export const LidarRadarView: React.FC = () => {
             <div>
               <div className="flex justify-between text-xs mb-1">
                 <span className="text-slate-400">Zaryad Darajasi:</span>
-                <span className="text-white font-bold">{battery.percentage}%</span>
+                <span className="text-white font-bold">{battery ? `${battery.percentage}%` : "o'lchanmaydi"}</span>
               </div>
               <div className="w-full h-3 bg-tactical-950 rounded-full overflow-hidden border border-tactical-700">
                 <div
                   className="h-full bg-gradient-to-r from-emerald-600 to-police-cyan transition-all duration-500"
-                  style={{ width: `${battery.percentage}%` }}
+                  style={{ width: `${battery?.percentage ?? 0}%` }}
                 />
               </div>
             </div>
@@ -493,11 +476,11 @@ export const LidarRadarView: React.FC = () => {
             <div className="grid grid-cols-2 gap-2 text-xs pt-1">
               <div className="p-2 rounded bg-tactical-950 border border-tactical-800">
                 <div className="text-[10px] text-slate-400">Kuchlanish</div>
-                <div className="text-sm font-bold text-police-cyan">{battery.voltage.toFixed(2)} V</div>
+                <div className="text-sm font-bold text-police-cyan">{battery ? `${battery.voltage.toFixed(2)} V` : '—'}</div>
               </div>
               <div className="p-2 rounded bg-tactical-950 border border-tactical-800">
                 <div className="text-[10px] text-slate-400">Tok Sarfi</div>
-                <div className="text-sm font-bold text-emerald-400">{battery.current.toFixed(1)} A</div>
+                <div className="text-sm font-bold text-emerald-400">{battery ? `${battery.current.toFixed(1)} A` : '—'}</div>
               </div>
             </div>
           </div>

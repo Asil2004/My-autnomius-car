@@ -47,8 +47,9 @@ export const AIAutonomousView: React.FC = () => {
 
   // Calculated Sensor Fusion Time To Collision (TTC)
   const currentSpeedMs = 0.6; // ~0.6 m/s at level 2
-  const distanceFrontM = sonars.front / 100;
-  const ttcSeconds = +(distanceFrontM / currentSpeedMs).toFixed(2);
+  // Old masofa kameradan (to'siq aniqlash ishlamaguncha noma'lum)
+  const distanceFrontM = sonars.front !== null ? sonars.front / 100 : null;
+  const ttcSeconds = distanceFrontM !== null ? +(distanceFrontM / currentSpeedMs).toFixed(2) : Infinity;
 
   return (
     <div className="flex-1 flex flex-col p-3 sm:p-5 overflow-y-auto max-w-6xl mx-auto w-full select-none space-y-4">
@@ -313,7 +314,7 @@ export const AIAutonomousView: React.FC = () => {
                   {ttcSeconds > 10 ? '> 10.0' : ttcSeconds} soniya
                 </div>
                 <div className="text-[11px] text-slate-400 mt-2">
-                  Old masofa: {sonars.front} sm • Tezlik: {currentSpeedMs} m/s
+                  Old masofa: {sonars.front ?? '—'} sm • Tezlik: {currentSpeedMs} m/s
                 </div>
               </div>
             </div>

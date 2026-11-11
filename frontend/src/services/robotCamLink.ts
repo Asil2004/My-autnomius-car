@@ -50,7 +50,7 @@ export interface RobotTelemetry {
     gpsAgeS: number;
   };
   battery?: { v?: number; pct?: number };
-  sonars?: { front: number; rear: number; left: number; right: number };
+  sonars?: { front: number | null; rear: number | null; left: number | null; right: number | null };
   cmd?: string;
   viewers?: number;
   /** GPS avtopilot holati (robot planshetida ishlaydi) */

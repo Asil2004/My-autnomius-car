@@ -4,17 +4,11 @@ import 'leaflet/dist/leaflet.css';
 import { autopilotService, type AutopilotState } from '../services/autopilotService';
 import {
   Layers,
-  Play,
   Square,
   Trash2,
   Crosshair,
-  Wifi,
-  WifiOff,
   Navigation,
   Compass,
-  Cpu,
-  Battery,
-  Sparkles,
   Radio,
   PenLine,
   Check,
@@ -73,7 +67,7 @@ interface Waypoint {
 }
 
 export const GoogleMapsPatrolView: React.FC = () => {
-  const { system, gps, startRealGPS, toggleGPSMode } = useRobot();
+  const { gps, startRealGPS } = useRobot();
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -81,36 +75,20 @@ export const GoogleMapsPatrolView: React.FC = () => {
   const polylineRef = useRef<L.Polyline | null>(null);
   const waypointMarkersRef = useRef<L.CircleMarker[]>([]);
 
-  // Modes & Statuses
-  const [mode, setMode] = useState<'demo' | 'real'>('demo');
   const [mapLayerType, setMapLayerType] = useState<'hybrid' | 'roadmap'>('hybrid');
-  const [isPatrolling, setIsPatrolling] = useState(false);
-  const isPatrollingRef = useRef(false);
-  isPatrollingRef.current = isPatrolling;
   const [routingStatus, setRoutingStatus] = useState<string>("Nuqtalar qo'yilmagan");
 
-  // Real Raspberry Pi WebSocket state
-  const [robotIp, setRobotIp] = useState<string>(system.rpiIp || '192.168.1.100:8000');
-  const [isConnectedPi, setIsConnectedPi] = useState(false);
-  const [isConnectingPi, setIsConnectingPi] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
-
-  // Telemetry state
+  // Panel raqamlari: navigatsiya holatidan (GPS + giroskop)
   const [telemetry, setTelemetry] = useState({
     lat: NAVOI_CENTER[0],
     lon: NAVOI_CENTER[1],
-    heading: 135,
-    speed: 0,
-    lidarHz: 10,
-    batteryVoltage: 13.2,
-    batteryPercent: 92
+    heading: 0,
+    speed: 0
   });
 
   // Waypoints & Path
   const [waypoints, setWaypoints] = useState<Waypoint[]>([]);
   const detailedNodesRef = useRef<[number, number][]>([]);
-  const currentPathIndexRef = useRef<number>(0);
-  const patrolIntervalRef = useRef<any>(null);
 
   // Tile layer references
   const hybridLayerRef = useRef<L.TileLayer | null>(null);
@@ -118,7 +96,7 @@ export const GoogleMapsPatrolView: React.FC = () => {
 
   // ---------------------------------------------------------------------------
   // ROBOT MARKERI: joylashuv darhol, burilish esa giroskop (IMU / planshet sensori) bo'yicha silliq.
-  // setRobotVisual dagi heading faqat zaxira (giroskop ma'lumoti bo'lmasa: simulyatsiya yoki GPS yo'nalishi).
+  // setRobotVisual dagi heading faqat zaxira (giroskop ma'lumoti bo'lmasa: GPS yo'nalishi).
   // ---------------------------------------------------------------------------
   const fallbackHeadingRef = useRef(135);
   const headingVectorRef = useRef<L.Polyline | null>(null);
@@ -230,7 +208,6 @@ export const GoogleMapsPatrolView: React.FC = () => {
   const waypointsRef = useRef<Waypoint[]>([]);
   const drawModeRef = useRef(false);
   const previewLineRef = useRef<L.Polyline | null>(null);
-  const patrolDirRef = useRef<1 | -1>(1);
   const [drawMode, setDrawMode] = useState(false);
 
   const routeLengthM = useCallback((pts: Waypoint[]) => {
@@ -251,8 +228,6 @@ export const GoogleMapsPatrolView: React.FC = () => {
     const pts = waypointsRef.current;
     setWaypoints([...pts]);
     detailedNodesRef.current = pts.map(p => [p.lat, p.lon]);
-    currentPathIndexRef.current = 0;
-    patrolDirRef.current = 1;
     renderPolyline(detailedNodesRef.current);
     if (pts.length === 0) setRoutingStatus("Marshrut yo'q. \"Marshrut chizish\" tugmasini bosing.");
     else if (pts.length === 1) setRoutingStatus('Boshlang\'ich nuqta qo\'yildi. Keyingi nuqtani bosing.');
@@ -339,11 +314,6 @@ export const GoogleMapsPatrolView: React.FC = () => {
 
   // Clear waypoints
   const clearWaypoints = useCallback(() => {
-    if (patrolIntervalRef.current) {
-      clearInterval(patrolIntervalRef.current);
-      patrolIntervalRef.current = null;
-    }
-    setIsPatrolling(false);
     if (autopilotService.getState().active) autopilotService.stop('Marshrut o‘chirildi');
     waypointsRef.current = [];
     removePreview();
@@ -366,7 +336,6 @@ export const GoogleMapsPatrolView: React.FC = () => {
   }, [setDrawing]);
 
   // MARKAZIY NAVIGATSIYA: joylashuv + tezlik + yo'nalish bitta holatdan (GPS uzilsa dead reckoning).
-  // Demo patrul simulyatsiyasi yurayotganda marker simulyatsiyaga bo'ysunadi
   const [nav, setNav] = useState<NavState | null>(null);
   const accuracyCircleRef = useRef<L.Circle | null>(null);
   // Operator qurilmasi: marker tanlangan ROBOT telemetriyasidan (o'z GPS/giroskopi emas)
@@ -404,7 +373,7 @@ export const GoogleMapsPatrolView: React.FC = () => {
   useEffect(() => {
     if (isOperator) return;
     return navigationService.subscribe((s) => {
-      if (!s.initialized || isPatrollingRef.current) return;
+      if (!s.initialized) return;
       applyNav(s);
     });
   }, [isOperator, applyNav]);
@@ -427,20 +396,18 @@ export const GoogleMapsPatrolView: React.FC = () => {
       const n = r.tel?.nav;
       if (!n) continue;
       if (r.id === watchedRobot) {
-        if (!isPatrollingRef.current) {
-          applyNav({
-            lat: n.lat,
-            lon: n.lon,
-            speed: n.speed,
-            heading: n.heading,
-            headingSource: n.hsrc,
-            positionSource: r.online ? n.psrc : 'stale',
-            accuracy: n.acc,
-            gpsAgeMs: n.gpsAgeS < 0 ? Infinity : n.gpsAgeS * 1000,
-            t: r.tel!.t,
-            initialized: true
-          });
-        }
+        applyNav({
+          lat: n.lat,
+          lon: n.lon,
+          speed: n.speed,
+          heading: n.heading,
+          headingSource: n.hsrc,
+          positionSource: r.online ? n.psrc : 'stale',
+          accuracy: n.acc,
+          gpsAgeMs: n.gpsAgeS < 0 ? Infinity : n.gpsAgeS * 1000,
+          t: r.tel!.t,
+          initialized: true
+        });
         continue;
       }
       if (!map) continue;
@@ -491,72 +458,6 @@ export const GoogleMapsPatrolView: React.FC = () => {
     }));
   }, [gps, startRealGPS, setRobotVisual]);
 
-  // Start Demo Patrol Simulation Loop
-  const startPatrol = useCallback(() => {
-    if (detailedNodesRef.current.length < 2) {
-      setRoutingStatus("Avval \"Marshrut chizish\" tugmasini bosib, xaritada kamida 2 ta nuqta qo'ying.");
-      return;
-    }
-    if (drawModeRef.current) setDrawing(false);
-
-    setIsPatrolling(true);
-
-    if (patrolIntervalRef.current) clearInterval(patrolIntervalRef.current);
-
-    patrolIntervalRef.current = setInterval(() => {
-      const nodes = detailedNodesRef.current;
-      if (nodes.length === 0) return;
-
-      setTelemetry(prev => {
-        const target = nodes[currentPathIndexRef.current];
-        const dLat = target[0] - prev.lat;
-        const dLon = target[1] - prev.lon;
-        const dist = Math.hypot(dLat, dLon);
-
-        if (dist < 0.000015) {
-          // Chizilgan yo'l oxiriga yetganda o'sha yo'l bilan orqaga qaytadi (uylar ustidan to'g'ri kesib o'tmaydi)
-          let next = currentPathIndexRef.current + patrolDirRef.current;
-          if (next >= nodes.length || next < 0) {
-            patrolDirRef.current = patrolDirRef.current === 1 ? -1 : 1;
-            next = currentPathIndexRef.current + patrolDirRef.current;
-          }
-          currentPathIndexRef.current = Math.max(0, Math.min(nodes.length - 1, next));
-          return prev;
-        }
-
-        const targetHeading = (Math.atan2(dLon, dLat) * 180 / Math.PI + 360) % 360;
-        let headingDiff = targetHeading - prev.heading;
-        if (headingDiff > 180) headingDiff -= 360;
-        if (headingDiff < -180) headingDiff += 360;
-
-        const newHeading = (prev.heading + headingDiff * 0.25 + 360) % 360;
-        const step = 0.000010; // ~1m step at 10Hz => ~1.2m/s
-        const newLat = prev.lat + Math.cos(newHeading * Math.PI / 180) * step;
-        const newLon = prev.lon + Math.sin(newHeading * Math.PI / 180) * step;
-
-        setRobotVisual(newLat, newLon, newHeading);
-
-        return {
-          ...prev,
-          lat: newLat,
-          lon: newLon,
-          heading: newHeading,
-          speed: 1.2
-        };
-      });
-    }, 100);
-  }, [setRobotVisual, setDrawing]);
-
-  const stopPatrol = useCallback(() => {
-    setIsPatrolling(false);
-    if (patrolIntervalRef.current) {
-      clearInterval(patrolIntervalRef.current);
-      patrolIntervalRef.current = null;
-    }
-    setTelemetry(prev => ({ ...prev, speed: 0 }));
-  }, []);
-  stopPatrolRef.current = stopPatrol;
-
   // HAQIQIY GPS AVTOPILOT (ESP32): chizilgan marshrut bo'ylab robotni haqiqatan yurgizadi
   const [ap, setAp] = useState<AutopilotState>(() => autopilotService.getState());
   useEffect(() => autopilotService.subscribe(setAp), []);
@@ -566,81 +467,8 @@ export const GoogleMapsPatrolView: React.FC = () => {
       return;
     }
     if (drawModeRef.current) setDrawing(false);
-    stopPatrol();
     autopilotService.start(waypointsRef.current);
-  }, [setDrawing, stopPatrol]);
-
-  // Raspberry Pi WebSocket Connection
-  const togglePiConnection = useCallback(() => {
-    if (isConnectedPi) {
-      if (wsRef.current) wsRef.current.close();
-      return;
-    }
-
-    setIsConnectingPi(true);
-    const wsUrl = `ws://${robotIp.trim()}/ws`;
-
-    try {
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        setIsConnectedPi(true);
-        setIsConnectingPi(false);
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          // Robot IMU / giroskop yo'nalishi (bo'lsa) marker burilishini boshqaradi
-          headingService.ingestTelemetry(data);
-          if (data.gps && data.gps.has_fix) {
-            headingService.pushGps(data.gps.heading, data.gps.speed);
-            const rLat = data.gps.latitude;
-            const rLon = data.gps.longitude;
-            const rHeading = data.gps.heading || 0;
-            const rSpeed = data.gps.speed || 0;
-
-            setTelemetry(prev => ({
-              ...prev,
-              lat: rLat,
-              lon: rLon,
-              heading: rHeading,
-              speed: rSpeed
-            }));
-
-            setRobotVisual(rLat, rLon, rHeading);
-            if (mapRef.current) {
-              mapRef.current.panTo([rLat, rLon]);
-            }
-          }
-
-          if (data.battery) {
-            setTelemetry(prev => ({
-              ...prev,
-              batteryVoltage: data.battery.voltage,
-              batteryPercent: data.battery.percent
-            }));
-          }
-        } catch {
-          // ignore invalid parse
-        }
-      };
-
-      ws.onclose = () => {
-        setIsConnectedPi(false);
-        setIsConnectingPi(false);
-      };
-
-      ws.onerror = () => {
-        setIsConnectedPi(false);
-        setIsConnectingPi(false);
-      };
-    } catch {
-      setIsConnectingPi(false);
-      setIsConnectedPi(false);
-    }
-  }, [isConnectedPi, robotIp, setRobotVisual]);
+  }, [setDrawing]);
 
   // Layer switch
   const switchMapLayer = (type: 'hybrid' | 'roadmap') => {
@@ -720,8 +548,6 @@ export const GoogleMapsPatrolView: React.FC = () => {
     }, 200);
 
     return () => {
-      if (patrolIntervalRef.current) clearInterval(patrolIntervalRef.current);
-      if (wsRef.current) wsRef.current.close();
       map.remove();
       mapRef.current = null;
     };
@@ -742,9 +568,9 @@ export const GoogleMapsPatrolView: React.FC = () => {
             QALQON v1.0 — DIGITAL TWIN &amp; AVTONOM PATRUL
           </span>
           <div className="flex items-center gap-1.5 ml-2 pl-2 border-l border-tactical-700">
-            <span className={`w-2.5 h-2.5 rounded-full ${mode === 'demo' ? 'bg-amber-400 shadow-[0_0_8px_#f59e0b]' : 'bg-emerald-400 shadow-[0_0_8px_#10b981]'}`} />
+            <span className={`w-2.5 h-2.5 rounded-full ${gps.isReal ? 'bg-emerald-400 shadow-[0_0_8px_#10b981]' : 'bg-amber-400 shadow-[0_0_8px_#f59e0b]'}`} />
             <span className="text-[11px] font-mono font-bold text-slate-300">
-              {mode === 'demo' ? 'DEMO SIMULYATSIYA' : 'REAL RASPBERRY PI'}
+              {gps.isReal ? 'HAQIQIY GPS' : 'GPS QIDIRILMOQDA'}
             </span>
           </div>
         </div>
@@ -785,42 +611,7 @@ export const GoogleMapsPatrolView: React.FC = () => {
 
       {/* RIGHT SIDEBAR CONTROLS & TELEMETRY */}
       <div className="absolute right-3 top-14 bottom-3 w-[21rem] max-w-[calc(100%-1.5rem)] z-20 flex flex-col gap-2.5 overflow-y-auto pr-1 pointer-events-auto">
-        {/* REJIM TANLASH CARD */}
-        <div className="bg-tactical-950/90 border border-tactical-800/80 backdrop-blur-md rounded-xl p-3 shadow-xl">
-          <div className="text-[10px] font-mono font-bold text-police-cyan uppercase tracking-wider mb-2 flex items-center justify-between">
-            <span>Ishlash Rejimi</span>
-            <Sparkles className="w-3 h-3 text-police-cyan" />
-          </div>
-          <div className="flex bg-tactical-900 border border-tactical-700/60 rounded-lg p-0.5">
-            <button
-              onClick={() => {
-                setMode('demo');
-              }}
-              className={`flex-1 py-1.5 text-xs font-mono font-bold rounded transition-all ${
-                mode === 'demo'
-                  ? 'bg-sky-600 text-white shadow'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              🎮 DEMO REJIM
-            </button>
-            <button
-              onClick={() => {
-                setMode('real');
-                stopPatrol();
-              }}
-              className={`flex-1 py-1.5 text-xs font-mono font-bold rounded transition-all ${
-                mode === 'real'
-                  ? 'bg-emerald-600 text-white shadow'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              ⚡ REAL (RPi 4)
-            </button>
-          </div>
-        </div>
-
-        {/* MARSHRUT VA HAQIQIY GPS AVTOPILOT: rejimdan qat'i nazar doim ko'rinadi */}
+        {/* MARSHRUT VA HAQIQIY GPS AVTOPILOT */}
         <div className="bg-tactical-950/90 border border-emerald-500/50 backdrop-blur-md rounded-xl p-3 shadow-xl flex flex-col gap-2">
           <div className="text-[10px] font-mono font-bold text-emerald-300 uppercase tracking-wider flex items-center justify-between">
             <span>Marshrut va avtopilot</span>
@@ -918,7 +709,6 @@ export const GoogleMapsPatrolView: React.FC = () => {
                     <button
                       onClick={async () => {
                         if (drawModeRef.current) setDrawing(false);
-                        stopPatrol();
                         const ok = await fleetWatcher.sendAutopilot(watchedRobot, { op: 'start', route: waypointsRef.current.map((p) => ({ lat: p.lat, lon: p.lon })) });
                         setRoutingStatus(ok ? `📡 Marshrut ${watchedRobot} robotiga yuborildi` : "Robotga ulanib bo'lmadi (park aloqasi yo'q)");
                       }}
@@ -984,88 +774,6 @@ export const GoogleMapsPatrolView: React.FC = () => {
             )}
         </div>
 
-        {/* DEMO PATROL CONTROLS */}
-        {mode === 'demo' && (
-          <div className="bg-tactical-950/90 border border-tactical-800/80 backdrop-blur-md rounded-xl p-3 shadow-xl flex flex-col gap-2">
-            <div className="text-[10px] font-mono font-bold text-police-cyan uppercase tracking-wider flex items-center justify-between">
-              <span>Demo Avtonom Navigatsiya</span>
-              <span className={`text-[10px] font-bold ${isPatrolling ? 'text-emerald-400' : 'text-amber-400'}`}>
-                {isPatrolling ? 'FAOL PATRUL' : 'KUTISHDA'}
-              </span>
-            </div>
-
-            <div className="bg-tactical-900/90 border border-tactical-800 rounded p-2 text-[10px] font-mono flex flex-col gap-1">
-              <div className="flex justify-between items-center">
-                <span className="text-slate-400">Marshrut:</span>
-                <span className="text-police-cyan font-bold">{waypoints.length} ta waypoint</span>
-              </div>
-              <div className="text-emerald-400 font-bold truncate">{routingStatus}</div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-1.5">
-              <button
-                onClick={startPatrol}
-                disabled={isPatrolling}
-                className="py-2 px-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded font-mono text-xs font-bold flex items-center justify-center gap-1.5 shadow transition-all"
-              >
-                <Play className="w-3.5 h-3.5 fill-white" />
-                Patrulni Boshlash
-              </button>
-              <button
-                onClick={stopPatrol}
-                disabled={!isPatrolling}
-                className="py-2 px-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded font-mono text-xs font-bold flex items-center justify-center gap-1.5 shadow transition-all"
-              >
-                <Square className="w-3.5 h-3.5 fill-white" />
-                To'xtatish
-              </button>
-            </div>
-
-          </div>
-        )}
-
-        {/* REAL RASPBERRY PI CONTROLS */}
-        {mode === 'real' && (
-          <div className="bg-tactical-950/90 border border-tactical-800/80 backdrop-blur-md rounded-xl p-3 shadow-xl flex flex-col gap-2">
-            <div className="text-[10px] font-mono font-bold text-police-cyan uppercase tracking-wider flex items-center justify-between">
-              <span>Raspberry Pi 4 Jonli Aloqasi</span>
-              <span className={`text-[10px] font-bold ${isConnectedPi ? 'text-emerald-400' : 'text-rose-400'}`}>
-                {isConnectedPi ? 'ONLINE' : isConnectingPi ? 'ULANMOQDA...' : 'OFFLINE'}
-              </span>
-            </div>
-
-            <label className="text-[10px] font-mono text-slate-400">Robot IP manzili (WebSocket /ws):</label>
-            <input
-              type="text"
-              value={robotIp}
-              onChange={e => setRobotIp(e.target.value)}
-              className="bg-tactical-900 border border-tactical-700 rounded px-2 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-police-cyan"
-              placeholder="192.168.1.100:8000"
-            />
-
-            <button
-              onClick={togglePiConnection}
-              className={`py-2 px-3 rounded font-mono text-xs font-bold flex items-center justify-center gap-1.5 shadow transition-all ${
-                isConnectedPi
-                  ? 'bg-rose-600 hover:bg-rose-500 text-white'
-                  : 'bg-police-blue hover:bg-blue-600 text-white'
-              }`}
-            >
-              {isConnectedPi ? (
-                <>
-                  <WifiOff className="w-3.5 h-3.5" />
-                  Ulanishni Uzish (Disconnect)
-                </>
-              ) : (
-                <>
-                  <Wifi className="w-3.5 h-3.5" />
-                  🔌 Ulanish (Connect)
-                </>
-              )}
-            </button>
-          </div>
-        )}
-
         {/* JONLI TELEMETRIYA */}
         <div className="bg-tactical-950/90 border border-tactical-800/80 backdrop-blur-md rounded-xl p-3 shadow-xl flex flex-col gap-2">
           <div className="text-[10px] font-mono font-bold text-police-cyan uppercase tracking-wider flex items-center justify-between">
@@ -1079,14 +787,14 @@ export const GoogleMapsPatrolView: React.FC = () => {
             <div className="flex items-center space-x-1.5">
               <span className={`w-2 h-2 rounded-full ${gps.isReal ? 'bg-emerald-400 animate-ping' : 'bg-amber-400'}`}></span>
               <span className="text-[10px] text-slate-300">
-                {gps.isReal ? 'Haqiqiy Qurilma GPS' : 'Simulyatsiya GPS'}
+                {gps.isReal ? 'Qurilma GPS i faol' : gps.status === 'SEARCHING' ? 'GPS qidirilmoqda…' : gps.error || "GPS yo'q"}
               </span>
             </div>
             <button
-              onClick={gps.isReal ? toggleGPSMode : startRealGPS}
+              onClick={startRealGPS}
               className="text-[10px] px-2 py-0.5 rounded bg-police-blue/30 text-police-cyan border border-police-cyan/50 hover:bg-police-blue/60"
             >
-              {gps.isReal ? 'Real GPS Faol' : 'Real GPS Yoqish'}
+              Qayta ulash
             </button>
           </div>
 
@@ -1167,21 +875,6 @@ export const GoogleMapsPatrolView: React.FC = () => {
               </div>
             </div>
 
-            <div className="bg-tactical-900/90 border-l-2 border-cyan-500 p-2 rounded">
-              <div className="text-[10px] text-slate-400 flex items-center gap-1">
-                <Cpu className="w-3 h-3" /> 360° LiDAR Skan
-              </div>
-              <div className="font-bold text-cyan-400">Faol ({telemetry.lidarHz} Hz)</div>
-            </div>
-
-            <div className="bg-tactical-900/90 border-l-2 border-indigo-500 p-2 rounded">
-              <div className="text-[10px] text-slate-400 flex items-center gap-1">
-                <Battery className="w-3 h-3" /> Batareya (LiFePO4)
-              </div>
-              <div className="font-bold text-indigo-300">
-                {telemetry.batteryVoltage}V ({telemetry.batteryPercent}%)
-              </div>
-            </div>
           </div>
         </div>
 
@@ -1189,8 +882,8 @@ export const GoogleMapsPatrolView: React.FC = () => {
         <div className="bg-tactical-950/80 border-l-2 border-police-cyan rounded p-2 text-[10px] font-sans text-slate-400 leading-relaxed shadow-lg">
           <p className="font-semibold text-police-cyan mb-0.5">💡 Qo'llanma:</p>
           <ul className="list-disc list-inside space-y-0.5">
-            <li><b>Demo rejimida:</b> "Marshrut chizish" tugmasini bosib, xaritada nuqtalarni ketma-ket bosing; robot aynan shu chiziq bo'ylab yuradi va oxiriga yetgach orqaga qaytadi.</li>
-            <li><b>Real rejimda:</b> Raspberry Pi IP sini kiriting va planshetning aniq GPS koordinatasini jonli kuzating.</li>
+            <li>"Marshrut chizish" tugmasini bosib, xaritada nuqtalarni ketma-ket bosing, so'ng "Chizishni tugatish".</li>
+            <li>Robot planshetida "Manzilga haqiqiy yurish", operatorda "Robotni manzilga yuborish": robot GPS + giroskop bo'yicha ESP32 orqali yuradi, to'siqni kamera bilan aylanib o'tadi.</li>
           </ul>
         </div>
       </div>

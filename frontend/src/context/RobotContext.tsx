@@ -6,8 +6,6 @@ import type {
   BatteryState,
   PTZState,
   DetectedObject,
-  LidarPoint,
-  LidarInfo,
   PatrolMode,
   SystemStatus,
   GPSState,
@@ -51,11 +49,9 @@ interface RobotContextType {
   sonars: SonarSensors;
   setSonars: React.Dispatch<React.SetStateAction<SonarSensors>>;
   isFrontBlocked: boolean;
-  battery: BatteryState;
-  lidarPoints: LidarPoint[];
-  lidarInfo: LidarInfo;
-  setLidarMode: (mode: 'HARDWARE' | 'SIMULATION') => void;
-  
+  /** Haqiqiy batareya ma'lumoti hali kelmagan bo'lsa null */
+  battery: BatteryState | null;
+
   // Camera as Primary Eye / Obstacle Sensor
   cameraObstacle: {
     active: boolean;
@@ -91,20 +87,16 @@ interface RobotContextType {
   
   // System & Connection
   system: SystemStatus;
-  setRpiConfig: (ip: string, port: number) => void;
   logs: LogMessage[];
   addLog: (source: LogMessage['source'], level: LogMessage['level'], text: string) => void;
   
   // Audio & Settings
   isMuted: boolean;
   toggleMute: () => void;
-  isSimulationMode: boolean;
-  toggleSimulationMode: () => void;
 
-  // Real & Simulated GPS Telemetry
+  // Qurilmaning haqiqiy GPS i
   gps: GPSState;
   startRealGPS: () => void;
-  toggleGPSMode: () => void;
 
   // ESP32 Direct MQTT & Local HTTP Control
   esp32Status: string;
@@ -121,8 +113,7 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [activeTab, setActiveTab] = useState<'hud' | 'ai' | 'telemetry' | 'maps' | 'settings'>('hud');
   
   const [lastCommand, setLastCommand] = useState<MecanumCommand>('S');
-  const [remote, setRemote] = useState<RemoteStatus | null>(null);
-  const lastAdminLogRef = useRef({ cmd: '', t: 0 });
+  const [remote] = useState<RemoteStatus | null>(null);
   const [speedLevel, setSpeedLevelState] = useState<SpeedLevel>(2);
   const [isMoving, setIsMoving] = useState<boolean>(false);
   // Navigatsiya: faqat buyruq O'ZGARGANDA xabar beriladi ("to'xta" -> dead reckoning siljimaydi, tezlik 0).
@@ -283,11 +274,12 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
   }, [sendRawToESP32]);
 
+  // Alohida sonar datchiklari yo'q: old masofani kamera ("robot ko'zi") beradi, qolganlari ma'lumot kelmaguncha null
   const [sonars, setSonars] = useState<SonarSensors>({
-    front: 58,
-    rear: 140,
-    left: 82,
-    right: 95
+    front: null,
+    rear: null,
+    left: null,
+    right: null
   });
 
   const [cameraObstacle, setCameraObstacle] = useState<{
@@ -335,13 +327,8 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, []);
 
-  const [battery, setBattery] = useState<BatteryState>({
-    voltage: 13.25,
-    percentage: 88,
-    temp: 27.4,
-    current: 1.85,
-    isCharging: false
-  });
+  // Batareya o'lchanmaydi (datchik yo'q): soxta qiymat ko'rsatilmaydi
+  const [battery] = useState<BatteryState | null>(null);
 
   const [ptz, setPTZ] = useState<PTZState>({
     pan: 0,
@@ -354,62 +341,12 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [sirenActive, setSirenActive] = useState<boolean>(false);
   const [patrolMode, setPatrolMode] = useState<PatrolMode>('MANUAL');
 
-  // LDROBOT STL-19P Real Lidar State
-  const [lidarInfo, setLidarInfo] = useState<LidarInfo>({
-    model: 'LDROBOT STL-19P',
-    type: '360° DToF Laser Scanner',
-    mode: 'HARDWARE',
-    isHardware: true,
-    port: 'COM (CP2102) /dev/ttyUSB0',
-    baudrate: 230400,
-    rateHz: 10.0,
-    sampleRate: 4500,
-    rangeMin: 0.05,
-    rangeMax: 12.0,
-    accuracyMm: 15,
-    pointsCount: 360,
-    sectors: {
-      front: 2.8,
-      rear: 3.5,
-      left: 2.1,
-      right: 2.4
-    },
-    isBlocked: false,
-    status: 'ONLINE'
-  });
-
-  const setLidarMode = useCallback((mode: 'HARDWARE' | 'SIMULATION') => {
-    setLidarInfo((prev) => ({
-      ...prev,
-      mode,
-      isHardware: mode === 'HARDWARE',
-      status: mode === 'HARDWARE' ? 'ONLINE' : 'STANDBY'
-    }));
-  }, []);
+  // LiDAR ma'lumoti LiDAR bo'limida Web Serial orqali to'g'ridan-to'g'ri o'qiladi (lidarSerialService)
 
   const [aiProcessingFps] = useState<number>(24);
-  const [detectedObjects, setDetectedObjects] = useState<DetectedObject[]>([
-    {
-      id: 'obj-1',
-      label: 'Odam (Piyoda)',
-      confidence: 0.94,
-      distance: 2.8,
-      box: { x: 38, y: 22, width: 24, height: 56 },
-      color: '#00e676',
-      category: 'person'
-    },
-    {
-      id: 'obj-2',
-      label: 'Mashina (Avtomobil)',
-      confidence: 0.91,
-      distance: 6.2,
-      box: { x: 68, y: 35, width: 26, height: 38 },
-      color: '#00e5ff',
-      category: 'car'
-    }
-  ]);
+  const [detectedObjects, setDetectedObjects] = useState<DetectedObject[]>([]);
 
-  // GPS Telemetry State (Haqiqiy Geolocation yoki Simulyatsiya)
+  // Qurilmaning haqiqiy GPS i (koordinata birinchi signal kelguncha boshlang'ich nuqta, status SEARCHING)
   const [gps, setGps] = useState<GPSState>({
     latitude: 40.09985,
     longitude: 65.36835,
@@ -422,27 +359,12 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     status: 'SEARCHING'
   });
 
-  const [system, setSystem] = useState<SystemStatus>({
-    rpiConnected: true,
-    arduinoConnected: true,
-    rpiIp: (typeof window !== 'undefined' && window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') ? window.location.hostname : '10.255.89.119',
-    rpiPort: 8000,
-    arduinoPort: '/dev/ttyACM0 (115200 baud)',
-    pingMs: 14,
-    cpuUsage: 32,
-    ramUsage: 44,
-    uptimeSeconds: 1420,
-    serialWarning: null
-  });
+  const [system, setSystem] = useState<SystemStatus>({ serialWarning: null });
 
   const [isMuted, setIsMuted] = useState<boolean>(false);
-  const [isSimulationMode, setIsSimulationMode] = useState<boolean>(true);
 
-  const [logs, setLogs] = useState<LogMessage[]>([
-    { id: '1', time: '15:30:12', source: 'SYSTEM', level: 'info', text: 'Qalqon OS v2.4 yuklandi. Barcha datchiklar onlayn.' },
-    { id: '2', time: '15:30:14', source: 'SERIAL', level: 'success', text: 'Arduino Uno ulandi: /dev/ttyACM0 @ 115200 baud.' },
-    { id: '3', time: '15:30:15', source: 'RPI', level: 'info', text: 'Raspberry Pi veb-server ishga tushirildi (port 8000).' },
-    { id: '4', time: '15:30:16', source: 'AI', level: 'info', text: 'TensorFlow COCO-SSD & Mobil kameralar detektori tayyor.' },
+  const [logs, setLogs] = useState<LogMessage[]>(() => [
+    { id: '1', time: new Date().toTimeString().slice(0, 8), source: 'SYSTEM', level: 'info', text: 'Qalqon ishga tushdi.' }
   ]);
 
   const addLogRef = useRef<(source: LogMessage['source'], level: LogMessage['level'], text: string) => void>(() => undefined);
@@ -535,29 +457,6 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     );
   }, [addLog]);
 
-  const toggleGPSMode = useCallback(() => {
-    if (gps.isReal) {
-      if (watchIdRef.current !== null) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-        watchIdRef.current = null;
-      }
-      setGps({
-        latitude: 40.09985,
-        longitude: 65.36835,
-        altitude: 348,
-        accuracy: 3.5,
-        speed: 0,
-        heading: 135,
-        timestamp: Date.now(),
-        isReal: false,
-        status: 'SIMULATED'
-      });
-      addLog('GPS', 'info', "GPS: Simulyatsiya rejimiga o'tildi (Navoiy ko'chasi)");
-    } else {
-      startRealGPS();
-    }
-  }, [gps.isReal, startRealGPS, addLog]);
-
   // Sayt ochilganda avtomatik haqiqiy GPS ni ishga tushirish
   useEffect(() => {
     startRealGPS();
@@ -572,11 +471,6 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const next = !isMuted;
     setIsMuted(next);
     tacticalAudio.setMuted(next);
-  };
-
-  const toggleSimulationMode = () => {
-    setIsSimulationMode((prev) => !prev);
-    tacticalAudio.playClick();
   };
 
   const toggleStrobe = () => {
@@ -614,12 +508,9 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (espIp) {
       fetch(`http://${espIp}/speed?val=${pwm}`, { mode: 'no-cors' }).catch(() => {});
     }
-    if (!isSimulationMode) {
-      fetch(`http://${system.rpiIp}:${system.rpiPort}/cmd?speed=${lvl}`).catch(() => {});
-    }
-  }, [isSimulationMode, sendRawToESP32, system.rpiIp, system.rpiPort, addLog]);
+  }, [sendRawToESP32, addLog]);
 
-  const isFrontBlocked = sonars.front <= 28 || cameraObstacle.isBlocked;
+  const isFrontBlocked = (sonars.front ?? Infinity) <= 28 || cameraObstacle.isBlocked;
 
   // Mecanum Command Handler (ESP32 MQTT + Heartbeat + Local Fallback)
   const sendMecanumCommand = useCallback((cmd: MecanumCommand) => {
@@ -656,7 +547,7 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     // Oldinga harakatda avtotormoz to'siq tekshiruvi
     const isGoingForward = cmd === 'F' || cmd === 'G' || cmd === 'I' || cmd === 'Q' || cmd === 'E';
-    if (isGoingForward && (sonars.front <= 28 || cameraObstacle.isBlocked)) {
+    if (isGoingForward && ((sonars.front ?? Infinity) <= 28 || cameraObstacle.isBlocked)) {
       tacticalAudio.playObstacleAlert();
       addLog('AI', 'error', `🛑 AVTOTORMOZ: Kamera "Ko'zi" to'siqni aniqladi (${sonars.front} sm)! Oldinga harakat qulflandi!`);
       setLastCommand('S');
@@ -691,13 +582,7 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         sendRawToESP32(espCmd);
       }, 250);
     }
-
-    if (!isSimulationMode) {
-      fetch(`http://${system.rpiIp}:${system.rpiPort}/cmd?c=${cmd}`).catch((err) => {
-        console.error('RPi connection err:', err);
-      });
-    }
-  }, [addLog, cameraObstacle.isBlocked, isSimulationMode, sendRawToESP32, sonars.front, system.rpiIp, system.rpiPort]);
+  }, [addLog, cameraObstacle.isBlocked, sendRawToESP32, sonars.front]);
 
   // Keyboard navigation listener (Multi-key W, A, S, D, Q, E, Space, 1, 2, 3)
   useEffect(() => {
@@ -782,180 +667,13 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         esp32Enabled,
         setEsp32Enabled, setSpeedLevel]);
 
-  // WebSocket ulanishi (Haqiqiy robot rejimida jonli telemetriya)
-  useEffect(() => {
-    if (isSimulationMode) return;
-    let ws: WebSocket | null = null;
-    let reconnectTimer: ReturnType<typeof setTimeout>;
 
-    const connect = () => {
-      try {
-        const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const url = `${proto}//${system.rpiIp}:${system.rpiPort}/ws`;
-        ws = new WebSocket(url);
-
-        ws.onopen = () => {
-          setSystem((s) => ({ ...s, rpiConnected: true }));
-          addLog('RPI', 'success', `Raspberry Pi telemetriyasiga ulandi (${url})`);
-        };
-
-        ws.onmessage = (ev) => {
-          try {
-            const d = JSON.parse(ev.data);
-            if (d.sonars) setSonars(d.sonars);
-            if (d.battery) {
-              setBattery((prev) => ({
-                ...prev,
-                voltage: d.battery.voltage ?? prev.voltage,
-                percentage: d.battery.percentage ?? prev.percentage,
-                current: d.battery.current ?? prev.current,
-                temp: d.battery.temp ?? prev.temp,
-                isCharging: d.battery.isCharging ?? prev.isCharging
-              }));
-            }
-            if (d.lidar) {
-              if (d.lidar.points) {
-                lidarPointsRef.current = d.lidar.points;
-              }
-              setLidarInfo((prev) => ({
-                ...prev,
-                model: d.lidar.model || 'LDROBOT STL-19P',
-                mode: d.lidar.mode || prev.mode,
-                isHardware: d.lidar.is_hardware ?? (d.lidar.mode === 'HARDWARE'),
-                port: d.lidar.port || prev.port,
-                rateHz: d.lidar.rate_hz || prev.rateHz,
-                sectors: d.lidar.sectors || prev.sectors,
-                pointsCount: d.lidar.points_count || (d.lidar.points ? d.lidar.points.length : prev.pointsCount),
-                isBlocked: d.lidar.sectors ? d.lidar.sectors.front <= 0.45 : prev.isBlocked,
-                status: 'ONLINE'
-              }));
-            }
-            // Robot IMU / giroskop (imu.yaw, yaw, compass ...): xaritadagi marker yo'nalishi shu bilan boshqariladi
-            headingService.ingestTelemetry(d);
-            if (d.gps && d.gps.has_fix) {
-              headingService.pushGps(d.gps.heading, d.gps.speed);
-              navigationService.pushGps({
-                lat: d.gps.latitude,
-                lon: d.gps.longitude,
-                accuracyM: d.gps.accuracy ?? d.gps.hdop ?? null,
-                speedKmh: d.gps.speed,
-                courseDeg: d.gps.heading
-              });
-              setGps((prev) => ({
-                ...prev,
-                latitude: d.gps.latitude,
-                longitude: d.gps.longitude,
-                altitude: d.gps.altitude ?? prev.altitude,
-                speed: d.gps.speed ?? prev.speed,
-                heading: d.gps.heading ?? prev.heading,
-                isReal: true,
-                status: 'ONLINE',
-                timestamp: Date.now()
-              }));
-            }
-            if (d.remote) {
-              const r = d.remote as RemoteStatus;
-              setRemote(r);
-              // Admin buyrug'i jurnalga yoziladi (har 250 ms da emas: buyruq o'zgarganda yoki 3 s dan keyin)
-              const last = r.last;
-              if (last && last.src === 'admin' && last.ok) {
-                const prev = lastAdminLogRef.current;
-                if (last.cmd !== prev.cmd || last.t - prev.t > 3) {
-                  lastAdminLogRef.current = { cmd: last.cmd, t: last.t };
-                  addLogRef.current('RPI', 'info', `Masofaviy admin buyrug'i: ${last.cmd}`);
-                }
-              }
-            }
-            if (d.motion) {
-              if (d.motion.last_cmd) setLastCommand(d.motion.last_cmd);
-              if (d.motion.speed_level) setSpeedLevelState(d.motion.speed_level);
-              setIsMoving(d.motion.is_moving ?? false);
-            }
-          } catch (e) {}
-        };
-
-        ws.onclose = () => {
-          setSystem((s) => ({ ...s, rpiConnected: false }));
-          reconnectTimer = setTimeout(connect, 2000);
-        };
-        ws.onerror = () => {
-          setSystem((s) => ({ ...s, rpiConnected: false }));
-        };
-      } catch (e) {
-        reconnectTimer = setTimeout(connect, 2000);
-      }
-    };
-
-    connect();
-    return () => {
-      if (ws) ws.close();
-      clearTimeout(reconnectTimer);
-    };
-  }, [isSimulationMode, system.rpiIp, system.rpiPort, addLog]);
-
-  // Synthetic simulation generator for LiDAR and Sonar telemetry
-  const lidarPointsRef = useRef<LidarPoint[]>([]);
-  useEffect(() => {
-    const updateSensors = () => {
-      setSonars((prev) => {
-        const isCameraActive = Date.now() - lastCameraObstacleUpdateRef.current < 2500;
-        const delta = (Math.random() - 0.5) * 4;
-        const frontVal = isCameraActive
-          ? prev.front
-          : Math.max(16, Math.min(220, Math.round(prev.front + delta)));
-
-        if (frontVal <= 28 && prev.front > 28) {
-          tacticalAudio.playObstacleAlert();
-          setSystem((s) => ({ ...s, serialWarning: 'WARN:OBSTACLE_FRONT' }));
-        } else if (frontVal > 28 && !isCameraActive) {
-          setSystem((s) => ({ ...s, serialWarning: null }));
-        }
-        return {
-          front: frontVal,
-          rear: Math.max(20, Math.min(250, Math.round(prev.rear + (Math.random() - 0.5) * 3))),
-          left: Math.max(15, Math.min(200, Math.round(prev.left + (Math.random() - 0.5) * 3))),
-          right: Math.max(15, Math.min(200, Math.round(prev.right + (Math.random() - 0.5) * 3)))
-        };
-      });
-
-      setBattery((prev) => ({
-        ...prev,
-        temp: +(27 + Math.sin(Date.now() / 10000) * 1.5).toFixed(1),
-        current: isMoving ? 4.2 : 1.4
-      }));
-
-      const pts: LidarPoint[] = [];
-      for (let angle = 0; angle < 360; angle += 6) {
-        let baseDist = 4.5 + Math.sin((angle * Math.PI) / 90) * 2;
-        if (angle >= 340 || angle <= 20) baseDist = Math.min(baseDist, 1.8);
-        if (angle >= 80 && angle <= 110) baseDist = Math.min(baseDist, 1.2);
-        pts.push({
-          angle,
-          distance: +(baseDist + (Math.random() - 0.5) * 0.2).toFixed(2),
-          intensity: Math.floor(180 + Math.random() * 70)
-        });
-      }
-      lidarPointsRef.current = pts;
-    };
-
-    if (!isSimulationMode) return;
-    const interval = setInterval(updateSensors, 800);
-    return () => clearInterval(interval);
-  }, [isSimulationMode, isMoving]);
-
-  // Monitor kaliti (kill-switch): masofaviy admin harakat buyruqlarini ruxsat etish yoki taqiqlash. Faqat lokal (LAN) o'zgartira oladi
+  // Masofaviy admin kill-switch Raspberry Pi (remote_control.py) da edi. Pi yo'q: holat kelmaydi (remote = null)
   const setRemoteAllowed = useCallback(
     (allowed: boolean) => {
-      if (isSimulationMode) return;
-      fetch(`http://${system.rpiIp}:${system.rpiPort}/api/remote/allow?on=${allowed ? 1 : 0}`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((st) => {
-          if (st) setRemote(st as RemoteStatus);
-          addLog('SYSTEM', allowed ? 'success' : 'warn', allowed ? 'Masofaviy admin boshqaruvi RUXSAT etildi.' : "Masofaviy admin boshqaruvi TAQIQLANDI.");
-        })
-        .catch(() => addLog('RPI', 'error', "Masofaviy ruxsatni o'zgartirib bo'lmadi: Pi ga ulanib bo'lmadi."));
+      addLog('SYSTEM', 'warn', `Masofaviy admin ruxsati (${allowed ? 'yoqish' : "o'chirish"}) Raspberry Pi orqali ishlardi, Pi ulanmagan.`);
     },
-    [addLog, isSimulationMode, system.rpiIp, system.rpiPort]
+    [addLog]
   );
 
   // GPS avtopilot: ESP32 buyrug'i va to'siq ma'lumoti (kamera + sonar) shu kontekstdan olinadi
@@ -972,7 +690,8 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         label: c.label,
         evasion: c.evasionDirection,
         cameraT: lastCameraObstacleUpdateRef.current,
-        sonarFrontCm: s.front
+        // Sonar datchigi yo'q (null): faqat kamera hisobga olinadi
+        sonarFrontCm: s.front ?? Infinity
       };
     });
     return () => {
@@ -981,11 +700,6 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       autopilotService.setObstacleProvider(null);
     };
   }, []);
-
-  const setRpiConfig = (ip: string, port: number) => {
-    setSystem((prev) => ({ ...prev, rpiIp: ip, rpiPort: port }));
-    addLog('SYSTEM', 'info', `RPi konfiguratsiyasi yangilandi: ${ip}:${port}`);
-  };
 
   return (
     <RobotContext.Provider
@@ -1010,9 +724,6 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         cameraObstacle,
         updateCameraObstacle,
         battery,
-        lidarPoints: lidarPointsRef.current,
-        lidarInfo,
-        setLidarMode,
         ptz,
         setPTZ,
         strobeActive,
@@ -1025,16 +736,12 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setDetectedObjects,
         aiProcessingFps,
         system,
-        setRpiConfig,
         logs,
         addLog,
         isMuted,
         toggleMute,
-        isSimulationMode,
-        toggleSimulationMode,
         gps,
         startRealGPS,
-        toggleGPSMode,
         esp32Status,
         esp32Connected,
         hornActive,

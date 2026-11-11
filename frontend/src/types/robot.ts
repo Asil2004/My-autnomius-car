@@ -1,11 +1,13 @@
 export type MecanumCommand = 'F' | 'B' | 'L' | 'R' | 'Q' | 'E' | 'G' | 'I' | 'H' | 'J' | 'S' | 'U' | 'D';
 export type SpeedLevel = 1 | 2 | 3;
 
+/** Masofa datchiklari, sm. null = datchik yo'q / ma'lumot kelmagan (soxta qiymat ko'rsatilmaydi).
+ *  front: kamera "robot ko'zi" to'siq masofasi (HUD aniqlashi yozadi) */
 export interface SonarSensors {
-  front: number; // cm
-  rear: number;  // cm
-  left: number;  // cm
-  right: number; // cm
+  front: number | null;
+  rear: number | null;
+  left: number | null;
+  right: number | null;
 }
 
 export interface BatteryState {
@@ -47,7 +49,7 @@ export interface GPSState {
   heading: number | null;  // degrees
   timestamp: number;
   isReal: boolean;
-  status: 'ONLINE' | 'SEARCHING' | 'DENIED' | 'UNAVAILABLE' | 'SIMULATED';
+  status: 'ONLINE' | 'SEARCHING' | 'DENIED' | 'UNAVAILABLE';
   error?: string;
 }
 
@@ -83,15 +85,7 @@ export interface LidarInfo {
 export type PatrolMode = 'AUTONOMOUS' | 'MANUAL' | 'GAP_FOLLOW' | 'SENTRY_STATIONARY';
 
 export interface SystemStatus {
-  rpiConnected: boolean;
-  arduinoConnected: boolean;
-  rpiIp: string;
-  rpiPort: number;
-  arduinoPort: string;
-  pingMs: number;
-  cpuUsage: number;
-  ramUsage: number;
-  uptimeSeconds: number;
+  /** Oxirgi xavfsizlik ogohlantirishi (masalan kamera to'siqni yaqin ko'rdi) */
   serialWarning: string | null;
 }
 

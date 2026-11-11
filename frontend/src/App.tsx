@@ -37,11 +37,11 @@ const RobotTelemetryBridge: React.FC = () => {
   const { battery, sonars, lastCommand } = useRobot();
   useEffect(() => {
     robotCamBroadcaster.setTelemetryExtra({
-      battery: { v: battery.voltage, pct: battery.percentage },
+      battery: battery ? { v: battery.voltage, pct: battery.percentage } : undefined,
       sonars: { front: sonars.front, rear: sonars.rear, left: sonars.left, right: sonars.right },
       cmd: lastCommand
     });
-  }, [battery.voltage, battery.percentage, sonars.front, sonars.rear, sonars.left, sonars.right, lastCommand]);
+  }, [battery, sonars.front, sonars.rear, sonars.left, sonars.right, lastCommand]);
   return null;
 };
 import { camLinkSettings } from './services/camLinkSettings';

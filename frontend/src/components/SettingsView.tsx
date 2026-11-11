@@ -18,18 +18,7 @@ import { PtzCameraCard } from './PtzCameraCard';
 import { FaceCameraCard } from './FaceCameraCard';
 
 export const SettingsView: React.FC = () => {
-  const {
-    system,
-    setRpiConfig,
-    isSimulationMode,
-    toggleSimulationMode,
-    esp32Ip,
-    setEsp32Ip,
-    esp32Enabled,
-    setEsp32Enabled
-  } = useRobot();
-  const [ipInput, setIpInput] = useState(system.rpiIp);
-  const [portInput, setPortInput] = useState(system.rpiPort.toString());
+  const { esp32Ip, setEsp32Ip, esp32Enabled, setEsp32Enabled } = useRobot();
   const [espIpInput, setEspIpInput] = useState(esp32Ip);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [espTestResult, setEspTestResult] = useState<string | null>(null);
@@ -38,8 +27,6 @@ export const SettingsView: React.FC = () => {
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    const portNum = parseInt(portInput, 10) || 8000;
-    setRpiConfig(ipInput, portNum);
     setEsp32Ip(espIpInput);
     setSaveSuccess(true);
     tacticalAudio.playClick();
@@ -93,21 +80,10 @@ export const SettingsView: React.FC = () => {
               TIZIM VA USKUNALAR SOZLAMALARI
             </h2>
             <p className="text-xs font-mono text-slate-400">
-              Raspberry Pi 5 • Arduino Uno • L293D Shield • 12V LiFePO4
+              Planshet (miya) • ESP32 motor moduli • 12V LiFePO4
             </p>
           </div>
         </div>
-
-        <button
-          onClick={toggleSimulationMode}
-          className={`px-3 py-1.5 rounded-lg font-mono text-xs font-bold border transition-all ${
-            isSimulationMode
-              ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-[0_0_10px_rgba(245,158,11,0.3)]'
-              : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
-          }`}
-        >
-          {isSimulationMode ? 'SIMULYATSIYA REJIMI' : 'HAQIQIY ROBOT (LIVE)'}
-        </button>
       </div>
 
       <CamLinkCard />
@@ -175,42 +151,20 @@ export const SettingsView: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Raspberry Pi Connection Form */}
+        {/* ESP32 motor moduli aloqasi */}
         <div className="hud-panel rounded-xl p-4 flex flex-col justify-between">
           <div>
             <h3 className="font-mono text-sm font-bold text-white mb-2 flex items-center space-x-2">
               <Server className="w-4 h-4 text-police-cyan" />
-              <span>RASPBERRY PI VEB-KONTROLLER ALOQASI</span>
+              <span>ESP32 MOTOR MODULI ALOQASI</span>
             </h3>
             <p className="text-xs text-slate-400 mb-4 font-mono">
-              Fayl: <span className="text-slate-200">~/qalqon/pi_patrol.py</span>
+              Buyruqlar MQTT orqali doim yuboriladi; quyidagi IP yoqilsa, Wi-Fi orqali to'g'ridan-to'g'ri ham.
             </p>
 
             <form onSubmit={handleSave} className="space-y-3 font-mono text-xs">
-              <div>
-                <label className="block text-slate-300 mb-1 font-semibold">RPi IP Manzili:</label>
-                <input
-                  type="text"
-                  value={ipInput}
-                  onChange={(e) => setIpInput(e.target.value)}
-                  placeholder="10.37.227.167"
-                  className="w-full bg-tactical-950 border border-tactical-700 rounded-lg px-3 py-2 text-white font-mono focus:outline-none focus:border-police-cyan"
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-300 mb-1 font-semibold">Veb-Server Porti:</label>
-                <input
-                  type="number"
-                  value={portInput}
-                  onChange={(e) => setPortInput(e.target.value)}
-                  placeholder="8000"
-                  className="w-full bg-tactical-950 border border-tactical-700 rounded-lg px-3 py-2 text-white font-mono focus:outline-none focus:border-police-cyan"
-                />
-              </div>
-
               {/* ESP32 Wi-Fi Motor Moduli Sozlamalari */}
-              <div className="pt-3 border-t border-tactical-800">
+              <div>
                 <div className="flex items-center justify-between mb-2">
                   <label className="text-police-cyan font-bold flex items-center space-x-1.5">
                     <span>ESP32 Wi-Fi Motor Moduli:</span>
