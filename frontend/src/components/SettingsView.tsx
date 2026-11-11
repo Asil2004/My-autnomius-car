@@ -20,10 +20,21 @@ import { edgeTtsService } from '../services/edgeTtsService';
 import { tacticalAudio } from '../services/audioService';
 
 export const SettingsView: React.FC = () => {
-  const { system, setRpiConfig, isSimulationMode, toggleSimulationMode } = useRobot();
+  const {
+    system,
+    setRpiConfig,
+    isSimulationMode,
+    toggleSimulationMode,
+    esp32Ip,
+    setEsp32Ip,
+    esp32Enabled,
+    setEsp32Enabled
+  } = useRobot();
   const [ipInput, setIpInput] = useState(system.rpiIp);
   const [portInput, setPortInput] = useState(system.rpiPort.toString());
+  const [espIpInput, setEspIpInput] = useState(esp32Ip);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [espTestResult, setEspTestResult] = useState<string | null>(null);
 
   // UzbekVoice.ai va AI Sozlamalari
   const [uvApiKey, setUvApiKey] = useState(() => uzbekVoiceService.getApiKey());
@@ -56,9 +67,22 @@ export const SettingsView: React.FC = () => {
     e.preventDefault();
     const portNum = parseInt(portInput, 10) || 8000;
     setRpiConfig(ipInput, portNum);
+    setEsp32Ip(espIpInput);
     setSaveSuccess(true);
     tacticalAudio.playClick();
     setTimeout(() => setSaveSuccess(false), 2500);
+  };
+
+  const handleTestEsp32 = async () => {
+    setEspTestResult('Ulanmoqda...');
+    try {
+      await fetch(`${espIpInput}/move?dir=S`, { mode: 'no-cors' });
+      setEspTestResult('Muvaffaqiyatli! STOP signali uzatildi.');
+      setTimeout(() => setEspTestResult(null), 3000);
+    } catch (e: any) {
+      setEspTestResult('Xatolik: ' + (e?.message || 'Ulanib bo‘lmadi'));
+      setTimeout(() => setEspTestResult(null), 4000);
+    }
   };
 
   const testAudioTone = () => {
@@ -129,6 +153,43 @@ export const SettingsView: React.FC = () => {
                   placeholder="8000"
                   className="w-full bg-tactical-950 border border-tactical-700 rounded-lg px-3 py-2 text-white font-mono focus:outline-none focus:border-police-cyan"
                 />
+              </div>
+
+              {/* ESP32 Wi-Fi Motor Moduli Sozlamalari */}
+              <div className="pt-3 border-t border-tactical-800">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-police-cyan font-bold flex items-center space-x-1.5">
+                    <span>ESP32 Wi-Fi Motor Moduli:</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setEsp32Enabled(!esp32Enabled)}
+                    className={`px-2.5 py-0.5 rounded text-[10px] font-bold ${
+                      esp32Enabled ? 'bg-emerald-600 text-white' : 'bg-tactical-800 text-slate-400'
+                    }`}
+                  >
+                    {esp32Enabled ? 'YOQILGAN' : 'O‘CHIRILGAN'}
+                  </button>
+                </div>
+                <div className="flex space-x-2">
+                  <input
+                    type="text"
+                    value={espIpInput}
+                    onChange={(e) => setEspIpInput(e.target.value)}
+                    placeholder="http://192.168.43.50"
+                    className="flex-1 bg-tactical-950 border border-tactical-700 rounded-lg px-3 py-2 text-white font-mono focus:outline-none focus:border-police-cyan text-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleTestEsp32}
+                    className="px-3 py-2 rounded-lg bg-tactical-800 hover:bg-tactical-700 text-police-cyan border border-tactical-600 text-xs font-bold"
+                  >
+                    Test
+                  </button>
+                </div>
+                {espTestResult && (
+                  <p className="mt-1 text-[11px] text-emerald-400 font-mono">{espTestResult}</p>
+                )}
               </div>
 
               <div className="pt-2">

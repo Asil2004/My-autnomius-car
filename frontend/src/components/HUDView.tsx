@@ -154,6 +154,7 @@ export const HUDView: React.FC = () => {
   const {
     lastCommand,
     sendMecanumCommand,
+    sendJoystickCoordinates,
     sonars,
     isFrontBlocked,
     cameraObstacle,
@@ -1075,6 +1076,12 @@ export const HUDView: React.FC = () => {
     const clampedY = Math.sin(angle) * clampedDist;
     setDriveKnob({ x: clampedX, y: clampedY });
 
+    // ESP32 va RPi uchun 360° uzluksiz analog vektor (-100 dan +100 gacha)
+    // Ekranda -y bu oldinga (yuqoriga), +y orqaga (pastga)
+    const normX = Math.round((clampedX / maxR) * 100);
+    const normY = Math.round((-clampedY / maxR) * 100);
+    sendJoystickCoordinates(normX, normY);
+
     if (clampedDist < 12) {
       sendMecanumCommand('S');
       return;
@@ -1113,6 +1120,7 @@ export const HUDView: React.FC = () => {
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
     setIsDriving(false);
     setDriveKnob({ x: 0, y: 0 });
+    sendJoystickCoordinates(0, 0);
     sendMecanumCommand('S');
   };
 

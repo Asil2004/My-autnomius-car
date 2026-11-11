@@ -199,6 +199,7 @@ graph TD
 - [x] **6.3.** Motor quvvatini kamaytirish kinetikasi: O'ngga burilishda o'ng motorlar teskari aylanmaydi, quvvati 40% ga pasaytiriladi (chap motorlar 100% oldinga, o'ng motorlar 40% oldinga).
 - [x] **6.4.** `HUDView.tsx` da virtual joystik 360° burchaklar bo'yicha 8 yo'nalishli uzluksiz vektorli differensial nazoratga o'tkazildi.
 - [x] **6.5.** `arduino_l293d_patrol.ino`, `arduino_bridge.py` va `qalqon_brain.py` to'liq sinxronlashtirildi va avtotormoz himoyasi yoy buyruqlariga tatbiq etildi.
+- [x] **6.6.** ESP32 to'g'ridan-to'g'ri Wi-Fi boshqaruvi va 360° analog joystik koordinatalari integratsiyasi (`esp32Service.ts` 50ms Throttled, CORS-proof, `SettingsView.tsx` IP sozlamalari va sinov testi kiritildi).
 
 ---
 

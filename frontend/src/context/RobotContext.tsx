@@ -23,6 +23,8 @@ export interface LogMessage {
   text: string;
 }
 
+import { esp32Service } from '../services/esp32Service';
+
 interface RobotContextType {
   activeTab: 'hud' | 'ai' | 'telemetry' | 'maps' | 'settings';
   setActiveTab: (tab: 'hud' | 'ai' | 'telemetry' | 'maps' | 'settings') => void;
@@ -31,6 +33,11 @@ interface RobotContextType {
   lastCommand: MecanumCommand;
   speedLevel: SpeedLevel;
   sendMecanumCommand: (cmd: MecanumCommand) => void;
+  sendJoystickCoordinates: (x: number, y: number) => void;
+  esp32Ip: string;
+  setEsp32Ip: (ip: string) => void;
+  esp32Enabled: boolean;
+  setEsp32Enabled: (enabled: boolean) => void;
 
   // Masofaviy admin (internet orqali, 2-planshet): Pi telemetriyasidan
   remote: RemoteStatus | null;
@@ -466,12 +473,42 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return;
     }
 
+    // ESP32 to'g'ridan-to'g'ri Wi-Fi moduliga buyruq yuborish
+    esp32Service.sendCommand(cmd);
+
     if (!isSimulationMode) {
       fetch(`http://${system.rpiIp}:${system.rpiPort}/cmd?c=${cmd}`).catch((err) => {
         console.error('RPi connection err:', err);
       });
     }
   }, [addLog, isSimulationMode, sonars.front, system.rpiIp, system.rpiPort]);
+
+  // ESP32 Wi-Fi boshqaruvi holati
+  const [esp32Ip, setEsp32IpState] = useState<string>(() => esp32Service.getIp());
+  const [esp32Enabled, setEsp32EnabledState] = useState<boolean>(() => esp32Service.getEnabled());
+
+  const setEsp32Ip = (ip: string) => {
+    esp32Service.setIp(ip);
+    setEsp32IpState(esp32Service.getIp());
+    addLog('SERIAL', 'info', `ESP32 IP manzili yangilandi: ${esp32Service.getIp()}`);
+  };
+
+  const setEsp32Enabled = (enabled: boolean) => {
+    esp32Service.setEnabled(enabled);
+    setEsp32EnabledState(enabled);
+    addLog('SERIAL', 'info', `ESP32 to'g'ridan-to'g'ri aloqa: ${enabled ? 'YOQILDI' : 'O`CHIRILDI'}`);
+  };
+
+  // 360° Analog Joystik koordinatalari (-100 dan +100 gacha)
+  const sendJoystickCoordinates = useCallback((x: number, y: number) => {
+    if (x === 0 && y === 0) {
+      setIsMoving(false);
+      setLastCommand('S');
+    } else {
+      setIsMoving(true);
+    }
+    esp32Service.sendJoystick(x, y);
+  }, []);
 
   // Keyboard navigation listener (W, A, S, D, Arrow keys: qo'shma tugmalarni qo'llab-quvvatlaydi)
   // To'g'ri va o'ngga bir vaqtda bosilganda o'ng g'ildiraklar teskari aylanmaydi, quvvati pasayib yoy hosil qiladi
@@ -734,6 +771,11 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         lastCommand,
         speedLevel,
         sendMecanumCommand,
+        sendJoystickCoordinates,
+        esp32Ip,
+        setEsp32Ip,
+        esp32Enabled,
+        setEsp32Enabled,
         remote,
         setRemoteAllowed,
         setSpeedLevel,
