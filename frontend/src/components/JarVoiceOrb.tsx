@@ -178,7 +178,7 @@ export const JarVoiceOrb: React.FC<JarVoiceOrbProps> = ({ onSpeechLevel, classNa
   // Audio Blob ni yuborish va Claude Sonnet 5.5 + Lola TTS natijasini olish
   const processAudio = useCallback(async (audioBlob: Blob) => {
     setOrbState('thinking');
-    setStatusText("O'ylayapman… (Claude Sonnet 5.5 + Web Search)");
+    setStatusText("O'ylayapman… (QALQON AI)");
     setErrorMessage(null);
 
     try {
@@ -196,9 +196,12 @@ export const JarVoiceOrb: React.FC<JarVoiceOrbProps> = ({ onSpeechLevel, classNa
         setStatusText("Bosing va gapiring");
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const rawMsg = err instanceof Error ? err.message : String(err);
       console.error('[JarVoiceOrb] Xatolik:', err);
-      setErrorMessage(msg);
+      const friendlyMsg = /401|authentication_error|invalid x-api-key/i.test(rawMsg)
+        ? "AI API kaliti eskirgan yoki xato. Sozlamalar bo'limidan yangilang."
+        : rawMsg;
+      setErrorMessage(friendlyMsg);
       setOrbState('idle');
       setStatusText("Bosing va gapiring");
       tacticalAudio.playObstacleAlert();
@@ -314,7 +317,7 @@ export const JarVoiceOrb: React.FC<JarVoiceOrbProps> = ({ onSpeechLevel, classNa
     setTextInput('');
     setTextModeOpen(false);
     setOrbState('thinking');
-    setStatusText("O'ylayapman… (Claude Sonnet 5.5 + Web Search)");
+    setStatusText("O'ylayapman… (QALQON AI)");
     setErrorMessage(null);
 
     try {
@@ -332,9 +335,12 @@ export const JarVoiceOrb: React.FC<JarVoiceOrbProps> = ({ onSpeechLevel, classNa
         setStatusText("Bosing va gapiring");
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const rawMsg = err instanceof Error ? err.message : String(err);
       console.error('[JarVoiceOrb] Matnli savol xatosi:', err);
-      setErrorMessage(msg);
+      const friendlyMsg = /401|authentication_error|invalid x-api-key/i.test(rawMsg)
+        ? "AI API kaliti eskirgan yoki xato. Sozlamalar bo'limidan yangilang."
+        : rawMsg;
+      setErrorMessage(friendlyMsg);
       setOrbState('idle');
       setStatusText("Bosing va gapiring");
     }
@@ -346,7 +352,7 @@ export const JarVoiceOrb: React.FC<JarVoiceOrbProps> = ({ onSpeechLevel, classNa
     void (async () => {
       setTextModeOpen(false);
       setOrbState('thinking');
-      setStatusText("O'ylayapman… (Claude Sonnet 5.5 + Web Search)");
+      setStatusText("O'ylayapman… (QALQON AI)");
       setErrorMessage(null);
 
       try {
@@ -364,8 +370,11 @@ export const JarVoiceOrb: React.FC<JarVoiceOrbProps> = ({ onSpeechLevel, classNa
           setStatusText("Bosing va gapiring");
         }
       } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        setErrorMessage(msg);
+        const rawMsg = err instanceof Error ? err.message : String(err);
+        const friendlyMsg = /401|authentication_error|invalid x-api-key/i.test(rawMsg)
+          ? "AI API kaliti eskirgan yoki xato. Sozlamalar bo'limidan yangilang."
+          : rawMsg;
+        setErrorMessage(friendlyMsg);
         setOrbState('idle');
         setStatusText("Bosing va gapiring");
       }
