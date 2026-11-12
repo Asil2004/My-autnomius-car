@@ -16,6 +16,15 @@ import { navigationService } from './navigationService';
 
 export type CallState = 'idle' | 'ringing' | 'active' | 'ended';
 
+/**
+ * Operator -> robot buyruqlari (T/cmd mavzusi, shifrlangan):
+ *   siren: robotda sirena ovozi (A/B/C/D yoki null = o'chirish)
+ *   radio: operator ovozi yozuvi (ratsiya), robotda ratsiya filtri bilan baland ovozda eshitiladi
+ */
+export type RobotCommand =
+  | { type: 'siren'; tone: 'A' | 'B' | 'C' | 'D' | null }
+  | { type: 'radio'; audio: string; mime: string; ms: number };
+
 export interface CallInfo {
   robotId: string;
   state: CallState;
@@ -112,6 +121,12 @@ class RobotCall {
     this.em.emit(this.info);
   }
 
+  /** Operator buyruqlarini qabul qiluvchi (RobotContext: sirena, ratsiya) */
+  private commandHandler: ((c: RobotCommand & { by?: string }) => void) | null = null;
+  setCommandHandler(h: ((c: RobotCommand & { by?: string }) => void) | null) {
+    this.commandHandler = h;
+  }
+
   async start() {
     if (this.client) return;
     const g = ++this.gen;
@@ -129,7 +144,7 @@ class RobotCall {
     this.set({ robotId: s.robotId });
     const T = this.T;
     client.on('connect', () => {
-      client.subscribe([`${T}/call/accept`, `${T}/call/end`, `${T}/c/+/answer`, `${T}/c/+/ice`], { qos: 1 });
+      client.subscribe([`${T}/call/accept`, `${T}/call/end`, `${T}/c/+/answer`, `${T}/c/+/ice`, `${T}/cmd`], { qos: 1 });
     });
     client.on('message', (topic: string, payload: Uint8Array) => void this.onMessage(topic, new TextDecoder().decode(payload)));
   }
@@ -212,6 +227,14 @@ class RobotCall {
     const ch = this.ch;
     if (!ch) return;
     const T = this.T;
+    if (topic === `${T}/cmd`) {
+      const c = await ch.open<RobotCommand & { t: number; by?: string }>(text);
+      // Eski (qayta yuborilgan) buyruqlar bajarilmaydi
+      if (!c || Math.abs(Date.now() - c.t) > 60_000) return;
+      if (c.type === 'siren' && (c.tone === null || ['A', 'B', 'C', 'D'].includes(c.tone))) this.commandHandler?.(c);
+      else if (c.type === 'radio' && typeof c.audio === 'string' && c.audio.length < 400_000) this.commandHandler?.(c);
+      return;
+    }
     if (topic === `${T}/call/accept`) {
       const m = await ch.open<{ callId: string; opId: string; name?: string }>(text);
       if (!m || m.callId !== this.info.callId || this.info.state !== 'ringing' || !/^[a-z0-9]{4,16}$/.test(m.opId)) return;
@@ -423,6 +446,14 @@ class OperatorCalls {
       if (rev === this.rev && this.pc && this.remoteSet) await this.pc.addIceCandidate(o.c).catch(() => {});
       else if (rev >= this.rev) this.pendingIce.push({ rev, c: o.c });
     }
+  }
+
+  /** Robotga buyruq (sirena, ratsiya yozuvi) */
+  async sendCommand(robotId: string, cmd: RobotCommand): Promise<boolean> {
+    if (!this.client?.connected || !this.ch || !ID_RE.test(robotId)) return false;
+    const by = camLinkSettings.get().operatorName || 'Operator';
+    await this.publish(`${this.F}/r/${robotId}/cmd`, { ...cmd, by, t: Date.now() });
+    return true;
   }
 
   /** Chaqiruvga javob berish (mikrofon ruxsati so'raladi) */

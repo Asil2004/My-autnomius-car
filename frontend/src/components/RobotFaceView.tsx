@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Lock } from 'lucide-react';
 import { robotCall, type CallInfo } from '../services/voiceCall';
+import { isHelpRequest } from '../services/helpPhrase';
 import { faceRecognitionService } from '../services/faceRecognitionService';
 import { faceViewSettings } from '../services/faceViewSettings';
 import { HandsFreeListener } from '../services/handsFreeListener';
@@ -142,6 +143,20 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
   // 102 suhbati paytida qo'l tegizmasdan tinglash butunlay o'chadi (mikrofonni bo'shatadi: Android da ikkita
   // mikrofon oqimi bir-biriga xalaqit berib, suhbat ovozi uzilib qolardi). Suhbat tugagach qayta yoqiladi
   const [callBusy, setCallBusy] = useState(false);
+  // Chaqiruv boshlanmasa (mikrofon ruxsati yo'q) tinglashni qayta ishga tushirish uchun
+  const [listenNonce, setListenNonce] = useState(0);
+
+  /** 102 chaqiruvi: mikrofon avval tinglash funksiyasidan bo'shatiladi, so'ng qo'ng'iroq uchun ochiladi */
+  const startHelpCall = useCallback(() => {
+    listenerRef.current?.stop();
+    listenerRef.current = null;
+    void robotCall.ring().then((ok) => {
+      if (!ok) setListenNonce((n) => n + 1);
+    });
+  }, []);
+  const startHelpCallRef = useRef(startHelpCall);
+  startHelpCallRef.current = startHelpCall;
+
   useEffect(() => {
     if (!listenEnabled || callBusy) return;
     const listener = new HandsFreeListener({
@@ -154,6 +169,12 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
           const { text } = await uzbekVoiceService.transcribeAudio(wav);
           if (text.replace(/[^\p{L}]/gu, '').length < 2) return; // shovqin yoki bitta tovush
           console.info('[Suhbat] Fuqaro:', text);
+          // "Yordam bering" / "help me" / "pomosh": tugmasiz 102 chaqiruvi (AI javob bermaydi)
+          if (isHelpRequest(text)) {
+            console.info('[Suhbat] Yordam so\'raldi: 102 chaqiruvi boshlandi');
+            startHelpCallRef.current();
+            return;
+          }
           const reply = await aiDialogService.respond(text);
           console.info('[Suhbat] Robot:', reply.answer, `(${reply.source})`);
           lastConversationRef.current = Date.now();
@@ -173,7 +194,7 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
       listener.stop();
       if (listenerRef.current === listener) listenerRef.current = null;
     };
-  }, [listenEnabled, callBusy]);
+  }, [listenEnabled, callBusy, listenNonce]);
 
   // Ekranga birinchi bosish: brauzer ovoz va disk ruxsatini faqat foydalanuvchi harakatidan keyin beradi
   const handleUnlockAudio = useCallback(() => {
@@ -442,12 +463,7 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
             e.stopPropagation();
             handleUnlockAudio();
             if (call.state === 'ringing' || call.state === 'active') robotCall.hangup();
-            else {
-              // Mikrofonni avval tinglash funksiyasidan bo'shatamiz, keyin suhbat uchun ochamiz
-              listenerRef.current?.stop();
-              listenerRef.current = null;
-              void robotCall.ring();
-            }
+            else startHelpCall();
           }}
           aria-label={call.state === 'active' ? '102: operator bilan suhbat (tugatish)' : call.state === 'ringing' ? '102: operator chaqirilmoqda (bekor qilish)' : '102: operatorga ulanish'}
           className={`pointer-events-auto w-32 h-32 sm:w-36 sm:h-36 rounded-full font-mono font-black text-5xl sm:text-6xl text-white border-4 transition-transform active:scale-95 select-none ${

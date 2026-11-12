@@ -1,4 +1,27 @@
 // Tactical Synthesized Web Audio Engine
+import { NORMAL_VOLUME } from './radioVoice';
+
+/** Sirena pultidagi 4 tugma */
+export type SirenTone = 'A' | 'B' | 'C' | 'D';
+
+export const SIREN_TONE_NAMES: Record<SirenTone, string> = {
+  A: 'Wail (uzun)',
+  B: 'Yelp (tez)',
+  C: 'Hi-Lo (ikki tonli)',
+  D: 'Phaser (keskin)'
+};
+
+const SIREN_PRESETS: Record<SirenTone, { center: number; depth: number; rate: number; lfoType: OscillatorType }> = {
+  // Wail: 650 -> 1500 Hz, sikl ~4 s
+  A: { center: 1075, depth: 425, rate: 0.25, lfoType: 'triangle' },
+  // Yelp: 650 -> 1500 Hz, sikl ~0.3 s
+  B: { center: 1075, depth: 425, rate: 3.3, lfoType: 'triangle' },
+  // Hi-Lo: 650 / 1000 Hz, har biri ~0.45 s
+  C: { center: 825, depth: 175, rate: 1.1, lfoType: 'square' },
+  // Phaser: 900 -> 1700 Hz arra, ~12 Hz
+  D: { center: 1300, depth: 400, rate: 12, lfoType: 'sawtooth' }
+};
+
 class TacticalAudioService {
   private ctx: AudioContext | null = null;
   private isMuted: boolean = false;
@@ -36,7 +59,7 @@ class TacticalAudioService {
       osc.type = 'triangle';
       osc.frequency.setValueAtTime(1200, this.ctx.currentTime);
       osc.frequency.exponentialRampToValueAtTime(400, this.ctx.currentTime + 0.04);
-      gain.gain.setValueAtTime(0.12, this.ctx.currentTime);
+      gain.gain.setValueAtTime(0.12 * NORMAL_VOLUME, this.ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.04);
       osc.connect(gain);
       gain.connect(this.ctx.destination);
@@ -57,7 +80,7 @@ class TacticalAudioService {
       const gain = this.ctx.createGain();
       osc.type = 'sine';
       osc.frequency.setValueAtTime(880, this.ctx.currentTime);
-      gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
+      gain.gain.setValueAtTime(0.1 * NORMAL_VOLUME, this.ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.06);
       osc.connect(gain);
       gain.connect(this.ctx.destination);
@@ -79,7 +102,7 @@ class TacticalAudioService {
       osc.type = 'sawtooth';
       osc.frequency.setValueAtTime(440, this.ctx.currentTime);
       osc.frequency.linearRampToValueAtTime(880, this.ctx.currentTime + 0.12);
-      gain.gain.setValueAtTime(0.18, this.ctx.currentTime);
+      gain.gain.setValueAtTime(0.18 * NORMAL_VOLUME, this.ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.12);
       osc.connect(gain);
       gain.connect(this.ctx.destination);
@@ -90,49 +113,102 @@ class TacticalAudioService {
     }
   }
 
-  // Politsiya sirena miltillashi / SOS 102
-  public startSiren() {
-    if (this.isMuted || this.sirenOsc) return;
+  /**
+   * POLITSIYA SIRENASI: politsiya mashinasi sirena pultidagi kabi 4 xil ovoz (A, B, C, D).
+   *   A  WAIL   — sekin ko'tarilib-tushuvchi uzun sirena (~4 s sikl)
+   *   B  YELP   — tez "uv-uv" sirenasi (~0.3 s sikl)
+   *   C  HI-LO  — ikki tonli (650/1000 Hz) navbatma-navbat
+   *   D  PHASER — juda tez, keskin "piercer" (~12 Hz)
+   * Ovoz Web Audio da sintez qilinadi: asosiy ton (kvadrat + arra to'lqini) chastotasini LFO surib turadi.
+   */
+  private sirenNodes: AudioNode[] = [];
+  private sirenTone: SirenTone | null = null;
+
+  public getSirenTone(): SirenTone | null {
+    return this.sirenTone;
+  }
+
+  public startSiren(tone: SirenTone = 'A') {
+    if (this.isMuted) return;
+    this.stopSiren();
     try {
       this.initCtx();
-      if (!this.ctx) return;
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-      const lfo = this.ctx.createOscillator();
-      const lfoGain = this.ctx.createGain();
+      const ctx = this.ctx;
+      if (!ctx) return;
+      const t = ctx.currentTime;
+      const p = SIREN_PRESETS[tone];
 
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(750, this.ctx.currentTime);
+      // Ikki osillyator: kvadrat (baland, "karnay" ovozi) + arra (tiniqlik)
+      const sq = ctx.createOscillator();
+      sq.type = 'square';
+      const saw = ctx.createOscillator();
+      saw.type = 'sawtooth';
+      sq.frequency.setValueAtTime(p.center, t);
+      saw.frequency.setValueAtTime(p.center, t);
+      saw.detune.setValueAtTime(6, t);
 
-      lfo.type = 'sine';
-      lfo.frequency.setValueAtTime(2.2, this.ctx.currentTime);
-      lfoGain.gain.setValueAtTime(280, this.ctx.currentTime);
+      // LFO: chastotani center ± depth oralig'ida suradi
+      const lfo = ctx.createOscillator();
+      lfo.type = p.lfoType;
+      lfo.frequency.setValueAtTime(p.rate, t);
+      const depth = ctx.createGain();
+      depth.gain.setValueAtTime(p.depth, t);
+      lfo.connect(depth);
+      depth.connect(sq.frequency);
+      depth.connect(saw.frequency);
 
-      lfo.connect(osc.frequency);
-      gain.gain.setValueAtTime(0.15, this.ctx.currentTime);
+      // Karnay tembri: yuqori chastotalarni biroz kesish, keyin umumiy balandlik (yumshoq boshlanish)
+      const tone1 = ctx.createGain();
+      tone1.gain.setValueAtTime(0.55, t);
+      const tone2 = ctx.createGain();
+      tone2.gain.setValueAtTime(0.35, t);
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.setValueAtTime(3800, t);
+      // Sirena 100% balandlikda: kompressor qirqilishsiz eng baland darajani ushlab turadi
+      const out = ctx.createGain();
+      out.gain.setValueAtTime(0, t);
+      out.gain.linearRampToValueAtTime(0.9, t + 0.08);
+      const comp = ctx.createDynamicsCompressor();
+      comp.threshold.setValueAtTime(-12, t);
+      comp.ratio.setValueAtTime(6, t);
+      comp.attack.setValueAtTime(0.003, t);
+      comp.release.setValueAtTime(0.1, t);
 
-      osc.connect(gain);
-      gain.connect(this.ctx.destination);
+      sq.connect(tone1);
+      saw.connect(tone2);
+      tone1.connect(lp);
+      tone2.connect(lp);
+      lp.connect(out);
+      out.connect(comp);
+      comp.connect(ctx.destination);
 
-      lfo.start();
-      osc.start();
-
-      this.sirenOsc = osc;
+      sq.start(t);
+      saw.start(t);
+      lfo.start(t);
+      this.sirenOsc = sq;
+      this.sirenNodes = [sq, saw, lfo, depth, tone1, tone2, lp, out, comp];
+      this.sirenTone = tone;
     } catch {
       // Ignore
     }
   }
 
   public stopSiren() {
-    if (this.sirenOsc && this.ctx) {
-      try {
-        this.sirenOsc.stop(this.ctx.currentTime);
-        this.sirenOsc.disconnect();
-      } catch {
-        // Ignore
+    const ctx = this.ctx;
+    if (ctx && this.sirenNodes.length) {
+      for (const n of this.sirenNodes) {
+        try {
+          if (n instanceof OscillatorNode) n.stop(ctx.currentTime + 0.02);
+          n.disconnect();
+        } catch {
+          // Ignore
+        }
       }
-      this.sirenOsc = null;
     }
+    this.sirenNodes = [];
+    this.sirenOsc = null;
+    this.sirenTone = null;
   }
 }
 

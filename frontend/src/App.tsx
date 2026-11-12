@@ -39,14 +39,15 @@ if (import.meta.env.DEV) {
 
 /** Robot holatidan (batareya, sonar, buyruq) telemetriyaga: navigatsiya esa navigationService dan to'g'ridan-to'g'ri */
 const RobotTelemetryBridge: React.FC = () => {
-  const { battery, sonars, lastCommand } = useRobot();
+  const { battery, sonars, lastCommand, sirenTone } = useRobot();
   useEffect(() => {
     robotCamBroadcaster.setTelemetryExtra({
       battery: battery ? { v: battery.voltage, pct: battery.percentage } : undefined,
       sonars: { front: sonars.front, rear: sonars.rear, left: sonars.left, right: sonars.right },
-      cmd: lastCommand
+      cmd: lastCommand,
+      siren: sirenTone
     });
-  }, [battery, sonars.front, sonars.rear, sonars.left, sonars.right, lastCommand]);
+  }, [battery, sonars.front, sonars.rear, sonars.left, sonars.right, lastCommand, sirenTone]);
   return null;
 };
 import { camLinkSettings } from './services/camLinkSettings';

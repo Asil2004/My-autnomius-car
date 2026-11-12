@@ -11,7 +11,19 @@ import type {
   GPSState,
   RemoteStatus
 } from '../types/robot';
-import { tacticalAudio } from '../services/audioService';
+import { tacticalAudio, SIREN_TONE_NAMES, type SirenTone } from '../services/audioService';
+import { robotCall, operatorCalls } from '../services/voiceCall';
+import { playRadio } from '../services/radioVoice';
+import { camLinkSettings } from '../services/camLinkSettings';
+import { fleetWatcher, selectedRobotStore } from '../services/robotCamLink';
+
+/** Operator kuzatayotgan robot: tanlangani (onlayn bo'lsa), aks holda birinchi onlayn robot */
+export function watchedRobotId(): string {
+  const robots = fleetWatcher.getState().robots;
+  const chosen = selectedRobotStore.get();
+  if (chosen && robots.some((r) => r.id === chosen && r.online)) return chosen;
+  return robots.find((r) => r.online)?.id || chosen || '';
+}
 import { headingService } from '../services/headingService';
 import { navigationService } from '../services/navigationService';
 import { autopilotService } from '../services/autopilotService';
@@ -73,6 +85,9 @@ interface RobotContextType {
   // Police Strobe & Siren
   strobeActive: boolean;
   sirenActive: boolean;
+  /** Hozir chalinayotgan sirena ovozi (pult tugmasi) yoki null */
+  sirenTone: SirenTone | null;
+  setSirenTone: (tone: SirenTone | null) => void;
   toggleStrobe: () => void;
   toggleSiren: () => void;
   
@@ -339,6 +354,9 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const [strobeActive, setStrobeActive] = useState<boolean>(false);
   const [sirenActive, setSirenActive] = useState<boolean>(false);
+  const [sirenTone, setSirenToneState] = useState<SirenTone | null>(null);
+  const sirenToneRef = useRef<SirenTone | null>(null);
+  const sirenCmdAtRef = useRef(0);
   const [patrolMode, setPatrolMode] = useState<PatrolMode>('MANUAL');
 
   // LiDAR ma'lumoti LiDAR bo'limida Web Serial orqali to'g'ridan-to'g'ri o'qiladi (lidarSerialService)
@@ -482,19 +500,81 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
   };
 
-  const toggleSiren = () => {
-    setSirenActive((prev) => {
-      const next = !prev;
+  /** Shu qurilmada sirenani aniq holatga keltirish (robot plansheti dinamigi) */
+  const applySiren = useCallback(
+    (next: SirenTone | null, by?: string) => {
+      sirenToneRef.current = next;
+      setSirenToneState(next);
+      setSirenActive(!!next);
+      const who = by ? ` (${by})` : '';
       if (next) {
-        tacticalAudio.startSiren();
-        addLog('SYSTEM', 'warn', 'Politsiya ovozli sirenasi FAOL');
+        tacticalAudio.startSiren(next);
+        addLog('SYSTEM', 'warn', `Politsiya sirenasi FAOL: ${next} — ${SIREN_TONE_NAMES[next]}${who}`);
       } else {
         tacticalAudio.stopSiren();
-        addLog('SYSTEM', 'info', 'Politsiya sirenasi o\'chirildi');
+        addLog('SYSTEM', 'info', `Politsiya sirenasi o'chirildi${who}`);
       }
-      return next;
+    },
+    [addLog]
+  );
+
+  /**
+   * Sirena pulti tugmasi: A/B/C/D yoqadi, faol tugma qayta bosilsa o'chadi.
+   * Robot qurilmasida o'zida chalinadi; OPERATORDA esa tanlangan robotga buyruq yuboriladi va robotda chalinadi.
+   */
+  const setSirenTone = useCallback(
+    (tone: SirenTone | null) => {
+      const next = tone && tone !== sirenToneRef.current ? tone : null;
+      if (camLinkSettings.get().role !== 'operator') {
+        applySiren(next);
+        return;
+      }
+      const robotId = watchedRobotId();
+      if (!robotId) {
+        addLog('SYSTEM', 'warn', "Sirena: onlayn robot yo'q (robot planshetida sayt ochiq bo'lishi kerak)");
+        return;
+      }
+      sirenToneRef.current = next;
+      setSirenToneState(next);
+      setSirenActive(!!next);
+      sirenCmdAtRef.current = Date.now();
+      void operatorCalls.sendCommand(robotId, { type: 'siren', tone: next }).then((ok) => {
+        addLog('SYSTEM', ok ? 'warn' : 'error', ok ? `Sirena ${robotId} robotida: ${next ? `${next} — ${SIREN_TONE_NAMES[next]}` : "o'chirildi"}` : "Sirena buyrug'i yuborilmadi (aloqa yo'q)");
+      });
+    },
+    [addLog, applySiren]
+  );
+  const toggleSiren = () => setSirenTone(sirenToneRef.current ? null : 'A');
+
+  // ROBOT: operatordan kelgan sirena va ratsiya buyruqlari
+  useEffect(() => {
+    robotCall.setCommandHandler((c) => {
+      if (c.type === 'siren') applySiren(c.tone, c.by);
+      else if (c.type === 'radio') {
+        addLog('SYSTEM', 'warn', `Ratsiya: ${c.by || 'operator'} (${(c.ms / 1000).toFixed(1)} s)`);
+        void playRadio(c.audio).catch((e) => addLog('SYSTEM', 'error', `Ratsiya ovozi ijro etilmadi: ${e instanceof Error ? e.message : e}`));
+      }
     });
-  };
+    return () => robotCall.setCommandHandler(null);
+  }, [applySiren, addLog]);
+
+  // OPERATOR: robot telemetriyasidagi haqiqiy sirena holati pult tugmalarida ko'rinadi
+  useEffect(
+    () =>
+      fleetWatcher.subscribe((f) => {
+        if (camLinkSettings.get().role !== 'operator') return;
+        const id = watchedRobotId();
+        const tel = f.robots.find((r) => r.id === id)?.tel;
+        // Buyruq yuborilgandan keyin 3 s robotdan yangilangan holat kelishini kutamiz (eski telemetriya tugmani qaytarmasin)
+        if (!tel || tel.siren === undefined || Date.now() - tel.t > 5000 || Date.now() - sirenCmdAtRef.current < 3000) return;
+        if (tel.siren !== sirenToneRef.current) {
+          sirenToneRef.current = tel.siren;
+          setSirenToneState(tel.siren);
+          setSirenActive(!!tel.siren);
+        }
+      }),
+    []
+  );
 
   const setSpeedLevel = useCallback((lvl: SpeedLevel) => {
     setSpeedLevelState(lvl);
@@ -728,6 +808,8 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setPTZ,
         strobeActive,
         sirenActive,
+        sirenTone,
+        setSirenTone,
         toggleStrobe,
         toggleSiren,
         patrolMode,

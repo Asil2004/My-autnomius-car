@@ -9,6 +9,7 @@
  */
 
 import { uzbekVoiceService } from './uzbekVoiceService';
+import { NORMAL_VOLUME } from './radioVoice';
 
 export interface EdgeTtsOptions {
   voice?: string;
@@ -267,6 +268,8 @@ class EdgeTtsService {
       audio.src = url;
       this.currentAudio = audio;
       audio.playbackRate = options?.rate ?? this.defaultRate; // 1.0x
+      // Robotning oddiy nutqi 60% balandlikda (sirena va ratsiya 100%)
+      audio.volume = NORMAL_VOLUME;
       this.ensureAudioCtx();
       this.attachAnalyser(audio);
 
@@ -341,6 +344,7 @@ class EdgeTtsService {
       utterance.lang = 'uz-UZ';
       utterance.rate = options?.rate ?? this.defaultRate; // 1x
       utterance.pitch = options?.pitch ?? 1.0;
+      utterance.volume = NORMAL_VOLUME;
 
       if (this.voices.length === 0) {
         this.voices = window.speechSynthesis.getVoices();

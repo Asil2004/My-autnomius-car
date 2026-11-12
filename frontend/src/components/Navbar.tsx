@@ -1,11 +1,12 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { camLinkSettings } from '../services/camLinkSettings';
+import { RadioButton } from './RadioButton';
 import { useRobot } from '../context/RobotContext';
 import {
   Shield,
   Radio,
   Volume2,
   VolumeX,
-  AlertTriangle,
   Siren,
   BatteryCharging,
   BatteryMedium,
@@ -13,7 +14,7 @@ import {
   LogOut,
   Gamepad2
 } from 'lucide-react';
-import { tacticalAudio } from '../services/audioService';
+import { tacticalAudio, SIREN_TONE_NAMES, type SirenTone } from '../services/audioService';
 
 interface NavbarProps {
   onLockScreen?: () => void;
@@ -25,13 +26,15 @@ export const Navbar: React.FC<NavbarProps> = ({ onLockScreen, onOpenController }
     battery,
     strobeActive,
     toggleStrobe,
-    sirenActive,
-    toggleSiren,
+    sirenTone,
+    setSirenTone,
     isMuted,
     toggleMute,
     sendMecanumCommand,
     isMoving
   } = useRobot();
+  const [isOperator, setIsOperator] = useState(() => camLinkSettings.get().role === 'operator');
+  useEffect(() => camLinkSettings.subscribe((s) => setIsOperator(s.role === 'operator')), []);
 
   return (
     <header className="w-full bg-tactical-950/90 border-b border-tactical-700/60 backdrop-blur-md px-3 py-2 flex items-center justify-between select-none z-30">
@@ -103,18 +106,33 @@ export const Navbar: React.FC<NavbarProps> = ({ onLockScreen, onOpenController }
           <Siren className="w-4 h-4" />
         </button>
 
-        {/* Siren Toggle */}
-        <button
-          onClick={toggleSiren}
-          title="Politsiya sirenasi"
-          className={`p-2 rounded border transition-all ${
-            sirenActive
-              ? 'bg-amber-600/30 border-amber-500 text-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.5)]'
-              : 'bg-tactical-900 border-tactical-700/60 text-slate-400 hover:text-white'
+        {/* Sirena pulti: politsiya mashinasi pultidagi kabi 4 xil ovoz. Faol tugma qayta bosilsa o'chadi */}
+        <div
+          role="group"
+          aria-label="Sirena pulti"
+          className={`flex items-center gap-1 p-1 rounded-lg border ${
+            sirenTone ? 'border-rose-500/70 bg-rose-950/40 shadow-[0_0_12px_rgba(244,63,94,0.45)]' : 'border-tactical-700/60 bg-tactical-900'
           }`}
         >
-          <AlertTriangle className="w-4 h-4" />
-        </button>
+          {(['A', 'B', 'C', 'D'] as SirenTone[]).map((t) => (
+            <button
+              key={t}
+              onClick={() => setSirenTone(t)}
+              title={`Sirena ${t}: ${SIREN_TONE_NAMES[t]}${sirenTone === t ? " (o'chirish uchun qayta bosing)" : ''}`}
+              aria-pressed={sirenTone === t}
+              className={`w-7 h-7 rounded-full font-mono font-black text-xs transition-all active:scale-90 ${
+                sirenTone === t
+                  ? 'bg-rose-500 text-white ring-2 ring-rose-200 animate-pulse'
+                  : 'bg-rose-300/90 text-rose-800 hover:bg-rose-200'
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+
+        {/* Ratsiya: operator ovozi robotda ratsiya ovozida (faqat operator qurilmasida) */}
+        {isOperator && <RadioButton />}
 
         {/* Audio Mute */}
         <button

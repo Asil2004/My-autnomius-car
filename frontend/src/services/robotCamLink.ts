@@ -53,6 +53,8 @@ export interface RobotTelemetry {
   sonars?: { front: number | null; rear: number | null; left: number | null; right: number | null };
   cmd?: string;
   viewers?: number;
+  /** Robotda chalinayotgan sirena (A/B/C/D) yoki null */
+  siren?: 'A' | 'B' | 'C' | 'D' | null;
   /** GPS avtopilot holati (robot planshetida ishlaydi) */
   ap?: {
     on: boolean;
