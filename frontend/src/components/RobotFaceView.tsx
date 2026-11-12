@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { Lock } from 'lucide-react';
 import { robotCall, type CallInfo } from '../services/voiceCall';
 import { faceRecognitionService } from '../services/faceRecognitionService';
 import { faceViewSettings } from '../services/faceViewSettings';
@@ -207,21 +208,6 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
       }),
     []
   );
-
-  // Ko'rinmas operator kirishi: o'ng yuqori burchakni 3 soniya bosib turish
-  const hiddenPressRef = useRef<number | null>(null);
-  const startHiddenPress = useCallback(() => {
-    if (hiddenPressRef.current) window.clearTimeout(hiddenPressRef.current);
-    hiddenPressRef.current = window.setTimeout(() => {
-      hiddenPressRef.current = null;
-      tacticalAudio.playClick();
-      onUnlockRequest();
-    }, 3000);
-  }, [onUnlockRequest]);
-  const cancelHiddenPress = useCallback(() => {
-    if (hiddenPressRef.current) window.clearTimeout(hiddenPressRef.current);
-    hiddenPressRef.current = null;
-  }, []);
 
   // ==========================================================================
   // OLD KAMERA ORQALI INSON YUZINI KUZATISH VA TANISH
@@ -434,16 +420,20 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
         style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
       />
 
-      {/* Yuz ekranida faqat robot yuzi va "102" tugmasi. Operator paneli: o'ng yuqori burchakni 3 soniya bosib turish
-          (ko'rinmas). Admin va pult: sayt manzili oxiriga #admin yoki #controller */}
-      <div
-        onPointerDown={startHiddenPress}
-        onPointerUp={cancelHiddenPress}
-        onPointerLeave={cancelHiddenPress}
-        onPointerCancel={cancelHiddenPress}
-        aria-hidden
-        className="absolute top-0 right-0 w-24 h-24 z-30"
-      />
+      {/* Yuz ekranida faqat robot yuzi, operator paneli tugmasi va "102". Admin va pult: sayt manzili oxiriga
+          #admin yoki #controller */}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          tacticalAudio.playClick();
+          onUnlockRequest();
+        }}
+        title="Operator paneli"
+        aria-label="Operator paneli"
+        className="absolute top-4 right-4 z-30 p-2.5 rounded-xl bg-tactical-900 border border-tactical-700 text-slate-300 hover:text-white hover:bg-tactical-800 transition-transform active:scale-90"
+      >
+        <Lock className="w-4 h-4" />
+      </button>
 
       {/* 102: barcha operatorlarga ovozli chaqiruv (yana bosilsa tugatiladi) */}
       <div className="absolute bottom-6 sm:bottom-10 left-0 right-0 z-30 flex justify-center pointer-events-none">
