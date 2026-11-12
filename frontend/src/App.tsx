@@ -29,6 +29,9 @@ import { IncomingCallOverlay } from './components/IncomingCallOverlay';
 import { navigationService } from './services/navigationService';
 import { headingService } from './services/headingService';
 
+// 102 suhbati diagnostikasi (haqiqiy qurilmada ulanish/ovoz statistikasini ko'rish uchun)
+(window as unknown as { __qalqonCall: unknown }).__qalqonCall = { robotCall, operatorCalls };
+
 // Faqat ishlab chiqish rejimida: sinov skriptlari ilova ishlatayotgan servis nusxalarini ko'ra olsin
 if (import.meta.env.DEV) {
   (window as unknown as { __qalqon: unknown }).__qalqon = { robotCamBroadcaster, fleetWatcher, navigationService, headingService, autopilotService, robotCall, operatorCalls };

@@ -96,6 +96,10 @@ class RobotCall {
   private remoteSet = false;
   private ringTimer: number | null = null;
   private peerOp = '';
+  /** Ulanish qayta qurilgan sayin oshadi: eski javob/ICE xabarlari e'tiborsiz qoldiriladi */
+  private rev = 0;
+  private restarts = 0;
+  private discTimer: number | null = null;
 
   getState() {
     return this.info;
@@ -184,6 +188,9 @@ class RobotCall {
   private end(reason: string, publish = true) {
     if (this.ringTimer) window.clearTimeout(this.ringTimer);
     this.ringTimer = null;
+    if (this.discTimer) window.clearTimeout(this.discTimer);
+    this.discTimer = null;
+    this.restarts = 0;
     this.pc?.close();
     this.pc = null;
     this.mic?.getTracks().forEach((t) => t.stop());
@@ -224,37 +231,81 @@ class RobotCall {
     const mm = /\/c\/([a-z0-9]{4,16})\/(answer|ice)$/.exec(topic);
     if (!mm || mm[1] !== this.peerOp || !this.pc) return;
     if (mm[2] === 'answer') {
-      const m = await ch.open<{ sdp: string; callId: string }>(text);
-      if (!m?.sdp || m.callId !== this.info.callId || this.remoteSet) return;
+      const m = await ch.open<{ sdp: string; callId: string; rev?: number }>(text);
+      if (!m?.sdp || m.callId !== this.info.callId || (m.rev ?? 0) !== this.rev || this.remoteSet) return;
       await this.pc.setRemoteDescription({ type: 'answer', sdp: m.sdp }).catch(() => {});
       this.remoteSet = true;
       for (const c of this.pendingIce.splice(0)) await this.pc.addIceCandidate(c).catch(() => {});
     } else {
-      const m = await ch.open<{ c: RTCIceCandidateInit; callId: string }>(text);
-      if (!m?.c || m.callId !== this.info.callId) return;
+      const m = await ch.open<{ c: RTCIceCandidateInit; callId: string; rev?: number }>(text);
+      if (!m?.c || m.callId !== this.info.callId || (m.rev ?? 0) !== this.rev) return;
       if (this.remoteSet) await this.pc.addIceCandidate(m.c).catch(() => {});
       else this.pendingIce.push(m.c);
     }
   }
 
+  /**
+   * Aloqa uzilsa (tarmoq yo'li o'zgardi, Wi-Fi/mobil almashdi) ulanish yangidan quriladi: suhbat tugamaydi,
+   * operator tomoni yangi taklifni qabul qilib o'zi qayta ulanadi. 6 marta urinib bo'lmasa suhbat tugaydi.
+   */
+  private restartPeer() {
+    if (this.info.state !== 'active' || !this.peerOp) return;
+    if (++this.restarts > 6) {
+      this.end('Aloqa uzildi');
+      return;
+    }
+    console.warn(`[102] Aloqa uzildi, qayta ulanish (${this.restarts})`);
+    void this.createPeer(this.peerOp);
+  }
+
   private async createPeer(opId: string) {
     const T = this.T;
     const callId = this.info.callId;
+    if (this.discTimer) window.clearTimeout(this.discTimer);
+    this.discTimer = null;
+    this.pc?.close();
+    const rev = ++this.rev;
+    this.remoteSet = false;
+    this.pendingIce = [];
     const pc = new RTCPeerConnection({ iceServers: camLinkSettings.iceServers() });
     this.pc = pc;
     this.mic?.getAudioTracks().forEach((tr) => pc.addTrack(tr, this.mic!));
     pc.ontrack = (e) => {
-      if (!this.audio) this.audio = playRemote(e.streams[0] ?? new MediaStream([e.track]));
+      const stream = e.streams[0] ?? new MediaStream([e.track]);
+      if (!this.audio) this.audio = playRemote(stream);
+      else {
+        this.audio.srcObject = stream;
+        void this.audio.play().catch(() => {});
+      }
     };
     pc.onicecandidate = (e) => {
-      if (e.candidate) void this.publish(`${T}/c/${opId}/ice-r`, { c: e.candidate.toJSON(), callId });
+      if (e.candidate) void this.publish(`${T}/c/${opId}/ice-r`, { c: e.candidate.toJSON(), callId, rev });
     };
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed') this.end("Aloqa uzildi");
+      if (this.pc !== pc) return;
+      const st = pc.connectionState;
+      if (st === 'connected') {
+        this.restarts = 0;
+        if (this.discTimer) window.clearTimeout(this.discTimer);
+        this.discTimer = null;
+      } else if (st === 'failed') {
+        this.restartPeer();
+      } else if (st === 'disconnected' && !this.discTimer) {
+        // Qisqa uzilishlar o'zi tiklanadi; 2.5 s dan oshsa qayta quramiz
+        this.discTimer = window.setTimeout(() => {
+          this.discTimer = null;
+          if (this.pc === pc && pc.connectionState !== 'connected') this.restartPeer();
+        }, 2500);
+      }
     };
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    void this.publish(`${T}/c/${opId}/offer`, { sdp: pc.localDescription?.sdp ?? offer.sdp, callId });
+    void this.publish(`${T}/c/${opId}/offer`, { sdp: pc.localDescription?.sdp ?? offer.sdp, callId, rev });
+  }
+
+  /** Sinov/diagnostika uchun: ulanishni majburan qayta qurish */
+  forceReconnect() {
+    this.restartPeer();
   }
 }
 
@@ -274,8 +325,10 @@ class OperatorCalls {
   private pc: RTCPeerConnection | null = null;
   private mic: MediaStream | null = null;
   private audio: HTMLAudioElement | null = null;
-  private pendingIce: RTCIceCandidateInit[] = [];
+  private pendingIce: { rev: number; c: RTCIceCandidateInit }[] = [];
   private remoteSet = false;
+  /** Robot tomonidan qayta qurilgan ulanish raqami */
+  private rev = 0;
   /** Men javob bergan chaqiruv */
   private my: { robotId: string; callId: string } | null = null;
 
@@ -359,14 +412,16 @@ class OperatorCalls {
     m = new RegExp(`^${F}/r/([A-Z0-9-]{1,24})/c/${this.opId}/(offer|ice-r)$`).exec(topic);
     if (!m || !this.my || m[1] !== this.my.robotId) return;
     if (m[2] === 'offer') {
-      const o = await ch.open<{ sdp: string; callId: string }>(text);
-      if (!o?.sdp || o.callId !== this.my.callId) return;
-      await this.answer(m[1], o.sdp);
+      const o = await ch.open<{ sdp: string; callId: string; rev?: number }>(text);
+      if (!o?.sdp || o.callId !== this.my.callId || (o.rev ?? 0) < this.rev) return;
+      // Yangi taklif (robot aloqani qayta qurdi): eski ulanish yopilib, yangisi quriladi
+      await this.answer(m[1], o.sdp, o.rev ?? 0);
     } else {
-      const o = await ch.open<{ c: RTCIceCandidateInit; callId: string }>(text);
-      if (!o?.c || !this.pc || o.callId !== this.my.callId) return;
-      if (this.remoteSet) await this.pc.addIceCandidate(o.c).catch(() => {});
-      else this.pendingIce.push(o.c);
+      const o = await ch.open<{ c: RTCIceCandidateInit; callId: string; rev?: number }>(text);
+      if (!o?.c || o.callId !== this.my.callId) return;
+      const rev = o.rev ?? 0;
+      if (rev === this.rev && this.pc && this.remoteSet) await this.pc.addIceCandidate(o.c).catch(() => {});
+      else if (rev >= this.rev) this.pendingIce.push({ rev, c: o.c });
     }
   }
 
@@ -381,34 +436,42 @@ class OperatorCalls {
       return false;
     }
     this.my = { robotId, callId: c.callId };
+    this.rev = 0;
+    this.pendingIce = [];
     const name = camLinkSettings.get().operatorName || 'Operator';
     await this.publish(`${this.F}/r/${robotId}/call/accept`, { callId: c.callId, opId: this.opId, name });
     return true;
   }
 
-  private async answer(robotId: string, sdp: string) {
+  private async answer(robotId: string, sdp: string, rev: number) {
     const T = `${this.F}/r/${robotId}`;
     const callId = this.my!.callId;
     this.pc?.close();
+    this.rev = rev;
     const pc = new RTCPeerConnection({ iceServers: camLinkSettings.iceServers() });
     this.pc = pc;
     this.remoteSet = false;
     this.mic?.getAudioTracks().forEach((tr) => pc.addTrack(tr, this.mic!));
     pc.ontrack = (e) => {
-      if (!this.audio) this.audio = playRemote(e.streams[0] ?? new MediaStream([e.track]));
+      const stream = e.streams[0] ?? new MediaStream([e.track]);
+      if (!this.audio) this.audio = playRemote(stream);
+      else {
+        this.audio.srcObject = stream;
+        void this.audio.play().catch(() => {});
+      }
     };
     pc.onicecandidate = (e) => {
-      if (e.candidate) void this.publish(`${T}/c/${this.opId}/ice`, { c: e.candidate.toJSON(), callId });
+      if (e.candidate) void this.publish(`${T}/c/${this.opId}/ice`, { c: e.candidate.toJSON(), callId, rev });
     };
-    pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed') this.hangup();
-    };
+    // Uzilishlarni robot tomoni boshqaradi (yangi taklif yuboradi); bu yerda faqat holat
     await pc.setRemoteDescription({ type: 'offer', sdp });
     this.remoteSet = true;
-    for (const c of this.pendingIce.splice(0)) await pc.addIceCandidate(c).catch(() => {});
+    const pend = this.pendingIce.filter((p) => p.rev === rev);
+    this.pendingIce = this.pendingIce.filter((p) => p.rev > rev);
+    for (const p of pend) await pc.addIceCandidate(p.c).catch(() => {});
     const ans = await pc.createAnswer();
     await pc.setLocalDescription(ans);
-    await this.publish(`${T}/c/${this.opId}/answer`, { sdp: pc.localDescription?.sdp ?? ans.sdp, callId });
+    await this.publish(`${T}/c/${this.opId}/answer`, { sdp: pc.localDescription?.sdp ?? ans.sdp, callId, rev });
   }
 
   /** Suhbatni tugatish (yoki chaqiruvni men uchun yopish) */

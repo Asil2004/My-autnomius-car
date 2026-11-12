@@ -138,8 +138,11 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
   const [listenEnabled, setListenEnabled] = useState<boolean>(() => faceViewSettings.get().listen);
   useEffect(() => faceViewSettings.subscribe((s) => setListenEnabled(s.listen)), []);
 
+  // 102 suhbati paytida qo'l tegizmasdan tinglash butunlay o'chadi (mikrofonni bo'shatadi: Android da ikkita
+  // mikrofon oqimi bir-biriga xalaqit berib, suhbat ovozi uzilib qolardi). Suhbat tugagach qayta yoqiladi
+  const [callBusy, setCallBusy] = useState(false);
   useEffect(() => {
-    if (!listenEnabled) return;
+    if (!listenEnabled || callBusy) return;
     const listener = new HandsFreeListener({
       onUtterance: async (wav) => {
         if (processingRef.current || isSpeakingRef.current) return;
@@ -169,7 +172,7 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
       listener.stop();
       if (listenerRef.current === listener) listenerRef.current = null;
     };
-  }, [listenEnabled]);
+  }, [listenEnabled, callBusy]);
 
   // Ekranga birinchi bosish: brauzer ovoz va disk ruxsatini faqat foydalanuvchi harakatidan keyin beradi
   const handleUnlockAudio = useCallback(() => {
@@ -194,6 +197,7 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
         setCall(c);
         const busy = c.state === 'ringing' || c.state === 'active';
         callBusyRef.current = busy;
+        setCallBusy(busy);
         if (busy) {
           edgeTtsService.stop();
           finishRef.current?.();
@@ -448,7 +452,12 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
             e.stopPropagation();
             handleUnlockAudio();
             if (call.state === 'ringing' || call.state === 'active') robotCall.hangup();
-            else void robotCall.ring();
+            else {
+              // Mikrofonni avval tinglash funksiyasidan bo'shatamiz, keyin suhbat uchun ochamiz
+              listenerRef.current?.stop();
+              listenerRef.current = null;
+              void robotCall.ring();
+            }
           }}
           aria-label={call.state === 'active' ? '102: operator bilan suhbat (tugatish)' : call.state === 'ringing' ? '102: operator chaqirilmoqda (bekor qilish)' : '102: operatorga ulanish'}
           className={`pointer-events-auto w-32 h-32 sm:w-36 sm:h-36 rounded-full font-mono font-black text-5xl sm:text-6xl text-white border-4 transition-transform active:scale-95 select-none ${
