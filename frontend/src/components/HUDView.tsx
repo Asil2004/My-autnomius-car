@@ -9,6 +9,7 @@ import { createAnnotatedStream, type AnnotatedStream } from '../services/nvrOver
 import { nvrRecordingService, type TimelineRange, type NvrChunk, type NvrStorageStats, type NvrDiskStatus, NVR_MAX_STORAGE_BYTES } from '../services/nvrRecordingService';
 import { FloatingPanel } from './FloatingPanel';
 import { PtzLensView } from './PtzLensView';
+import { remoteLens } from '../services/ptzRelay';
 import { ptzCameraService, LENS, CAMERA_ROTATED_180, type PtzLens } from '../services/ptzCameraService';
 import { faceCameraSettings } from '../services/faceCameraSettings';
 import { camLinkSettings } from '../services/camLinkSettings';
@@ -848,6 +849,8 @@ export const HUDView: React.FC = () => {
     let annotated: AnnotatedStream | null = null;
     const stop = watchRobotCamera(robotId, {
       onTelemetry: onLiveTelemetry,
+      // Robotga ulangan PTZ kamera moduli (PTZ / o'ng / chap) tasviri: kichik va katta oynalarda ko'rsatiladi
+      onPtzStream: (stream) => remoteLens.setStream(stream),
       onStream: (stream) => {
         const v = videoRef.current;
         nvrRecordingService.stopRecording();

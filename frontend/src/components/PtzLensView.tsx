@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { VideoOff, RefreshCw } from 'lucide-react';
 import { ptzCameraService, CAMERA_ROTATED_180, type PtzLens, type PtzCameraStatus } from '../services/ptzCameraService';
 import { lensHub } from '../services/lensHub';
+import { remoteLens } from '../services/ptzRelay';
+import { camLinkSettings } from '../services/camLinkSettings';
 
 const DRAW_FPS = 15;
 
@@ -16,15 +18,19 @@ export const PtzLensView: React.FC<{
   label: string;
   className?: string;
 }> = ({ lens, variant, label, className = '' }) => {
+  // Operator: tasvir robotdan WebRTC orqali keladi; robot: kamera serveridan to'g'ridan-to'g'ri
+  const [remote] = useState(() => camLinkSettings.get().role === 'operator');
+  const hub = remote ? remoteLens : lensHub;
+  const statusSrc = remote ? remoteLens : ptzCameraService;
   const [base, setBase] = useState(() => ptzCameraService.getBase());
-  const [status, setStatus] = useState<PtzCameraStatus>(() => ptzCameraService.getStatus());
+  const [status, setStatus] = useState<PtzCameraStatus>(() => statusSrc.getStatus());
   const [ok, setOk] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => ptzCameraService.onBaseChange(setBase), []);
-  useEffect(() => ptzCameraService.subscribe(setStatus), []);
-  useEffect(() => lensHub.acquire(), []);
+  useEffect(() => statusSrc.subscribe(setStatus), [statusSrc]);
+  useEffect(() => hub.acquire(), [hub]);
 
   // Chizish sikli: linza o'zgarsa yoki oqim yangilansa ham har kadrda aynan shu linza chiziladi
   useEffect(() => {
@@ -38,7 +44,7 @@ export const PtzLensView: React.FC<{
       last = now;
       const canvas = canvasRef.current;
       const wrap = wrapRef.current;
-      const frame = lensHub.current();
+      const frame = hub.current();
       if (!canvas || !wrap) return;
       if (!frame) {
         if (shown) {
@@ -89,7 +95,7 @@ export const PtzLensView: React.FC<{
     };
     raf = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(raf);
-  }, [lens, variant]);
+  }, [lens, variant, hub]);
 
   const live = ok && status.video;
   const reason = !status.reachable
@@ -116,7 +122,9 @@ export const PtzLensView: React.FC<{
               {label}: {reason}
             </div>
             <div className="text-xs text-slate-400 max-w-md leading-relaxed">
-              {status.reachable
+              {remote
+                ? "Robotga PTZ kamera moduli ulanib, robot planshetida kamera serveri tasviri ochilganda shu yerda ko'rinadi."
+                : status.reachable
                 ? "Kamera quvvati va LAN kabelini, V380 ilovasida ONVIF yoqilganini tekshiring."
                 : `Noutbukda camera_server/start.ps1 ni ishga tushiring. Manzil: ${base} (Sozlamalar → PTZ kamera moduli).`}
             </div>

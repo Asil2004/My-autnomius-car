@@ -17,6 +17,7 @@ import { camChannel, camLinkSettings, type CamChannel } from './camLinkSettings'
 import { loadMqtt, MQTT_BROKER_URL } from './mqttLoader';
 import { navigationService, type NavState } from './navigationService';
 import { autopilotService, type AutopilotState, type AutopilotWaypoint } from './autopilotService';
+import { startPtzRelay } from './ptzRelay';
 
 /** Data kanal orqali uzatiladigan aniqlash ramkasi. Koordinatalar 0..1, kadrning o'zida (oynalanmagan) */
 export interface WireBox {
@@ -55,6 +56,8 @@ export interface RobotTelemetry {
   viewers?: number;
   /** Robotda chalinayotgan sirena (A/B/C/D) yoki null */
   siren?: 'A' | 'B' | 'C' | 'D' | null;
+  /** Robotga PTZ kamera moduli ulangan va tasviri uzatilmoqda */
+  ptz?: boolean;
   /** GPS avtopilot holati (robot planshetida ishlaydi) */
   ap?: {
     on: boolean;
@@ -78,6 +81,7 @@ export const AUTOPILOT_REMOTE_EVENT = 'qalqon-autopilot-remote';
 
 const MAX_VIEWERS = 6;
 const VIDEO_MAX_BITRATE = 1_500_000;
+const PTZ_MAX_BITRATE = 1_200_000;
 const DC_SEND_MS = 100;
 const TEL_MQTT_MS = 1000;
 
@@ -116,6 +120,8 @@ const navToWire = (s: NavState): RobotTelemetry['nav'] | undefined =>
 interface ViewerPeer {
   pc: RTCPeerConnection;
   sender: RTCRtpSender;
+  /** Ikkinchi video: PTZ kamera moduli (PTZ / o'ng / chap linzalar bitta kadrda) */
+  ptzSender: RTCRtpSender;
   dc: RTCDataChannel;
   pendingIce: RTCIceCandidateInit[];
   remoteSet: boolean;
@@ -139,6 +145,8 @@ class RobotCamBroadcaster {
   private instance = rid();
   private peers = new Map<string, ViewerPeer>();
   private track: MediaStreamTrack | null = null;
+  private ptzTrack: MediaStreamTrack | null = null;
+  private stopPtzRelay: (() => void) | null = null;
   private boxes: WireBox[] = [];
   private extra: Omit<RobotTelemetry, 'id' | 't' | 'nav'> = {};
   private nav: NavState | null = null;
@@ -172,6 +180,12 @@ class RobotCamBroadcaster {
     this.peers.forEach((p) => void p.sender.replaceTrack(this.track).catch(() => {}));
   }
 
+  /** PTZ kamera moduli tasviri (ptzRelay). null: modul ulanmagan */
+  private setPtzSource(track: MediaStreamTrack | null) {
+    this.ptzTrack = track;
+    this.peers.forEach((p) => void p.ptzSender.replaceTrack(track).catch(() => {}));
+  }
+
   /** Faqat shu oqim hali manba bo'lsa olib tashlash */
   clearSource(stream: MediaStream | null) {
     if (stream && this.track && stream.getVideoTracks()[0] === this.track) this.setSource(null);
@@ -194,6 +208,7 @@ class RobotCamBroadcaster {
       nav: this.nav ? navToWire(this.nav) : undefined,
       ...this.extra,
       viewers: this.status.viewers,
+      ptz: !!this.ptzTrack,
       ap: {
         on: a.active,
         ph: a.phase,
@@ -249,6 +264,7 @@ class RobotCamBroadcaster {
       client.on('error', (e: Error) => this.setStatus({ state: 'connecting', error: e.message }));
       client.on('message', (topic: string, payload: Uint8Array) => void this.onMessage(topic, new TextDecoder().decode(payload)));
       this.unsubNav = navigationService.subscribe((n) => (this.nav = n));
+      this.stopPtzRelay = startPtzRelay((t) => this.setPtzSource(t));
       this.timers.push(window.setInterval(() => this.sendDc(), DC_SEND_MS));
       this.timers.push(window.setInterval(() => this.publishTelemetry(), TEL_MQTT_MS));
     } catch (e) {
@@ -262,6 +278,8 @@ class RobotCamBroadcaster {
     this.timers = [];
     this.unsubNav?.();
     this.unsubNav = null;
+    this.stopPtzRelay?.();
+    this.stopPtzRelay = null;
     this.peers.forEach((p) => p.pc.close());
     this.peers.clear();
     if (this.client && this.T) {
@@ -343,8 +361,11 @@ class RobotCamBroadcaster {
     const pc = new RTCPeerConnection({ iceServers: camLinkSettings.iceServers() });
     const transceiver = pc.addTransceiver('video', { direction: 'sendonly' });
     if (this.track) await transceiver.sender.replaceTrack(this.track);
+    // Ikkinchi video (har doim, modul ulanmagan bo'lsa bo'sh): PTZ ulanganda qayta kelishuvsiz darhol uzatiladi
+    const ptzTransceiver = pc.addTransceiver('video', { direction: 'sendonly' });
+    if (this.ptzTrack) await ptzTransceiver.sender.replaceTrack(this.ptzTrack);
     const dc = pc.createDataChannel('data', { ordered: false, maxRetransmits: 0 });
-    const peer: ViewerPeer = { pc, sender: transceiver.sender, dc, pendingIce: [], remoteSet: false, name: name || 'Operator' };
+    const peer: ViewerPeer = { pc, sender: transceiver.sender, ptzSender: ptzTransceiver.sender, dc, pendingIce: [], remoteSet: false, name: name || 'Operator' };
     this.peers.set(id, peer);
 
     pc.onicecandidate = (e) => {
@@ -365,6 +386,10 @@ class RobotCamBroadcaster {
       params.encodings = params.encodings?.length ? params.encodings : [{}];
       params.encodings[0].maxBitrate = VIDEO_MAX_BITRATE;
       await transceiver.sender.setParameters(params);
+      const pp = ptzTransceiver.sender.getParameters();
+      pp.encodings = pp.encodings?.length ? pp.encodings : [{}];
+      pp.encodings[0].maxBitrate = PTZ_MAX_BITRATE;
+      await ptzTransceiver.sender.setParameters(pp);
     } catch {
       /* standart sifat */
     }
@@ -553,6 +578,8 @@ export interface ViewerHandlers {
   onBoxes: (boxes: WireBox[]) => void;
   onState: (state: ViewerState, detail?: string) => void;
   onTelemetry?: (tel: RobotTelemetry) => void;
+  /** PTZ kamera moduli oqimi (PTZ / o'ng / chap linzalar bitta kadrda, ustma-ust) */
+  onPtzStream?: (stream: MediaStream | null) => void;
 }
 
 /** Robot kamerasini kuzatishni boshlash. Qaytgan funksiya ulanishni yopadi */
@@ -574,6 +601,7 @@ export function watchRobotCamera(robotId: string, h: ViewerHandlers): () => void
     pc = null;
     pendingIce.length = 0;
     h.onStream(null);
+    h.onPtzStream?.(null);
     h.onBoxes([]);
     lastBoxesSig = '';
   };
@@ -602,7 +630,12 @@ export function watchRobotCamera(robotId: string, h: ViewerHandlers): () => void
     closePeer();
     const peer = new RTCPeerConnection({ iceServers: camLinkSettings.iceServers() });
     pc = peer;
-    peer.ontrack = (e) => h.onStream(e.streams[0] ?? new MediaStream([e.track]));
+    // 1-video: Face ID kamerasi, 2-video: PTZ kamera moduli (eski robot dasturida faqat birinchisi bo'ladi)
+    peer.ontrack = (e) => {
+      const stream = new MediaStream([e.track]);
+      if (peer.getTransceivers().indexOf(e.transceiver) === 1) h.onPtzStream?.(stream);
+      else h.onStream(stream);
+    };
     peer.ondatachannel = (e) => {
       e.channel.onmessage = (ev) => {
         try {
