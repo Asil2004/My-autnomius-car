@@ -23,7 +23,10 @@ export type CallState = 'idle' | 'ringing' | 'active' | 'ended';
  */
 export type RobotCommand =
   | { type: 'siren'; tone: 'A' | 'B' | 'C' | 'D' | null }
-  | { type: 'radio'; audio: string; mime: string; ms: number };
+  | { type: 'radio'; audio: string; mime: string; ms: number }
+  /** PTZ kamerani burish (operator joystigi): robot o'z kamera serveriga uzatadi */
+  | { type: 'ptz'; op: 'move'; pan: number; tilt: number }
+  | { type: 'ptz'; op: 'stop' };
 
 export interface CallInfo {
   robotId: string;
@@ -233,6 +236,11 @@ class RobotCall {
       if (!c || Math.abs(Date.now() - c.t) > 60_000) return;
       if (c.type === 'siren' && (c.tone === null || ['A', 'B', 'C', 'D'].includes(c.tone))) this.commandHandler?.(c);
       else if (c.type === 'radio' && typeof c.audio === 'string' && c.audio.length < 400_000) this.commandHandler?.(c);
+      // PTZ: kechikib kelgan burish buyrug'i bajarilmaydi (kamera keraksiz burilib ketmasin)
+      else if (c.type === 'ptz' && Math.abs(Date.now() - c.t) < 3000) {
+        if (c.op === 'stop') this.commandHandler?.(c);
+        else if (c.op === 'move' && isFinite(c.pan) && isFinite(c.tilt)) this.commandHandler?.(c);
+      }
       return;
     }
     if (topic === `${T}/call/accept`) {

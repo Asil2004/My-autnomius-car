@@ -12,7 +12,8 @@ import type {
   RemoteStatus
 } from '../types/robot';
 import { tacticalAudio, SIREN_TONE_NAMES, type SirenTone } from '../services/audioService';
-import { robotCall, operatorCalls } from '../services/voiceCall';
+import { robotCall, operatorCalls, type RobotCommand } from '../services/voiceCall';
+import { ptzCameraService } from '../services/ptzCameraService';
 import { playRadio } from '../services/radioVoice';
 import { camLinkSettings } from '../services/camLinkSettings';
 import { fleetWatcher, selectedRobotStore } from '../services/robotCamLink';
@@ -550,13 +551,35 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     robotCall.setCommandHandler((c) => {
       if (c.type === 'siren') applySiren(c.tone, c.by);
-      else if (c.type === 'radio') {
+      else if (c.type === 'ptz') {
+        if (c.op === 'move') ptzCameraService.moveLocal(c.pan, c.tilt);
+        else ptzCameraService.stopLocal();
+      } else if (c.type === 'radio') {
         addLog('SYSTEM', 'warn', `Ratsiya: ${c.by || 'operator'} (${(c.ms / 1000).toFixed(1)} s)`);
         void playRadio(c.audio).catch((e) => addLog('SYSTEM', 'error', `Ratsiya ovozi ijro etilmadi: ${e instanceof Error ? e.message : e}`));
       }
     });
     return () => robotCall.setCommandHandler(null);
   }, [applySiren, addLog]);
+
+  // OPERATOR: PTZ joystigi robotga yuboriladi (kamera moduli robotga ulangan, operator kompyuteriga emas)
+  useEffect(() => {
+    const apply = (role: string) =>
+      ptzCameraService.setRemote(
+        role === 'operator'
+          ? (cmd) => {
+              const id = watchedRobotId();
+              if (id) void operatorCalls.sendCommand(id, { type: 'ptz', ...cmd } as RobotCommand);
+            }
+          : null
+      );
+    apply(camLinkSettings.get().role);
+    const unsub = camLinkSettings.subscribe((s) => apply(s.role));
+    return () => {
+      unsub();
+      ptzCameraService.setRemote(null);
+    };
+  }, []);
 
   // OPERATOR: robot telemetriyasidagi haqiqiy sirena holati pult tugmalarida ko'rinadi
   useEffect(

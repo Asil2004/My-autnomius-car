@@ -147,13 +147,38 @@ class PtzCameraService {
     if (!changed && now - this.lastMove.t < 300) return;
     this.lastMove = { pan: p, tilt: t, t: now };
     this.moving = true;
-    void this.post('/ptz/move', { pan: +p.toFixed(2), tilt: +t.toFixed(2), zoom: 0, duration: 0.8 });
+    if (this.remote) this.remote({ op: 'move', pan: +p.toFixed(2), tilt: +t.toFixed(2) });
+    else this.moveLocal(p, t);
   }
 
   stop() {
     if (!this.moving) return;
     this.moving = false;
     this.lastMove = { pan: 0, tilt: 0, t: 0 };
+    if (this.remote) {
+      // To'xtash muhim: MQTT da bitta xabar yo'qolsa ham kamera to'xtashi uchun ikki marta
+      this.remote({ op: 'stop' });
+      window.setTimeout(() => this.remote?.({ op: 'stop' }), 250);
+    } else this.stopLocal();
+  }
+
+  /**
+   * Operator qurilmasida: kamera moduli robotga ulangan, shuning uchun burish buyruqlari robotga yuboriladi
+   * (robot ularni o'z kamera serveriga uzatadi). null: buyruqlar to'g'ridan-to'g'ri kamera serveriga
+   */
+  private remote: ((cmd: { op: 'move'; pan: number; tilt: number } | { op: 'stop' }) => void) | null = null;
+  setRemote(fn: typeof this.remote) {
+    this.remote = fn;
+  }
+
+  /** Kamera serveriga to'g'ridan-to'g'ri (robot planshetida; operatordan kelgan buyruqlar ham shu yerga) */
+  moveLocal(pan: number, tilt: number) {
+    const p = Math.max(-1, Math.min(1, pan));
+    const t = Math.max(-1, Math.min(1, tilt));
+    void this.post('/ptz/move', { pan: +p.toFixed(2), tilt: +t.toFixed(2), zoom: 0, duration: 0.8 });
+  }
+
+  stopLocal() {
     void this.post('/ptz/stop', {});
   }
 
