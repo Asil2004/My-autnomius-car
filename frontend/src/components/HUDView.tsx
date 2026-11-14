@@ -9,6 +9,7 @@ import { createAnnotatedStream, type AnnotatedStream } from '../services/nvrOver
 import { nvrRecordingService, type TimelineRange, type NvrChunk, type NvrStorageStats, type NvrDiskStatus, NVR_MAX_STORAGE_BYTES } from '../services/nvrRecordingService';
 import { FloatingPanel } from './FloatingPanel';
 import { PtzLensView } from './PtzLensView';
+import { PanoramaLensView } from './PanoramaLensView';
 import { remoteLens } from '../services/ptzRelay';
 import { ptzCameraService, LENS, CAMERA_ROTATED_180, type PtzLens } from '../services/ptzCameraService';
 import { faceCameraSettings } from '../services/faceCameraSettings';
@@ -67,7 +68,7 @@ import {
 } from 'lucide-react';
 
 type PanelId = 'control' | 'sensors' | 'ai' | 'ptz' | 'log';
-type CamId = 'face' | 'ptz' | 'front' | 'rear' | 'right' | 'left';
+type CamId = 'face' | 'ptz' | 'front' | 'rear' | 'right' | 'left' | 'panorama';
 // Kamera moduli (camera_server, CP-159-1) linzalari: PTZ, o'ngga va chapga qaragan
 const MODULE_LENS: Partial<Record<CamId, PtzLens>> = { ptz: LENS.ptz, right: LENS.right, left: LENS.left };
 
@@ -78,6 +79,7 @@ const ZOOM_MAX = 8;
 
 const ALL_CAMERAS: { id: CamId; short: string; long: string }[] = [
   { id: 'face', short: 'Face ID', long: 'Face ID (Planshet)' },
+  { id: 'panorama', short: '360°', long: "360° Panorama (chap + PTZ + o'ng)" },
   { id: 'ptz', short: 'PTZ', long: 'PTZ kamera' },
   { id: 'right', short: "O'ng", long: "O'ng kamera" },
   { id: 'left', short: 'Chap', long: 'Chap kamera' }
@@ -644,7 +646,7 @@ export const HUDView: React.FC = () => {
   // AI Detektor holatlari
   const [aiModelLoaded, setAiModelLoaded] = useState(false);
   const [aiModelLoading, setAiModelLoading] = useState(false);
-  const [aiEnabled, setAiEnabled] = useState(true);
+  const [aiEnabled, setAiEnabled] = useState(false);
 
   // NVR yozuviga odam ramkalari ham tushishi uchun: kompozitor har kadrda shu ref'dan o'qiydi
   const overlayStateRef = useRef({ objects: detectedObjects, ai: aiEnabled, mirror: mirrorVideo });
@@ -675,7 +677,7 @@ export const HUDView: React.FC = () => {
   const [calibrated, setCalibrated] = useState(distanceEstimator.isCalibrated(CAMERA_KEY));
 
   // Yuz modeli holati va oxirgi kadr natijasi (ekranda ko'rsatiladi: nima uchun yuz topilmayotganini ko'rish uchun)
-  const [faceStatus, setFaceStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [faceStatus, setFaceStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [faceInfo, setFaceInfo] = useState<{
     count: number;
     widthPx: number;
@@ -755,11 +757,14 @@ export const HUDView: React.FC = () => {
       setFaceStatus('ready');
       return;
     }
+    // AI "yoqilgan" tugmasi bosilmaguncha model yuklanmaydi: WebGL shaderlarini birinchi kompilyatsiya qilish
+    // 10-20+ s asosiy oqimni bloklaydi (zaif qurilmalarda sahifa qotib qolardi, aiPreload.ts'dagi eslatmaga qarang).
+    if (!aiEnabled || aiModelLoaded || aiModelLoading) return;
     loadAiServices();
     return () => {
       isMounted = false;
     };
-  }, [addLog, setDetectedObjects, isViewer]);
+  }, [addLog, setDetectedObjects, isViewer, aiEnabled, aiModelLoaded, aiModelLoading]);
 
   // =========================================================================
   // 2. FRONTAL KAMERA (WEBCAM) OQIMINI BOSHQARISH
@@ -1365,7 +1370,9 @@ export const HUDView: React.FC = () => {
   // Kalibrovka datchigi holati: yashil bo'lishi uchun yuz yetarli kadrda topilib, o'lchami barqaror bo'lishi kerak
   const calibReady = faceStatus === 'ready' && faceInfo.calibCount >= CALIB_MIN_SAMPLES && faceInfo.calibStable;
   const calibHint =
-    faceStatus === 'loading'
+    faceStatus === 'idle'
+      ? 'AI o\'chiq: avval "AI va yuz tanish" panelida yoqing.'
+      : faceStatus === 'loading'
       ? 'Yuz modeli yuklanmoqda...'
       : faceStatus === 'error'
       ? 'Yuz modeli xato: kalibrovka mumkin emas (jurnalga qarang).'
@@ -1620,7 +1627,10 @@ export const HUDView: React.FC = () => {
       className={`relative flex-none rounded-lg overflow-hidden bg-tactical-950 border-2 border-tactical-700 hover:border-police-cyan transition-all shadow-md group ${extraClass}`}
       style={{ aspectRatio: '16 / 9' }}
     >
-      {MODULE_LENS[cam.id] !== undefined ? (
+      {cam.id === 'panorama' ? (
+        // Uch linzani (chap/PTZ/o'ng) birlashtirgan keng ko'rinish
+        <PanoramaLensView variant="tile" label={cam.long} className="absolute inset-0" />
+      ) : MODULE_LENS[cam.id] !== undefined ? (
         // Kamera moduli linzalari (PTZ / o'ng / chap): jonli video
         <PtzLensView lens={MODULE_LENS[cam.id]!} variant="tile" label={cam.long} className="absolute inset-0" />
       ) : cam.id === 'face' ? (
@@ -1654,8 +1664,8 @@ export const HUDView: React.FC = () => {
         >
           <Camera className="w-3.5 h-3.5" />
           Face ID
-          <span className={`text-[10px] ${faceStatus === 'ready' ? 'text-police-green' : faceStatus === 'error' ? 'text-police-red' : 'text-police-amber'}`}>
-            {faceStatus === 'ready' ? 'tayyor' : faceStatus === 'error' ? 'xato' : 'yuklanmoqda'}
+          <span className={`text-[10px] ${faceStatus === 'ready' ? 'text-police-green' : faceStatus === 'error' ? 'text-police-red' : faceStatus === 'idle' ? 'text-slate-400' : 'text-police-amber'}`}>
+            {faceStatus === 'ready' ? 'tayyor' : faceStatus === 'error' ? 'xato' : faceStatus === 'idle' ? "o'chiq" : 'yuklanmoqda'}
           </span>
         </button>
 
@@ -2020,7 +2030,9 @@ export const HUDView: React.FC = () => {
               className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-tactical-950 text-center overflow-hidden"
             >
               <div className="w-full h-full flex items-center justify-center px-6" style={zoomStyle}>
-                {MODULE_LENS[activeCam] !== undefined ? (
+                {activeCam === 'panorama' ? (
+                  <PanoramaLensView variant="main" label={ALL_CAMERAS.find((c) => c.id === activeCam)?.long ?? '360° Panorama'} />
+                ) : MODULE_LENS[activeCam] !== undefined ? (
                   // Kamera moduli linzasi katta oynada (PTZ da nishon chiziqlari va joystik holati ustida)
                   <div className="relative w-full h-full">
                     <PtzLensView
@@ -2784,7 +2796,9 @@ export const HUDView: React.FC = () => {
                 </dd>
                 <dt className="text-slate-400">Yuz</dt>
                 <dd className={`text-right ${faceStatus === 'error' ? 'text-police-red' : faceInfo.count > 0 ? 'text-police-green' : 'text-police-amber'}`}>
-                  {faceStatus === 'loading'
+                  {faceStatus === 'idle'
+                    ? "o'chiq"
+                    : faceStatus === 'loading'
                     ? 'yuklanmoqda'
                     : faceStatus === 'error'
                     ? 'model xato (jurnalga qarang)'

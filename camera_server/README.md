@@ -10,6 +10,8 @@ CP-159-1 (V380) uch linzali IP kamera uchun video va burish (PTZ) servisi. Asl m
 
 ## Ishga tushirish
 
+### Windows (noutbuk)
+
 ```powershell
 cd camera_server
 powershell -ExecutionPolicy Bypass -File start.ps1
@@ -19,6 +21,23 @@ Birinchi marta `.venv` yaratib kutubxonalarni o'rnatadi. Kamera noutbukka LAN ka
 (noutbuk LAN porti `192.168.1.10`), kameraga `192.168.1.100` manzilini beradigan DHCP yordamchisini ham ishga tushiradi.
 
 Tekshirish: brauzerda `http://localhost:8090/camera/` (asl boshqaruv sahifasi) yoki `http://localhost:8090/camera/status`.
+
+### Raspberry Pi (LAN kabel bilan to'g'ridan-to'g'ri)
+
+Kamera Pi'ning `eth0` portiga LAN kabel bilan to'g'ridan-to'g'ri ulansa, bir martalik sozlash:
+
+```bash
+cd camera_server
+sudo bash scripts/setup_pi_camera_link.sh
+```
+
+Bu skript: `eth0`ga statik IP (`192.168.1.10/24`) beradi, kamerani `192.168.1.100`ga ulaydigan mini-DHCP (`dnsmasq`)
+xizmatini o'rnatadi, Python muhitini tayyorlaydi va `qalqon-cam-dhcp` / `qalqon-camera-server` systemd xizmatlarini
+yaratib avto-start qiladi (Pi qayta yonganda ham o'zi ishga tushadi).
+
+Qo'lda (systemd xizmatisiz) sinash uchun: `bash start.sh`.
+
+Tekshirish: `systemctl status qalqon-camera-server`, brauzerda `http://<PI_IP>:8090/camera/`.
 
 ## HUD bilan ulanish
 
