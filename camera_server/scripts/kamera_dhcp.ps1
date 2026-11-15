@@ -1,4 +1,4 @@
-param([int]$Seconds = 180, [string]$CamMac = '00-55-7B-11-C6-15')
+param([int]$Seconds = 86400, [string]$CamMac = '')
 $udp = New-Object System.Net.Sockets.UdpClient
 $udp.Client.SetSocketOption([System.Net.Sockets.SocketOptionLevel]::Socket, [System.Net.Sockets.SocketOptionName]::ReuseAddress, $true)
 $udp.Client.Bind((New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Parse('192.168.1.10'), 67)))
@@ -6,12 +6,12 @@ $udp.EnableBroadcast = $true
 $udp.Client.ReceiveTimeout = 2000
 $end = (Get-Date).AddSeconds($Seconds)
 $dst = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Parse('192.168.1.255'),68)
-Write-Output "DHCP server listening on 192.168.1.10 for $CamMac"
+Write-Output "DHCP server listening on 192.168.1.10 for all cameras..."
 while ((Get-Date) -lt $end) {
   try { $ep = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any,0); $req = $udp.Receive([ref]$ep) } catch { continue }
   if ($req.Length -lt 240 -or $req[0] -ne 1) { continue }
   $mac = ($req[28..33] | ForEach-Object { $_.ToString('X2') }) -join '-'
-  if ($mac -ne $CamMac) { continue }
+  if ($CamMac -and $mac -ne $CamMac) { continue }
   $type = 0; $i = 240
   while ($i -lt $req.Length -and $req[$i] -ne 255) {
     if ($req[$i] -eq 0) { $i++; continue }
