@@ -177,9 +177,9 @@ export const ESP32RemoteView: React.FC<ESP32RemoteViewProps> = ({ onExit }) => {
         nextCmd = 'B'; // To'g'ri orqaga
       }
     } else if (left && !right) {
-      nextCmd = 'L'; // Joyida chapga tank-burilish
+      nextCmd = 'L'; // Chapga burilish (Chap 50%, O'ng 100%)
     } else if (right && !left) {
-      nextCmd = 'R'; // Joyida o'ngga tank-burilish
+      nextCmd = 'R'; // O'ngga burilish (Chap 100%, O'ng 50%)
     } else {
       nextCmd = 'S'; // To'xtash
     }
@@ -300,8 +300,8 @@ export const ESP32RemoteView: React.FC<ESP32RemoteViewProps> = ({ onExit }) => {
     switch (currentCmd) {
       case 'F': return 'To\'g\'ri Oldinga (⬆️)';
       case 'B': return 'Orqaga (⬇️)';
-      case 'L': return 'Joyida Chapga (↺)';
-      case 'R': return 'Joyida O\'ngga (↻)';
+      case 'L': return 'Chapga burilish (Chap 50%, O\'ng 100%)';
+      case 'R': return 'O\'ngga burilish (Chap 100%, O\'ng 50%)';
       case 'G': return 'Oldinga-Chapga Silliq (↖️)';
       case 'I': return 'Oldinga-O\'ngga Silliq (↗️)';
       case 'H': return 'Orqaga-Chapga (↙️)';
@@ -574,7 +574,7 @@ export const ESP32RemoteView: React.FC<ESP32RemoteViewProps> = ({ onExit }) => {
 
         {/* O'ng Ustun: Chapga va O'ngga Burilish */}
         <div className="flex flex-col gap-3">
-          {/* Joyida Chapga */}
+          {/* Chapga burilish (Chap 50%, O'ng 100%) */}
           <button
             onTouchStart={(e) => { e.preventDefault(); setInput('left', true); }}
             onTouchEnd={(e) => { e.preventDefault(); setInput('left', false); }}
@@ -624,7 +624,7 @@ export const ESP32RemoteView: React.FC<ESP32RemoteViewProps> = ({ onExit }) => {
             </button>
           </div>
 
-          {/* Joyida O'ngga */}
+          {/* O'ngga burilish (Chap 100%, O'ng 50%) */}
           <button
             onTouchStart={(e) => { e.preventDefault(); setInput('right', true); }}
             onTouchEnd={(e) => { e.preventDefault(); setInput('right', false); }}

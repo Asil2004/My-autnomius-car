@@ -215,8 +215,8 @@ void loop() {
 }
 
 // ----------------- 4WD DIFFERENSIAL HARAKAT -----------------
-// Burilishda ichki g'ildiraklarning kamaytirilgan quvvat koeffitsiyenti (40% quvvat)
-const float CURVE_POWER_RATIO = 0.40;
+// Burilishda ichki g'ildiraklarning kamaytirilgan quvvat koeffitsiyenti (50% quvvat - 50% sekinroq)
+const float CURVE_POWER_RATIO = 0.50;
 
 void moveForward() {
   applyTrimmedSpeeds(currentSpeed);
@@ -226,7 +226,7 @@ void moveForward() {
   motorFR.run(FORWARD);
 }
 
-// Oldinga + O'ngga ravon yoy (Chap g'ildiraklar 100%, o'ng g'ildiraklar 40% quvvatda oldinga aylanadi, teskari aylanmaydi!)
+// Oldinga + O'ngga ravon yoy (Chap g'ildiraklar 100%, o'ng g'ildiraklar 50% quvvatda oldinga aylanadi, teskari aylanmaydi!)
 void moveForwardRight() {
   applyDifferentialSpeeds(currentSpeed, (int)(currentSpeed * CURVE_POWER_RATIO));
   motorFL.run(FORWARD);
@@ -235,7 +235,7 @@ void moveForwardRight() {
   motorFR.run(FORWARD);
 }
 
-// Oldinga + Chapga ravon yoy (O'ng g'ildiraklar 100%, chap g'ildiraklar 40% quvvatda oldinga aylanadi, teskari aylanmaydi!)
+// Oldinga + Chapga ravon yoy (O'ng g'ildiraklar 100%, chap g'ildiraklar 50% quvvatda oldinga aylanadi, teskari aylanmaydi!)
 void moveForwardLeft() {
   applyDifferentialSpeeds((int)(currentSpeed * CURVE_POWER_RATIO), currentSpeed);
   motorFL.run(FORWARD);
@@ -271,19 +271,13 @@ void moveBackwardLeft() {
 }
 
 void turnLeft() {
-  applyTrimmedSpeeds(currentSpeed);
-  motorFL.run(BACKWARD);
-  motorRL.run(BACKWARD);
-  motorRR.run(FORWARD);
-  motorFR.run(FORWARD);
+  // Chap balonlar 50% sekinroq, o'ng balonlar 100% tezlikda oldinga aylanadi
+  moveForwardLeft();
 }
 
 void turnRight() {
-  applyTrimmedSpeeds(currentSpeed);
-  motorFL.run(FORWARD);
-  motorRL.run(FORWARD);
-  motorRR.run(BACKWARD);
-  motorFR.run(BACKWARD);
+  // O'ng balonlar 50% sekinroq, chap balonlar 100% tezlikda oldinga aylanadi
+  moveForwardRight();
 }
 
 void stopAll() {

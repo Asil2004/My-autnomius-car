@@ -1511,9 +1511,9 @@ export const HUDView: React.FC = () => {
     if (deg >= -112.5 && deg < -67.5) {
       sendMecanumCommand('F'); // Sof Oldinga (100% chap, 100% o'ng)
     } else if (deg >= -67.5 && deg < -22.5) {
-      sendMecanumCommand('I'); // Oldinga + O'ngga Yoy (100% chap, 40% o'ng - o'ng motor teskari aylanmaydi!)
+      sendMecanumCommand('I'); // Oldinga + O'ngga Yoy (100% chap, 50% o'ng - o'ng motor teskari aylanmaydi!)
     } else if (deg >= -22.5 && deg < 22.5) {
-      sendMecanumCommand('R'); // Sof Joyida O'ngga aylanish
+      sendMecanumCommand('R'); // O'ngga burilish (Chap 100%, O'ng 50%)
     } else if (deg >= 22.5 && deg < 67.5) {
       sendMecanumCommand('J'); // Orqaga + O'ngga Yoy
     } else if (deg >= 67.5 && deg < 112.5) {
@@ -1521,9 +1521,9 @@ export const HUDView: React.FC = () => {
     } else if (deg >= 112.5 && deg < 157.5) {
       sendMecanumCommand('H'); // Orqaga + Chapga Yoy
     } else if (deg >= 157.5 || deg < -157.5) {
-      sendMecanumCommand('L'); // Sof Joyida Chapga aylanish
+      sendMecanumCommand('L'); // Chapga burilish (Chap 50%, O'ng 100%)
     } else if (deg >= -157.5 && deg < -112.5) {
-      sendMecanumCommand('G'); // Oldinga + Chapga Yoy (40% chap, 100% o'ng - chap motor teskari aylanmaydi!)
+      sendMecanumCommand('G'); // Oldinga + Chapga Yoy (50% chap, 100% o'ng - chap motor teskari aylanmaydi!)
     }
   };
 
@@ -2549,7 +2549,7 @@ export const HUDView: React.FC = () => {
                 onPointerUp={(e) => { e.preventDefault(); sendMecanumCommand('S'); }}
                 onPointerLeave={() => sendMecanumCommand('S')}
                 onPointerCancel={() => sendMecanumCommand('S')}
-                title="Joyida chapga burilish (A / L)"
+                title="Chapga burilish (Chap 50%, O'ng 100%) (A / L)"
                 className="py-1.5 px-1 rounded-lg border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 active:bg-police-cyan/30 text-white text-xs font-bold font-mono flex items-center justify-center select-none touch-none"
               >
                 <ArrowLeft className="w-4 h-4 text-police-cyan" />
@@ -2568,7 +2568,7 @@ export const HUDView: React.FC = () => {
                 onPointerUp={(e) => { e.preventDefault(); sendMecanumCommand('S'); }}
                 onPointerLeave={() => sendMecanumCommand('S')}
                 onPointerCancel={() => sendMecanumCommand('S')}
-                title="Joyida o'ngga burilish (D / R)"
+                title="O'ngga burilish (Chap 100%, O'ng 50%) (D / R)"
                 className="py-1.5 px-1 rounded-lg border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 active:bg-police-cyan/30 text-white text-xs font-bold font-mono flex items-center justify-center select-none touch-none"
               >
                 <ArrowRight className="w-4 h-4 text-police-cyan" />

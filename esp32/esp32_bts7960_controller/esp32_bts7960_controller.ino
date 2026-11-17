@@ -119,26 +119,25 @@ void toxta() {
   harakatda = false;
 }
 
-// Silliq burilish nisbati (ichki g'ildiraklar kuchi, 40-55% oralig'i)
-// 4 ta DC motorli skid-steer shassilarda motorlar qotib (stall) qolmasligi uchun 48% optimal
-int burilishNisbati = 48; // %
+// Silliq burilish nisbati (ichki g'ildiraklar kuchi, 50% sekinroq)
+// 4 ta DC motorli skid-steer shassilarda notekis joylarda motorlar qotib (stall) qolmasligi uchun
+int burilishNisbati = 50; // %
 
 // Barcha buyruqlarni qayta ishlovchi markaziy funksiya
 void buyruqniBajar(char xarf) {
-  int ichkiKuch = (tezlik * burilishNisbati) / 100;
-  if (tezlik > 80 && ichkiKuch < 65) ichkiKuch = 65; // Minimal aylanma moment chegarasi
+  int yarimKuch = (tezlik * burilishNisbati) / 100;
 
   switch (xarf) {
-    case 'F': oldingaYur(tezlik, tezlik); break;        // To'g'ri oldinga
-    case 'B': orqagaYur(tezlik, tezlik); break;         // To'g'ri orqaga
-    case 'L': joyidaChapga(tezlik); break;              // Joyida tank-burilish
-    case 'R': joyidaOngga(tezlik); break;               // Joyida tank-burilish
+    case 'F': oldingaYur(tezlik, tezlik); break;        // To'g'ri oldinga (100% / 100%)
+    case 'B': orqagaYur(tezlik, tezlik); break;         // To'g'ri orqaga (100% / 100%)
+    case 'L':
     case 'G':
-    case 'Q': oldingaYur(ichkiKuch, tezlik); break;     // Oldinga-chapga silliq egri burilish (Q va G)
+    case 'Q': oldingaYur(yarimKuch, tezlik); break;     // Chapga burilish: chap balonlar 50% sekinroq, o'ng 100%
+    case 'R':
     case 'I':
-    case 'E': oldingaYur(tezlik, ichkiKuch); break;     // Oldinga-o'ngga silliq egri burilish (E va I)
-    case 'H': orqagaYur(ichkiKuch, tezlik); break;      // Orqaga-chapga egri burilish
-    case 'J': orqagaYur(tezlik, ichkiKuch); break;      // Orqaga-o'ngga egri burilish
+    case 'E': oldingaYur(tezlik, yarimKuch); break;     // O'ngga burilish: o'ng balonlar 50% sekinroq, chap 100%
+    case 'H': orqagaYur(yarimKuch, tezlik); break;      // Orqaga-chapga: chap balonlar 50% sekinroq
+    case 'J': orqagaYur(tezlik, yarimKuch); break;      // Orqaga-o'ngga: o'ng balonlar 50% sekinroq
     case 'S': toxta(); break;                           // To'xtash
     default:  toxta(); break;
   }
@@ -486,7 +485,7 @@ void handleRoot() {
   server.send_P(200, "text/html", index_html);
 }
 
-// Harakat buyrug'i: /move?dir=F yoki /cmd?c=F yoki /cmd?speed=3
+// Harakat buyrug'i: /move?dir=F, /move?x=0&y=100, /cmd?c=F yoki /cmd?speed=3
 void handleMove() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   
@@ -501,6 +500,38 @@ void handleMove() {
     return;
   }
 
+  // 360° analog joystik koordinatalari: /move?x=-100..100&y=-100..100
+  if (server.hasArg("x") && server.hasArg("y")) {
+    int jx = constrain(server.arg("x").toInt(), -100, 100);
+    int jy = constrain(server.arg("y").toInt(), -100, 100);
+    if (abs(jx) < 5 && abs(jy) < 5) {
+      toxta();
+      server.send(200, "application/json", "{\"status\":\"ok\",\"cmd\":\"S\"}");
+      return;
+    }
+
+    float mag = constrain(sqrt((float)(jx * jx + jy * jy)) / 100.0f, 0.0f, 1.0f);
+    int baseKuch = (int)(tezlik * mag);
+    float turnRatio = abs(jx) / 100.0f;
+    float maxKamayish = (100 - burilishNisbati) / 100.0f;
+
+    int chapKuch = baseKuch;
+    int ongKuch = baseKuch;
+    if (jx < 0) {
+      chapKuch = (int)(baseKuch * (1.0f - turnRatio * maxKamayish));
+    } else if (jx > 0) {
+      ongKuch = (int)(baseKuch * (1.0f - turnRatio * maxKamayish));
+    }
+
+    if (jy < -15) {
+      orqagaYur(chapKuch, ongKuch);
+    } else {
+      oldingaYur(chapKuch, ongKuch);
+    }
+    server.send(200, "application/json", "{\"status\":\"ok\",\"x\":" + String(jx) + ",\"y\":" + String(jy) + "}");
+    return;
+  }
+
   String cmdStr = "";
   if (server.hasArg("dir")) cmdStr = server.arg("dir");
   else if (server.hasArg("c")) cmdStr = server.arg("c");
@@ -510,7 +541,7 @@ void handleMove() {
     buyruqniBajar(c);
     server.send(200, "application/json", "{\"status\":\"ok\",\"cmd\":\"" + String(c) + "\"}");
   } else {
-    server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Missing 'dir' or 'c' argument\"}");
+    server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Missing 'dir', 'c' or 'x'/'y' argument\"}");
   }
 }
 
