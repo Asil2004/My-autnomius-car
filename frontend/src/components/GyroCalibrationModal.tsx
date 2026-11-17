@@ -22,6 +22,7 @@ export const GyroCalibrationModal: React.FC<GyroCalibrationModalProps> = ({ onCl
   const [headingState, setHeadingState] = useState<HeadingState | null>(() => headingService.getState());
   const [details, setDetails] = useState(() => headingService.getDetails());
   const [manualOffset, setManualOffset] = useState<number>(() => headingService.getOffset());
+  const [inverted, setInvertedState] = useState<boolean>(() => headingService.getInverted());
   const [driftTesting, setDriftTesting] = useState(false);
   const [driftResult, setDriftResult] = useState<{ bias: number; status: 'good' | 'warn' } | null>(null);
   const [driftProgress, setDriftProgress] = useState(0);
@@ -32,10 +33,12 @@ export const GyroCalibrationModal: React.FC<GyroCalibrationModalProps> = ({ onCl
     const unsub = headingService.subscribe((s) => {
       setHeadingState(s);
       setDetails(headingService.getDetails());
+      setInvertedState(headingService.getInverted());
     });
 
     const timer = setInterval(() => {
       setDetails(headingService.getDetails());
+      setInvertedState(headingService.getInverted());
     }, 100);
 
     return () => {
@@ -48,6 +51,16 @@ export const GyroCalibrationModal: React.FC<GyroCalibrationModalProps> = ({ onCl
     setSaveBanner(text);
     setTimeout(() => setSaveBanner(null), 2500);
   };
+
+  // Yo'nalishni teskarisiga o'girish (Invert / Qarama-qarshi aylanishni to'g'rilash)
+  const handleToggleInvert = useCallback(() => {
+    const next = headingService.toggleInverted();
+    setInvertedState(next);
+    showBanner(next 
+      ? "Yo'nalish teskarisiga o'girildi (Qarama-qarshi / Inverted)!" 
+      : "Yo'nalish standart holatga qaytarildi (Normal)!"
+    );
+  }, []);
 
   // 1. Joriy burchakni 0° (Robotning to'g'riga yo'nalishi) deb belgilash
   const handleZeroHeading = useCallback(() => {
@@ -283,6 +296,38 @@ export const GyroCalibrationModal: React.FC<GyroCalibrationModalProps> = ({ onCl
                 ⚙️ ESP32 Kalibrlash
               </button>
             </div>
+          </div>
+
+          {/* YO'NALISH POLARIZATSIYASI (BURILISH YO'NALISHINI TESKARI O'GIRISH) */}
+          <div className="p-3 bg-tactical-900/80 rounded-xl border border-indigo-500/40 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-indigo-300 flex items-center gap-1.5">
+                <RotateCcw className="w-4 h-4 text-indigo-400" />
+                <span>BURILISH YO'NALISHI (POLARIZATSIYA)</span>
+              </span>
+              <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${inverted ? 'bg-amber-950 text-amber-300 border border-amber-500/50' : 'bg-emerald-950 text-emerald-300 border border-emerald-500/50'}`}>
+                {inverted ? 'TESKARI (INVERTED)' : 'STANDART (ODDIY)'}
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Agar robot o'ngga burilganda kompas chapga (yoki aksincha) aylanayotgan bo'lsa, ushbu tugma orqali yo'nalishni teskarisiga o'giring:
+            </p>
+            <button
+              type="button"
+              onClick={handleToggleInvert}
+              className={`w-full py-2.5 px-3 rounded-lg font-bold flex items-center justify-center gap-2 transition-all active:scale-95 ${
+                inverted
+                  ? 'bg-amber-500 hover:bg-amber-400 text-black shadow-[0_0_15px_rgba(245,158,11,0.4)]'
+                  : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-[0_0_15px_rgba(99,102,241,0.4)]'
+              }`}
+            >
+              <RotateCcw className="w-4 h-4" />
+              <span>
+                {inverted
+                  ? "🔄 HOZIR TESKARI (STANDARTGA QAYTARISH)"
+                  : "🔄 YO'NALISHNI QARAMA-QARSHI (TESKARI) O'GIRISH"}
+              </span>
+            </button>
           </div>
 
           {/* 1-QADAM: 0° GA TARA SOZLASH (ASOSIY TUGMA) */}

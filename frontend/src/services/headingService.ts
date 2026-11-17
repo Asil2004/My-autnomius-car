@@ -30,10 +30,13 @@ export interface HeadingState {
   pitch?: number;
   /** Gorizontal egilish (Roll, gamma) */
   roll?: number;
+  /** Yo'nalish teskarisiga o'girilganmi (Invert / Qarama-qarshi) */
+  inverted?: boolean;
 }
 
 const MODE_KEY = 'qalqon.headingMode.v1';
 const OFFSET_KEY = 'qalqon.gyroOffset.v1';
+const INVERT_KEY = 'qalqon.gyroInverted.v1';
 const FRESH_MS: Record<Exclude<HeadingSource, 'none'>, number> = { imu: 2000, device: 1500, gps: 5000 };
 // Filtr vaqt doimiysi: kichik = tezroq javob, katta = silliqroq (IMU tezroq, kompas shovqinliroq)
 const TAU_MS: Record<Exclude<HeadingSource, 'none'>, number> = { imu: 80, device: 180, gps: 600 };
@@ -58,6 +61,7 @@ class HeadingService {
   private listeners = new Set<(s: HeadingState) => void>();
   private mode: HeadingMode = 'auto';
   private calibrationOffset = 0;
+  private inverted = false;
   private lastPitch = 0;
   private lastRoll = 0;
   private gyroAlphaRate = 0;
@@ -82,6 +86,15 @@ class HeadingService {
     } catch {
       /* standart: 0 */
     }
+
+    try {
+      const savedInverted = localStorage.getItem(INVERT_KEY);
+      if (savedInverted !== null) {
+        this.inverted = savedInverted === 'true';
+      }
+    } catch {
+      /* standart: false */
+    }
   }
 
   getMode() {
@@ -97,6 +110,26 @@ class HeadingService {
     }
     this.syncDeviceListener();
     this.emit();
+  }
+
+  /** Yo'nalish teskariligini (invert) olish */
+  getInverted(): boolean {
+    return this.inverted;
+  }
+
+  /** Yo'nalish teskariligini (invert) o'rnatish */
+  setInverted(inv: boolean) {
+    this.inverted = inv;
+    try {
+      localStorage.setItem(INVERT_KEY, String(inv));
+    } catch {}
+    this.emit();
+  }
+
+  /** Yo'nalish teskariligini almashtirish (toggle) */
+  toggleInverted(): boolean {
+    this.setInverted(!this.inverted);
+    return this.inverted;
   }
 
   /** Kalibrlash ofsetini olish */
@@ -119,7 +152,8 @@ class HeadingService {
   zeroCurrentHeading(): number {
     const src = this.pick();
     const raw = src !== 'none' ? this.ch[src].last : 0;
-    this.setOffset(raw);
+    const effective = this.inverted ? norm(360 - raw) : norm(raw);
+    this.setOffset(effective);
     return this.calibrationOffset;
   }
 
@@ -129,7 +163,8 @@ class HeadingService {
   calibrateTo(targetDeg: number): number {
     const src = this.pick();
     const raw = src !== 'none' ? this.ch[src].last : 0;
-    const newOffset = norm(raw - targetDeg);
+    const effective = this.inverted ? norm(360 - raw) : norm(raw);
+    const newOffset = norm(effective - targetDeg);
     this.setOffset(newOffset);
     return newOffset;
   }
@@ -152,20 +187,23 @@ class HeadingService {
     source: HeadingSource;
     mode: HeadingMode;
     gyroAlphaRate: number;
+    inverted: boolean;
   } {
     const st = this.getState();
     const src = this.pick();
     const raw = src !== 'none' ? this.ch[src].last : 0;
+    const effective = this.inverted ? norm(360 - raw) : norm(raw);
     return {
       heading: st ? st.heading : 0,
-      rawHeading: Math.round(raw * 10) / 10,
+      rawHeading: Math.round(effective * 10) / 10,
       offset: this.calibrationOffset,
       pitch: this.lastPitch,
       roll: this.lastRoll,
       rate: st ? st.rate : 0,
       source: src,
       mode: this.mode,
-      gyroAlphaRate: this.gyroAlphaRate
+      gyroAlphaRate: this.inverted ? -this.gyroAlphaRate : this.gyroAlphaRate,
+      inverted: this.inverted
     };
   }
 
@@ -269,16 +307,19 @@ class HeadingService {
     const src = this.pick();
     if (src === 'none') return null;
     const c = this.ch[src];
-    const calibrated = norm(c.last - this.calibrationOffset);
+    const effectiveRaw = this.inverted ? norm(360 - c.last) : norm(c.last);
+    const calibrated = norm(effectiveRaw - this.calibrationOffset);
+    const effectiveRate = this.inverted ? -c.rate : c.rate;
     return {
       heading: Math.round(calibrated * 10) / 10,
-      rawHeading: Math.round(c.last * 10) / 10,
+      rawHeading: Math.round(effectiveRaw * 10) / 10,
       source: src,
-      rate: Math.round(c.rate * 10) / 10,
+      rate: Math.round(effectiveRate * 10) / 10,
       t: c.t,
       offset: this.calibrationOffset,
       pitch: this.lastPitch,
-      roll: this.lastRoll
+      roll: this.lastRoll,
+      inverted: this.inverted
     };
   }
 

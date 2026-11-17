@@ -9,7 +9,8 @@ import {
   Terminal,
   Save,
   Compass,
-  Target
+  Target,
+  RotateCcw
 } from 'lucide-react';
 import { headingService, type HeadingState } from '../services/headingService';
 import { GyroCalibrationModal } from './GyroCalibrationModal';
@@ -135,6 +136,21 @@ export const SettingsView: React.FC = () => {
           >
             <Target className="w-4 h-4 text-police-cyan" />
             <span>Tezkor 0° (Oldinga)</span>
+          </button>
+
+          <button
+            onClick={() => {
+              headingService.toggleInverted();
+              tacticalAudio.playClick();
+            }}
+            className={`px-3 py-2 rounded-lg font-bold text-xs flex items-center gap-1.5 border transition-all active:scale-95 ${
+              headingService.getInverted()
+                ? 'bg-amber-950 border-amber-500 text-amber-300'
+                : 'bg-tactical-800 border-tactical-700 text-slate-300'
+            }`}
+          >
+            <RotateCcw className="w-4 h-4 text-amber-400" />
+            <span>Yo'nalish: {headingService.getInverted() ? 'Teskari (Invert)' : 'Standart'}</span>
           </button>
         </div>
       </div>
