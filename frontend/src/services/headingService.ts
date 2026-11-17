@@ -32,11 +32,22 @@ export interface HeadingState {
   roll?: number;
   /** Yo'nalish teskarisiga o'girilganmi (Invert / Qarama-qarshi) */
   inverted?: boolean;
+  /** Datchik montaj burchagi (0, 90, 180, 270) */
+  mountingAngle?: number;
+  pitchOffset?: number;
+  rollOffset?: number;
+  invertPitch?: boolean;
+  invertRoll?: boolean;
 }
 
 const MODE_KEY = 'qalqon.headingMode.v1';
 const OFFSET_KEY = 'qalqon.gyroOffset.v1';
 const INVERT_KEY = 'qalqon.gyroInverted.v1';
+const MOUNT_KEY = 'qalqon.gyroMountAngle.v1';
+const PITCH_INV_KEY = 'qalqon.gyroPitchInv.v1';
+const ROLL_INV_KEY = 'qalqon.gyroRollInv.v1';
+const PITCH_OFF_KEY = 'qalqon.gyroPitchOff.v1';
+const ROLL_OFF_KEY = 'qalqon.gyroRollOff.v1';
 const FRESH_MS: Record<Exclude<HeadingSource, 'none'>, number> = { imu: 2000, device: 1500, gps: 5000 };
 // Filtr vaqt doimiysi: kichik = tezroq javob, katta = silliqroq (IMU tezroq, kompas shovqinliroq)
 const TAU_MS: Record<Exclude<HeadingSource, 'none'>, number> = { imu: 80, device: 180, gps: 600 };
@@ -62,6 +73,11 @@ class HeadingService {
   private mode: HeadingMode = 'auto';
   private calibrationOffset = 0;
   private inverted = false;
+  private mountingAngle = 0; // 0, 90, 180, 270
+  private invertPitch = false;
+  private invertRoll = false;
+  private pitchOffset = 0;
+  private rollOffset = 0;
   private lastPitch = 0;
   private lastRoll = 0;
   private gyroAlphaRate = 0;
@@ -95,6 +111,40 @@ class HeadingService {
     } catch {
       /* standart: false */
     }
+
+    try {
+      const ma = localStorage.getItem(MOUNT_KEY);
+      if (ma !== null) {
+        const p = parseFloat(ma);
+        if (isFinite(p)) this.mountingAngle = norm(p);
+      }
+    } catch {}
+
+    try {
+      const pi = localStorage.getItem(PITCH_INV_KEY);
+      if (pi !== null) this.invertPitch = pi === 'true';
+    } catch {}
+
+    try {
+      const ri = localStorage.getItem(ROLL_INV_KEY);
+      if (ri !== null) this.invertRoll = ri === 'true';
+    } catch {}
+
+    try {
+      const po = localStorage.getItem(PITCH_OFF_KEY);
+      if (po !== null) {
+        const p = parseFloat(po);
+        if (isFinite(p)) this.pitchOffset = p;
+      }
+    } catch {}
+
+    try {
+      const ro = localStorage.getItem(ROLL_OFF_KEY);
+      if (ro !== null) {
+        const p = parseFloat(ro);
+        if (isFinite(p)) this.rollOffset = p;
+      }
+    } catch {}
   }
 
   getMode() {
@@ -132,6 +182,88 @@ class HeadingService {
     return this.inverted;
   }
 
+  /** Datchik montaj burchagini olish (0, 90, 180, 270) */
+  getMountingAngle(): number {
+    return this.mountingAngle;
+  }
+
+  /** Datchik montaj burchagini o'rnatish */
+  setMountingAngle(deg: number) {
+    this.mountingAngle = norm(deg);
+    try {
+      localStorage.setItem(MOUNT_KEY, String(this.mountingAngle));
+    } catch {}
+    this.emit();
+  }
+
+  /** Pitch (Old-Orqa) inversiyasini olish va o'rnatish */
+  getInvertPitch(): boolean {
+    return this.invertPitch;
+  }
+
+  setInvertPitch(inv: boolean) {
+    this.invertPitch = inv;
+    try {
+      localStorage.setItem(PITCH_INV_KEY, String(inv));
+    } catch {}
+    this.emit();
+  }
+
+  toggleInvertPitch(): boolean {
+    this.setInvertPitch(!this.invertPitch);
+    return this.invertPitch;
+  }
+
+  /** Roll (Chap-O'ng) inversiyasini olish va o'rnatish */
+  getInvertRoll(): boolean {
+    return this.invertRoll;
+  }
+
+  setInvertRoll(inv: boolean) {
+    this.invertRoll = inv;
+    try {
+      localStorage.setItem(ROLL_INV_KEY, String(inv));
+    } catch {}
+    this.emit();
+  }
+
+  toggleInvertRoll(): boolean {
+    this.setInvertRoll(!this.invertRoll);
+    return this.invertRoll;
+  }
+
+  getPitchOffset(): number {
+    return this.pitchOffset;
+  }
+
+  getRollOffset(): number {
+    return this.rollOffset;
+  }
+
+  /** Gorizontni nolga tekislash (Level TARA: Pitch & Roll ni 0.0° ga keltirish) */
+  zeroLevel() {
+    const rawP = this.invertPitch ? -this.lastPitch : this.lastPitch;
+    const rawR = this.invertRoll ? -this.lastRoll : this.lastRoll;
+    this.pitchOffset = Math.round(rawP * 10) / 10;
+    this.rollOffset = Math.round(rawR * 10) / 10;
+    try {
+      localStorage.setItem(PITCH_OFF_KEY, String(this.pitchOffset));
+      localStorage.setItem(ROLL_OFF_KEY, String(this.rollOffset));
+    } catch {}
+    this.emit();
+  }
+
+  /** Gorizont tekislash ofsetini tozalash */
+  resetLevel() {
+    this.pitchOffset = 0;
+    this.rollOffset = 0;
+    try {
+      localStorage.setItem(PITCH_OFF_KEY, '0');
+      localStorage.setItem(ROLL_OFF_KEY, '0');
+    } catch {}
+    this.emit();
+  }
+
   /** Kalibrlash ofsetini olish */
   getOffset(): number {
     return this.calibrationOffset;
@@ -152,7 +284,8 @@ class HeadingService {
   zeroCurrentHeading(): number {
     const src = this.pick();
     const raw = src !== 'none' ? this.ch[src].last : 0;
-    const effective = this.inverted ? norm(360 - raw) : norm(raw);
+    const mountedRaw = norm(raw + this.mountingAngle);
+    const effective = this.inverted ? norm(360 - mountedRaw) : mountedRaw;
     this.setOffset(effective);
     return this.calibrationOffset;
   }
@@ -163,7 +296,8 @@ class HeadingService {
   calibrateTo(targetDeg: number): number {
     const src = this.pick();
     const raw = src !== 'none' ? this.ch[src].last : 0;
-    const effective = this.inverted ? norm(360 - raw) : norm(raw);
+    const mountedRaw = norm(raw + this.mountingAngle);
+    const effective = this.inverted ? norm(360 - mountedRaw) : mountedRaw;
     const newOffset = norm(effective - targetDeg);
     this.setOffset(newOffset);
     return newOffset;
@@ -188,22 +322,37 @@ class HeadingService {
     mode: HeadingMode;
     gyroAlphaRate: number;
     inverted: boolean;
+    mountingAngle: number;
+    pitchOffset: number;
+    rollOffset: number;
+    invertPitch: boolean;
+    invertRoll: boolean;
   } {
     const st = this.getState();
     const src = this.pick();
     const raw = src !== 'none' ? this.ch[src].last : 0;
-    const effective = this.inverted ? norm(360 - raw) : norm(raw);
+    const mountedRaw = norm(raw + this.mountingAngle);
+    const effective = this.inverted ? norm(360 - mountedRaw) : mountedRaw;
+    const rawP = this.invertPitch ? -this.lastPitch : this.lastPitch;
+    const effP = Math.round((rawP - this.pitchOffset) * 10) / 10;
+    const rawR = this.invertRoll ? -this.lastRoll : this.lastRoll;
+    const effR = Math.round((rawR - this.rollOffset) * 10) / 10;
     return {
       heading: st ? st.heading : 0,
       rawHeading: Math.round(effective * 10) / 10,
       offset: this.calibrationOffset,
-      pitch: this.lastPitch,
-      roll: this.lastRoll,
+      pitch: effP,
+      roll: effR,
       rate: st ? st.rate : 0,
       source: src,
       mode: this.mode,
       gyroAlphaRate: this.inverted ? -this.gyroAlphaRate : this.gyroAlphaRate,
-      inverted: this.inverted
+      inverted: this.inverted,
+      mountingAngle: this.mountingAngle,
+      pitchOffset: this.pitchOffset,
+      rollOffset: this.rollOffset,
+      invertPitch: this.invertPitch,
+      invertRoll: this.invertRoll
     };
   }
 
@@ -307,9 +456,16 @@ class HeadingService {
     const src = this.pick();
     if (src === 'none') return null;
     const c = this.ch[src];
-    const effectiveRaw = this.inverted ? norm(360 - c.last) : norm(c.last);
+    const mountedRaw = norm(c.last + this.mountingAngle);
+    const effectiveRaw = this.inverted ? norm(360 - mountedRaw) : mountedRaw;
     const calibrated = norm(effectiveRaw - this.calibrationOffset);
     const effectiveRate = this.inverted ? -c.rate : c.rate;
+
+    const rawP = this.invertPitch ? -this.lastPitch : this.lastPitch;
+    const effP = Math.round((rawP - this.pitchOffset) * 10) / 10;
+    const rawR = this.invertRoll ? -this.lastRoll : this.lastRoll;
+    const effR = Math.round((rawR - this.rollOffset) * 10) / 10;
+
     return {
       heading: Math.round(calibrated * 10) / 10,
       rawHeading: Math.round(effectiveRaw * 10) / 10,
@@ -317,9 +473,14 @@ class HeadingService {
       rate: Math.round(effectiveRate * 10) / 10,
       t: c.t,
       offset: this.calibrationOffset,
-      pitch: this.lastPitch,
-      roll: this.lastRoll,
-      inverted: this.inverted
+      pitch: effP,
+      roll: effR,
+      inverted: this.inverted,
+      mountingAngle: this.mountingAngle,
+      pitchOffset: this.pitchOffset,
+      rollOffset: this.rollOffset,
+      invertPitch: this.invertPitch,
+      invertRoll: this.invertRoll
     };
   }
 
