@@ -111,6 +111,8 @@ class AutopilotService {
   private phaseSince = 0;
   private clearSince = 0;
   private turnDir: 'L' | 'R' = 'L';
+  private roundTrip = true;
+  private routeDir: 1 | -1 = 1;
   private state: AutopilotState = {
     active: false,
     phase: 'idle',
@@ -134,6 +136,14 @@ class AutopilotService {
     this.obstacles = p;
   }
 
+  setRoundTrip(enabled: boolean) {
+    this.roundTrip = enabled;
+  }
+
+  isRoundTrip(): boolean {
+    return this.roundTrip;
+  }
+
   isSending() {
     return this.sending;
   }
@@ -154,11 +164,20 @@ class AutopilotService {
     };
   }
 
-  start(route: AutopilotWaypoint[]) {
+  start(route: AutopilotWaypoint[], roundTrip = true) {
     if (route.length < 1) return;
+    this.roundTrip = roundTrip;
     this.route = route.map((p) => ({ ...p }));
+    this.routeDir = 1;
     // Robotga eng yaqin nuqtadan emas, birinchi (yashil) nuqtadan boshlanadi; agar robot allaqachon unda bo'lsa keyingisiga
-    this.set({ active: true, targetIndex: 0, total: this.route.length, bypassAttempts: 0, phase: 'driving', message: 'Avtopilot yoqildi' });
+    this.set({
+      active: true,
+      targetIndex: 0,
+      total: this.route.length,
+      bypassAttempts: 0,
+      phase: 'driving',
+      message: roundTrip ? 'Avtopilot yoqildi (Borib-qaytish faol)' : 'Avtopilot yoqildi'
+    });
     this.phaseSince = Date.now();
     this.lastSent = 'S';
     this.lastSentAt = 0;
@@ -216,28 +235,63 @@ class AutopilotService {
       return;
     }
 
-    // 2) Marshrut hisobi
+    // 2) Marshrut hisobi va borib-qaytish mantiqi
     let idx = this.state.targetIndex;
     const arriveR = Math.min(cfg.arriveMaxM, Math.max(cfg.arriveMinM, nav.accuracy * 0.8));
     let target = this.route[idx];
     let dist = distanceM(nav.lat, nav.lon, target.lat, target.lon);
+
     while (dist <= arriveR) {
-      if (idx >= this.route.length - 1) {
+      if (this.routeDir === 1 && idx >= this.route.length - 1) {
+        // Oxirgi nuqtaga yetdi
+        if (this.roundTrip && this.route.length > 1) {
+          // Orqaga qaytishni boshlash!
+          this.routeDir = -1;
+          idx = this.route.length - 2;
+          target = this.route[idx];
+          dist = distanceM(nav.lat, nav.lon, target.lat, target.lon);
+          this.enter('driving', 'Oxirgi manzilga yetdi! Boshlang‘ich nuqtaga qaytmoqda...');
+          break;
+        } else {
+          this.drive('S', true);
+          this.set({ distanceToTargetM: dist, distanceToEndM: dist });
+          if (this.timer) clearInterval(this.timer);
+          this.timer = null;
+          this.set({ active: false, phase: 'arrived', message: '✅ Manzilga yetib keldi' });
+          return;
+        }
+      } else if (this.routeDir === -1 && idx <= 0) {
+        // Boshlang'ich nuqtaga qaytib keldi
         this.drive('S', true);
         this.set({ distanceToTargetM: dist, distanceToEndM: dist });
         if (this.timer) clearInterval(this.timer);
         this.timer = null;
-        this.set({ active: false, phase: 'arrived', message: '✅ Manzilga yetib keldi' });
+        this.set({ active: false, phase: 'arrived', message: '✅ Boshlang‘ich nuqtaga to‘liq qaytib keldi' });
         return;
       }
-      idx++;
+
+      idx += this.routeDir;
+      if (idx < 0 || idx >= this.route.length) break;
       target = this.route[idx];
       dist = distanceM(nav.lat, nav.lon, target.lat, target.lon);
     }
+
     let rest = dist;
-    for (let i = idx + 1; i < this.route.length; i++) {
-      rest += distanceM(this.route[i - 1].lat, this.route[i - 1].lon, this.route[i].lat, this.route[i].lon);
+    if (this.routeDir === 1) {
+      for (let i = idx + 1; i < this.route.length; i++) {
+        rest += distanceM(this.route[i - 1].lat, this.route[i - 1].lon, this.route[i].lat, this.route[i].lon);
+      }
+      if (this.roundTrip) {
+        for (let i = this.route.length - 1; i > 0; i--) {
+          rest += distanceM(this.route[i].lat, this.route[i].lon, this.route[i - 1].lat, this.route[i - 1].lon);
+        }
+      }
+    } else {
+      for (let i = idx; i > 0; i--) {
+        rest += distanceM(this.route[i].lat, this.route[i].lon, this.route[i - 1].lat, this.route[i - 1].lon);
+      }
     }
+
     const err = wrap180(bearingDeg(nav.lat, nav.lon, target.lat, target.lon) - nav.heading);
     this.set({ targetIndex: idx, distanceToTargetM: dist, distanceToEndM: rest, bearingErrorDeg: Math.round(err) });
 
@@ -319,7 +373,8 @@ class AutopilotService {
     // To'siqsiz uzoq yurilsa chetlab o'tish hisobi nolga qaytadi
     if (this.state.bypassAttempts && phase === 'driving' && inPhase > 10_000) this.set({ bypassAttempts: 0 });
     this.drive(cmd);
-    this.enter('driving', `${idx + 1}/${this.route.length}-nuqtaga: ${dist < 1000 ? `${Math.round(dist)} m` : `${(dist / 1000).toFixed(2)} km`}`);
+    const dirText = this.routeDir === 1 ? 'Borish' : 'Qaytish';
+    this.enter('driving', `${dirText} (${idx + 1}/${this.route.length}-nuqta): ${dist < 1000 ? `${Math.round(dist)} m` : `${(dist / 1000).toFixed(2)} km`}`);
   }
 }
 

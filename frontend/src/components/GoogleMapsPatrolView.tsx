@@ -14,7 +14,9 @@ import {
   PenLine,
   Check,
   Undo2,
-  Sliders
+  Sliders,
+  Play,
+  RotateCcw
 } from 'lucide-react';
 import { GyroCalibrationModal } from './GyroCalibrationModal';
 import { useRobot } from '../context/RobotContext';
@@ -214,6 +216,15 @@ export const GoogleMapsPatrolView: React.FC = () => {
   const previewLineRef = useRef<L.Polyline | null>(null);
   const [drawMode, setDrawMode] = useState(false);
 
+  // Borib-qaytish va Vizual patrul holati
+  const [isPatrolling, setIsPatrolling] = useState(false);
+  const isPatrollingRef = useRef(false);
+  isPatrollingRef.current = isPatrolling;
+  const patrolIntervalRef = useRef<any>(null);
+  const currentPathIndexRef = useRef<number>(0);
+  const patrolDirRef = useRef<1 | -1>(1);
+  const [roundTrip, setRoundTrip] = useState(true);
+
   const routeLengthM = useCallback((pts: Waypoint[]) => {
     let sum = 0;
     for (let i = 1; i < pts.length; i++) {
@@ -232,6 +243,8 @@ export const GoogleMapsPatrolView: React.FC = () => {
     const pts = waypointsRef.current;
     setWaypoints([...pts]);
     detailedNodesRef.current = pts.map(p => [p.lat, p.lon]);
+    currentPathIndexRef.current = 0;
+    patrolDirRef.current = 1;
     renderPolyline(detailedNodesRef.current);
     if (pts.length === 0) setRoutingStatus("Marshrut yo'q. \"Marshrut chizish\" tugmasini bosing.");
     else if (pts.length === 1) setRoutingStatus('Boshlang\'ich nuqta qo\'yildi. Keyingi nuqtani bosing.');
@@ -377,7 +390,7 @@ export const GoogleMapsPatrolView: React.FC = () => {
   useEffect(() => {
     if (isOperator) return;
     return navigationService.subscribe((s) => {
-      if (!s.initialized) return;
+      if (!s.initialized || isPatrollingRef.current) return;
       applyNav(s);
     });
   }, [isOperator, applyNav]);
@@ -490,7 +503,92 @@ export const GoogleMapsPatrolView: React.FC = () => {
     teleport(lat, lon, { label: isOperator ? watchedRobot || undefined : undefined });
   }, [gps.latitude, gps.longitude, isOperator, startRealGPS, teleport, watchedRobot]);
 
-  // HAQIQIY GPS AVTOPILOT (ESP32): chizilgan marshrut bo'ylab robotni haqiqatan yurgizadi
+  // 1. DEMO / VIZUAL PATRUL: chizilgan chiziq bo'yicha robot markerini borib-qaytarish
+  const startPatrol = useCallback(() => {
+    if (detailedNodesRef.current.length < 2) {
+      setRoutingStatus("Avval \"Marshrut chizish\" bilan kamida 2 ta nuqta qo'ying.");
+      return;
+    }
+    if (drawModeRef.current) setDrawing(false);
+
+    setIsPatrolling(true);
+    patrolDirRef.current = 1;
+    currentPathIndexRef.current = 0;
+
+    if (patrolIntervalRef.current) clearInterval(patrolIntervalRef.current);
+
+    patrolIntervalRef.current = setInterval(() => {
+      const nodes = detailedNodesRef.current;
+      if (nodes.length === 0) return;
+
+      setTelemetry(prev => {
+        const target = nodes[currentPathIndexRef.current];
+        const dLat = target[0] - prev.lat;
+        const dLon = target[1] - prev.lon;
+        const dist = Math.hypot(dLat, dLon);
+
+        if (dist < 0.000025) {
+          // Nuqtaga yetdi: keyingisiga yoki orqaga qaytish
+          let next = currentPathIndexRef.current + patrolDirRef.current;
+          if (next >= nodes.length) {
+            if (roundTrip) {
+              patrolDirRef.current = -1;
+              next = nodes.length - 2;
+              setRoutingStatus("🔄 Oxirgi nuqtaga yetdi. Boshlang'ich nuqtaga qaytmoqda...");
+            } else {
+              stopPatrol();
+              setRoutingStatus("✅ Manzilga yetib keldi.");
+              return prev;
+            }
+          } else if (next < 0) {
+            if (roundTrip) {
+              patrolDirRef.current = 1;
+              next = 1;
+              setRoutingStatus("🔄 Boshlang'ich nuqtaga qaytdi. Qayta aylanish boshlandi.");
+            } else {
+              stopPatrol();
+              setRoutingStatus("✅ Boshlang'ich nuqtaga qaytib keldi.");
+              return prev;
+            }
+          }
+          currentPathIndexRef.current = Math.max(0, Math.min(nodes.length - 1, next));
+          return prev;
+        }
+
+        const targetHeading = (Math.atan2(dLon, dLat) * 180 / Math.PI + 360) % 360;
+        let headingDiff = targetHeading - prev.heading;
+        if (headingDiff > 180) headingDiff -= 360;
+        if (headingDiff < -180) headingDiff += 360;
+
+        const newHeading = (prev.heading + headingDiff * 0.25 + 360) % 360;
+        const step = 0.000015; // ~1.5m qadam (10 Hz da ~1.5 m/s)
+        const newLat = prev.lat + Math.cos(newHeading * Math.PI / 180) * step;
+        const newLon = prev.lon + Math.sin(newHeading * Math.PI / 180) * step;
+
+        setRobotVisual(newLat, newLon, newHeading);
+
+        return {
+          ...prev,
+          lat: newLat,
+          lon: newLon,
+          heading: newHeading,
+          speed: 1.2
+        };
+      });
+    }, 100);
+  }, [setDrawing, setRobotVisual, roundTrip]);
+
+  const stopPatrol = useCallback(() => {
+    setIsPatrolling(false);
+    if (patrolIntervalRef.current) {
+      clearInterval(patrolIntervalRef.current);
+      patrolIntervalRef.current = null;
+    }
+    setTelemetry(prev => ({ ...prev, speed: 0 }));
+  }, []);
+  stopPatrolRef.current = stopPatrol;
+
+  // 2. HAQIQIY GPS AVTOPILOT (ESP32): chizilgan marshrut bo'ylab robotni haqiqatan yurgizadi
   const [ap, setAp] = useState<AutopilotState>(() => autopilotService.getState());
   useEffect(() => autopilotService.subscribe(setAp), []);
   const startAutopilot = useCallback(() => {
@@ -499,8 +597,9 @@ export const GoogleMapsPatrolView: React.FC = () => {
       return;
     }
     if (drawModeRef.current) setDrawing(false);
-    autopilotService.start(waypointsRef.current);
-  }, [setDrawing]);
+    stopPatrol();
+    autopilotService.start(waypointsRef.current, roundTrip);
+  }, [setDrawing, stopPatrol, roundTrip]);
 
   // Layer switch
   const switchMapLayer = (type: 'hybrid' | 'roadmap') => {
@@ -762,11 +861,63 @@ export const GoogleMapsPatrolView: React.FC = () => {
               );
             })()}
 
-            {/* HAQIQIY GPS AVTOPILOT */}
+            {/* Borib-Qaytish Rejimi (Round-trip) Switch */}
+            <div className="flex items-center justify-between p-2 rounded-lg bg-tactical-900 border border-tactical-800">
+              <div className="flex items-center gap-1.5">
+                <RotateCcw className={`w-3.5 h-3.5 ${roundTrip ? 'text-amber-400' : 'text-slate-400'}`} />
+                <span className="text-[11px] font-bold text-slate-200">Borib-Qaytish (Round-trip)</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRoundTrip(!roundTrip)}
+                className={`px-2 py-0.5 rounded text-[10px] font-bold border transition-all ${
+                  roundTrip
+                    ? 'bg-amber-500/20 border-amber-500 text-amber-300 shadow-[0_0_8px_rgba(245,158,11,0.3)]'
+                    : 'bg-tactical-950 border-tactical-700 text-slate-400'
+                }`}
+              >
+                {roundTrip ? 'FAOL (Borib-Qaytadi)' : 'O‘CHIQ (Faqat Boradi)'}
+              </button>
+            </div>
+
+            {/* 1. XARITADA VIZUAL PATRUL (Chizilgan chiziq bo'yicha borib-qaytish) */}
+            <div className="border border-police-cyan/40 bg-tactical-900/60 rounded-lg p-2 flex flex-col gap-1.5">
+              <div className="text-[10px] font-mono font-bold text-police-cyan uppercase tracking-wider flex items-center justify-between">
+                <span>1. Xaritada Vizual Patrul</span>
+                <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${isPatrolling ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/40 animate-pulse' : 'bg-tactical-950 text-slate-400'}`}>
+                  {isPatrolling ? 'HARAKATDA' : 'KUTISHDA'}
+                </span>
+              </div>
+              <div className="text-[10px] text-slate-300 leading-tight">
+                Chizilgan chiziq bo'yicha robot markerini borib-qaytarish (GPS signali bo'lmasa ham xaritada sinash):
+              </div>
+              {isPatrolling ? (
+                <button
+                  type="button"
+                  onClick={stopPatrol}
+                  className="w-full py-2 bg-rose-600 hover:bg-rose-500 text-white rounded font-mono text-xs font-bold flex items-center justify-center gap-1.5 shadow transition-all active:scale-95"
+                >
+                  <Square className="w-3.5 h-3.5 fill-white" />
+                  VIZUAL PATRULNI TO'XTATISH
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={startPatrol}
+                  disabled={waypoints.length < 2}
+                  className="w-full py-2 bg-police-blue hover:bg-blue-600 disabled:opacity-40 text-white rounded font-mono text-xs font-bold flex items-center justify-center gap-1.5 shadow transition-all active:scale-95"
+                >
+                  <Play className="w-3.5 h-3.5 fill-white" />
+                  XARITADA BORIB-QAYTISHNI BOSHLASH
+                </button>
+              )}
+            </div>
+
+            {/* 2. HAQIQIY GPS AVTOPILOT */}
             {!isOperator && (
               <div className="border border-emerald-500/40 bg-emerald-950/30 rounded-lg p-2 flex flex-col gap-1.5">
                 <div className="text-[10px] font-mono font-bold text-emerald-300 uppercase tracking-wider flex items-center justify-between">
-                  <span>GPS Avtopilot (ESP32)</span>
+                  <span>2. GPS Avtopilot (ESP32)</span>
                   <span className={ap.active ? 'text-emerald-400' : ap.phase === 'arrived' ? 'text-sky-300' : ap.phase === 'failed' ? 'text-rose-400' : 'text-slate-400'}>
                     {ap.active ? `YURMOQDA · ${ap.command}` : ap.phase === 'arrived' ? 'YETDI' : ap.phase === 'failed' ? "TO'XTADI" : "O'CHIQ"}
                   </span>
@@ -783,24 +934,26 @@ export const GoogleMapsPatrolView: React.FC = () => {
                 )}
                 {ap.active ? (
                   <button
+                    type="button"
                     onClick={() => autopilotService.stop('Operator to‘xtatdi')}
-                    className="w-full py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded font-mono text-sm font-black flex items-center justify-center gap-1.5 shadow"
+                    className="w-full py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded font-mono text-sm font-black flex items-center justify-center gap-1.5 shadow transition-all active:scale-95"
                   >
                     <Square className="w-4 h-4 fill-white" />
                     AVTOPILOTNI TO'XTATISH
                   </button>
                 ) : (
                   <button
+                    type="button"
                     onClick={startAutopilot}
                     disabled={waypoints.length < 1}
-                    className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded font-mono text-xs font-bold flex items-center justify-center gap-1.5 shadow"
+                    className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded font-mono text-xs font-bold flex items-center justify-center gap-1.5 shadow transition-all active:scale-95"
                   >
                     <Navigation className="w-3.5 h-3.5" />
-                    Manzilga haqiqiy yurish
+                    ESP32 BILAN HAQIQIY YURISH {roundTrip ? '(BORIB-QAYTISH)' : ''}
                   </button>
                 )}
                 <div className="text-[9px] font-mono text-slate-400 leading-snug">
-                  Planshet GPS + giroskop bo'yicha ESP32'ga buyruq beradi. To'siq bo'lsa to'xtaydi va chetlab o'tadi. Kamera to'siq tahlili istalgan bo'limda fonda ishlaydi. Joystik yoki klaviatura avtopilotni darhol o'chiradi.
+                  Robot planshet GPS + MPU-6050 giroskopi bo'yicha ESP32'ga buyruq beradi. {roundTrip ? "Oxirgi nuqtaga yetgach, o'sha chiziq bo'ylab orqaga qaytadi." : "Oxirgi nuqtada to'xtaydi."}
                 </div>
               </div>
             )}
