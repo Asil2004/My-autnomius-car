@@ -7,7 +7,9 @@ import {
   Cpu,
   Usb,
   CheckCircle2,
-  XCircle
+  XCircle,
+  Wifi,
+  Radio
 } from 'lucide-react';
 import { lidarSerialService, type LidarFrameData } from '../services/lidarSerialService';
 import type { LidarPoint } from '../types/robot';
@@ -15,14 +17,24 @@ import type { LidarPoint } from '../types/robot';
 export const LidarRadarView: React.FC = () => {
   const { battery, addLog } = useRobot();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  // Nuqtalar faqat haqiqiy LiDAR dan (Web Serial). Port yopiq bo'lsa radar bo'sh
+  // Nuqtalar faqat haqiqiy LiDAR dan (Web Serial yoki WebSocket). Port yopiq bo'lsa radar bo'sh
   const pointsRef = useRef<LidarPoint[]>([]);
 
-  // Web Serial Port Holati
-  const [isPortOpen, setIsPortOpen] = useState(false);
+  // Port Holati
+  const [isPortOpen, setIsPortOpen] = useState(() => lidarSerialService.isOpen());
   const [isOpening, setIsOpening] = useState(false);
-  const [portName, setPortName] = useState<string>('');
+  const [portName, setPortName] = useState<string>(() => lidarSerialService.getPortName());
   const [portError, setPortError] = useState<string | null>(null);
+
+  // WebSocket URL (Raspberry Pi 5 yoki PC)
+  const [wsUrl, setWsUrl] = useState<string>(() => {
+    const saved = typeof window !== 'undefined' ? localStorage.getItem('qalqon_lidar_ws') : null;
+    if (saved) return saved;
+    const piIp = typeof window !== 'undefined' ? localStorage.getItem('qalqon_pi_ip') : null;
+    if (piIp) return `ws://${piIp}:8000/ws`;
+    const host = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
+    return `ws://${host}:8000/ws`;
+  });
 
   // Real-vaqt telemetriyasi
   const [liveRateHz, setLiveRateHz] = useState<number>(10.0);
@@ -32,7 +44,24 @@ export const LidarRadarView: React.FC = () => {
 
   const isSerialSupported = lidarSerialService.isSupported();
 
-  // Portni ochish (Web Serial API @ 230400 bps)
+  // Kadrlar kelganda qabul qilish listeneri
+  useEffect(() => {
+    lidarSerialService.onFrame((data: LidarFrameData) => {
+      pointsRef.current = data.points;
+      setHardwareSectors(data.sectors);
+      setLiveRateHz(data.rateHz);
+      setLiveSpeedRpm(data.speedRpm);
+      setLivePackets(data.packetsReceived);
+      setIsPortOpen(true);
+      setPortName(lidarSerialService.getPortName());
+    });
+    if (lidarSerialService.isOpen()) {
+      setIsPortOpen(true);
+      setPortName(lidarSerialService.getPortName());
+    }
+  }, []);
+
+  // Web Serial Portni ochish (Web Serial API @ 230400 bps)
   const handleOpenPort = useCallback(async () => {
     try {
       setIsOpening(true);
@@ -42,15 +71,6 @@ export const LidarRadarView: React.FC = () => {
       setIsPortOpen(true);
       setPortName(res.portName);
       addLog('SERIAL', 'success', `LiDAR porti ochildi: ${res.portName} @ 230400 bps`);
-
-      // Kadrlar kelganda qabul qilish
-      lidarSerialService.onFrame((data: LidarFrameData) => {
-        pointsRef.current = data.points;
-        setHardwareSectors(data.sectors);
-        setLiveRateHz(data.rateHz);
-        setLiveSpeedRpm(data.speedRpm);
-        setLivePackets(data.packetsReceived);
-      });
     } catch (err: any) {
       const msg = err?.message || 'LiDAR portini ochishda xatolik yuz berdi';
       setPortError(msg);
@@ -60,6 +80,25 @@ export const LidarRadarView: React.FC = () => {
     }
   }, [addLog]);
 
+  // WebSocket (Raspberry Pi 5 / PC) orqali ulanish
+  const handleConnectWs = useCallback(async () => {
+    try {
+      setIsOpening(true);
+      setPortError(null);
+
+      const res = await lidarSerialService.connectWebSocket(wsUrl);
+      setIsPortOpen(true);
+      setPortName(res.portName);
+      addLog('SERIAL', 'success', `LiDAR WebSocket ko'prigiga ulandi: ${res.portName}`);
+    } catch (err: any) {
+      const msg = err?.message || 'WebSocket ko‘prigiga ulanishda xatolik';
+      setPortError(msg);
+      addLog('SERIAL', 'error', `LiDAR xatosi: ${msg}`);
+    } finally {
+      setIsOpening(false);
+    }
+  }, [wsUrl, addLog]);
+
   // Portni yopish
   const handleClosePort = useCallback(async () => {
     try {
@@ -68,18 +107,11 @@ export const LidarRadarView: React.FC = () => {
       setPortName('');
       setHardwareSectors(null);
       pointsRef.current = [];
-      addLog('SERIAL', 'info', 'LiDAR apparat porti yopildi.');
+      addLog('SERIAL', 'info', 'LiDAR apparat ulanishi uzildi.');
     } catch (err: any) {
       console.warn('Portni yopishda xatolik:', err);
     }
   }, [addLog]);
-
-  // Komponent yopilganda portni tozalash
-  useEffect(() => {
-    return () => {
-      lidarSerialService.closePort().catch(() => {});
-    };
-  }, []);
 
   // HTML5 Canvas Radar render sikli (Barqaror 30 FPS)
   useEffect(() => {
@@ -352,13 +384,13 @@ export const LidarRadarView: React.FC = () => {
 
           <div className="space-y-2 font-mono text-xs mb-3">
             <div className="flex justify-between p-2 rounded bg-tactical-950 border border-tactical-800">
-              <span className="text-slate-400">Port turi:</span>
-              <span className="text-white font-bold">Web Serial (USB-UART)</span>
+              <span className="text-slate-400">Ulanish usuli:</span>
+              <span className="text-white font-bold">{portName || (isSerialSupported ? 'Web Serial / WebSocket' : 'WebSocket')}</span>
             </div>
 
             <div className="flex justify-between p-2 rounded bg-tactical-950 border border-tactical-800">
-              <span className="text-slate-400">Baudrate:</span>
-              <span className="text-amber-400 font-bold">230400 bps</span>
+              <span className="text-slate-400">Baudrate / Protokol:</span>
+              <span className="text-amber-400 font-bold">230400 bps / STL-19P</span>
             </div>
 
             <div className="flex justify-between p-2 rounded bg-tactical-950 border border-tactical-800">
@@ -374,39 +406,56 @@ export const LidarRadarView: React.FC = () => {
             </div>
           </div>
 
-          {/* Asosiy Portni Ochish / Yopish Tugmasi */}
+          {/* Asosiy Portni Ochish / Yopish Tugmalari */}
           {isPortOpen ? (
             <button
               onClick={handleClosePort}
               className="w-full py-2.5 px-3 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-mono font-bold text-xs flex items-center justify-center gap-2 shadow-lg transition-all active:scale-95"
             >
               <XCircle className="w-4 h-4 text-white" />
-              <span>LIDAR PORTINI YOPISH (DISCONNECT)</span>
+              <span>LIDAR ALOQASINI UZISH (DISCONNECT)</span>
             </button>
           ) : (
-            <button
-              onClick={handleOpenPort}
-              disabled={isOpening || !isSerialSupported}
-              className={`w-full py-2.5 px-3 rounded-lg font-mono font-bold text-xs flex items-center justify-center gap-2 transition-all active:scale-95 ${
-                !isSerialSupported
-                  ? 'bg-tactical-800 text-slate-500 cursor-not-allowed border border-tactical-700'
-                  : 'bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-400 shadow-[0_0_15px_rgba(0,230,118,0.6)]'
-              }`}
-            >
-              <Usb className="w-4 h-4 text-white" />
-              <span>
-                {!isSerialSupported
-                  ? "Web Serial qo'llab-quvvatlanmaydi"
-                  : isOpening
-                  ? 'Port qidirilmoqda...'
-                  : '⚡ LIDAR PORTINI OCHISH (COM / USB)'}
-              </span>
-            </button>
-          )}
+            <div className="flex flex-col gap-2.5">
+              {/* 1. Raspberry Pi 5 / PC WebSocket orqali (Planshet va tarmoq uchun ideal) */}
+              <div className="p-2.5 bg-tactical-950 rounded-lg border border-police-cyan/40 flex flex-col gap-2">
+                <div className="text-[11px] font-bold text-police-cyan flex items-center gap-1.5">
+                  <Wifi className="w-3.5 h-3.5" />
+                  <span>Raspberry Pi 5 LiDAR Ko'prigi (Tarmoq / Wi-Fi)</span>
+                </div>
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    value={wsUrl}
+                    onChange={(e) => setWsUrl(e.target.value)}
+                    placeholder="ws://192.168.1.100:8000/ws"
+                    className="flex-1 bg-tactical-900 border border-tactical-700 rounded px-2 py-1 text-xs text-slate-200 font-mono focus:outline-none focus:border-police-cyan"
+                  />
+                  <button
+                    onClick={handleConnectWs}
+                    disabled={isOpening}
+                    className="px-3 py-1 bg-police-blue hover:bg-blue-600 text-white text-xs font-bold rounded flex items-center gap-1 shadow transition-all active:scale-95 shrink-0"
+                  >
+                    <Radio className="w-3.5 h-3.5" />
+                    <span>Ulash</span>
+                  </button>
+                </div>
+                <div className="text-[9px] text-slate-400">
+                  Planshet (Redmi Pad) va barcha qurilmalar uchun. Pi 5 da <code>python lidar_bridge_server.py</code> ishga tushiriladi.
+                </div>
+              </div>
 
-          {!isSerialSupported && (
-            <div className="mt-2 text-[10px] font-mono text-amber-400/90 text-center">
-              * Eslatma: Web Serial API uchun Chrome yoki Edge brauzeridan foydalaning.
+              {/* 2. Web Serial API (Faqat kompyuter/desktop brauzerlar uchun) */}
+              {isSerialSupported && (
+                <button
+                  onClick={handleOpenPort}
+                  disabled={isOpening}
+                  className="w-full py-2 px-3 rounded-lg font-mono font-bold text-xs flex items-center justify-center gap-2 bg-emerald-700 hover:bg-emerald-600 text-white border border-emerald-500 shadow transition-all active:scale-95"
+                >
+                  <Usb className="w-3.5 h-3.5 text-white" />
+                  <span>{isOpening ? 'Port qidirilmoqda...' : '⚡ BEVOSITA USB/COM PORT (WEB SERIAL)'}</span>
+                </button>
+              )}
             </div>
           )}
         </div>

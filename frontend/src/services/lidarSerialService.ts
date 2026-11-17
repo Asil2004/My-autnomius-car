@@ -1,8 +1,9 @@
 /**
  * =============================================================================
- * QALQON ROBOT — LDROBOT STL-19P (LD19 / D300) WEB SERIAL PORT DRAYVERI
- * Model: LDROBOT STL-19P (360° DToF Laser Range Finder)
- * Protokol: UART 230400 bps, 47 baytli paketlar (Header: 0x54 0x2C), 10 Hz, 4.5 kHz
+ * QALQON ROBOT — LDROBOT STL-19P (LD19 / D300) 360° LIDAR DRAYVERI
+ * Qo'llab-quvvatlaydi:
+ *   1. Web Serial API (Desktop Chrome / Edge / Pi Chromium orqali to'g'ridan-to'g'ri USB/COM port);
+ *   2. WebSocket Ko'prigi (Raspberry Pi 5 yoki PC lidar_bridge_server.py orqali Wi-Fi tarmoqda).
  * =============================================================================
  */
 
@@ -22,12 +23,28 @@ export interface LidarFrameData {
   crcErrors: number;
 }
 
+export interface LidarObstacleInfo {
+  frontCm: number;
+  rightCm: number;
+  rearCm: number;
+  leftCm: number;
+  minDistM: number;
+  minAngleDeg: number;
+  isBlocked: boolean;
+  evasion: 'CLEAR' | 'LEFT' | 'RIGHT' | 'REVERSE';
+  lastUpdated: number;
+  source: 'serial' | 'websocket' | 'none';
+}
+
 type FrameCallback = (data: LidarFrameData) => void;
 
 class LidarSerialService {
   private port: any = null;
   private reader: any = null;
   private isReading = false;
+  private ws: WebSocket | null = null;
+  private isWsConnected = false;
+  private currentPortName = '';
   private onFrameCallback: FrameCallback | null = null;
 
   // 360-graduslik kesh
@@ -42,6 +59,20 @@ class LidarSerialService {
   private lastSpeedRpm = 600;
   private lastStartAngle = 0;
 
+  // Eng so'nggi to'siq holati
+  private lastObstacleInfo: LidarObstacleInfo = {
+    frontCm: 999,
+    rightCm: 999,
+    rearCm: 999,
+    leftCm: 999,
+    minDistM: 9.99,
+    minAngleDeg: 0,
+    isBlocked: false,
+    evasion: 'CLEAR',
+    lastUpdated: 0,
+    source: 'none'
+  };
+
   /**
    * Brauzerda Web Serial API qo'llab-quvvatlanishini tekshirish
    */
@@ -49,17 +80,111 @@ class LidarSerialService {
     return typeof navigator !== 'undefined' && 'serial' in navigator;
   }
 
+  public isOpen(): boolean {
+    return this.isReading || this.isWsConnected;
+  }
+
+  public getPortName(): string {
+    return this.currentPortName;
+  }
+
+  public getObstacleInfo(): LidarObstacleInfo {
+    return this.lastObstacleInfo;
+  }
+
   /**
-   * Haqiqiy USB COM portni ochish (230400 baud)
+   * 1. WebSocket Ko'prigi (Raspberry Pi 5 yoki PC orqali planshetda ishlash)
+   */
+  public async connectWebSocket(customUrl?: string): Promise<{ portName: string }> {
+    await this.closePort();
+
+    const defaultHost = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
+    const storedWs = typeof window !== 'undefined' ? localStorage.getItem('qalqon_lidar_ws') : null;
+    const storedPiIp = typeof window !== 'undefined' ? localStorage.getItem('qalqon_pi_ip') : null;
+    
+    let url = customUrl;
+    if (!url) {
+      if (storedWs) {
+        url = storedWs;
+      } else if (storedPiIp) {
+        url = `ws://${storedPiIp}:8000/ws`;
+      } else if (defaultHost && defaultHost !== 'localhost') {
+        url = `ws://${defaultHost}:8000/ws`;
+      } else {
+        url = 'ws://localhost:8000/ws';
+      }
+    }
+
+    return new Promise((resolve, reject) => {
+      try {
+        const ws = new WebSocket(url);
+        this.ws = ws;
+
+        const timeout = setTimeout(() => {
+          if (!this.isWsConnected) {
+            try { ws.close(); } catch (_) {}
+            reject(new Error(`LiDAR WebSocket ulanish vaqti tugadi (${url})`));
+          }
+        }, 5000);
+
+        ws.onopen = () => {
+          clearTimeout(timeout);
+          this.isWsConnected = true;
+          this.currentPortName = `WebSocket: ${url}`;
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('qalqon_lidar_ws', url);
+          }
+          resolve({ portName: this.currentPortName });
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.lidar && Array.isArray(data.lidar.points)) {
+              for (const pt of data.lidar.points) {
+                const deg = Math.round(pt.angle) % 360;
+                if (deg >= 0 && deg < 360) {
+                  this.distances[deg] = pt.distance;
+                  this.intensities[deg] = pt.intensity || 100;
+                }
+              }
+              if (data.rate_hz) this.measuredHz = data.rate_hz;
+              if (data.rpm) this.lastSpeedRpm = data.rpm;
+              if (data.packets_count) this.packetsCount = data.packets_count;
+              this.emitFrame();
+            }
+          } catch (_) {}
+        };
+
+        ws.onerror = () => {
+          clearTimeout(timeout);
+          this.isWsConnected = false;
+          if (this.currentPortName.startsWith('WebSocket')) this.currentPortName = '';
+        };
+
+        ws.onclose = () => {
+          this.isWsConnected = false;
+          this.ws = null;
+          if (this.currentPortName.startsWith('WebSocket')) this.currentPortName = '';
+        };
+      } catch (err: any) {
+        reject(new Error(err?.message || "WebSocket ulanishida xatolik"));
+      }
+    });
+  }
+
+  /**
+   * 2. Haqiqiy USB COM portni ochish (Web Serial API @ 230400 baud)
    */
   public async openPort(baudRate = 230400): Promise<{ portName: string }> {
+    await this.closePort();
+
     if (!this.isSupported()) {
       throw new Error(
-        "Brauzeringizda Web Serial API qo'llab-quvvatlanmaydi. Iltimos, Google Chrome yoki Microsoft Edge brauzeridan foydalaning."
+        "Brauzeringizda Web Serial API qo'llab-quvvatlanmaydi. Iltimos, Desktop Chrome/Edge ishlating yoki 'Raspberry Pi WebSocket' orqali ulaning."
       );
     }
 
-    // Silicon Labs CP2102 filter (VID: 0x10C4, PID: 0xEA60) yoki ixtiyoriy port
     const nav = navigator as any;
     try {
       this.port = await nav.serial.requestPort({
@@ -68,12 +193,13 @@ class LidarSerialService {
           { usbVendorId: 0x1a86, usbProductId: 0x7523 }, // CH340
           { usbVendorId: 0x0403, usbProductId: 0x6001 }  // FTDI
         ]
-      }).catch(() => {
-        // Filtrlarsiz barcha portlarni ko'rsatish
-        return nav.serial.requestPort();
       });
     } catch (e: any) {
-      throw new Error(e?.message || "LiDAR porti tanlanmadi");
+      try {
+        this.port = await nav.serial.requestPort();
+      } catch {
+        throw new Error(e?.message || "LiDAR porti tanlanmadi");
+      }
     }
 
     if (!this.port) {
@@ -94,17 +220,27 @@ class LidarSerialService {
       ? `CP2102 (VID: 0x${info.usbVendorId.toString(16).toUpperCase()})`
       : 'USB Serial Port';
 
+    this.currentPortName = `${portName} @ ${baudRate} bps`;
     this.isReading = true;
     this.readLoop();
 
-    return { portName };
+    return { portName: this.currentPortName };
   }
 
   /**
-   * Portni to'xtatish va toza yopish
+   * Portni to'xtatish va toza yopish (Serial yoki WebSocket)
    */
   public async closePort(): Promise<void> {
     this.isReading = false;
+    this.isWsConnected = false;
+    this.currentPortName = '';
+
+    if (this.ws) {
+      try {
+        this.ws.close();
+      } catch (_) {}
+      this.ws = null;
+    }
 
     if (this.reader) {
       try {
@@ -124,9 +260,6 @@ class LidarSerialService {
     }
   }
 
-  /**
-   * Kadrlar olinganda chaqiriladigan callback
-   */
   public onFrame(callback: FrameCallback): void {
     this.onFrameCallback = callback;
   }
@@ -147,13 +280,11 @@ class LidarSerialService {
             const { value, done } = await this.reader.read();
             if (done || !value) break;
 
-            // Yangi kelgan baytlarni buferga qo'shish
             const newBuf = new Uint8Array(buffer.length + value.length);
             newBuf.set(buffer, 0);
             newBuf.set(value, buffer.length);
             buffer = newBuf;
 
-            // 47-baytli LDROBOT STL-19P paketlarini qidirish (Header: 0x54, 0x2C)
             let idx = 0;
             while (idx <= buffer.length - 47) {
               if (buffer[idx] === 0x54 && buffer[idx + 1] === 0x2c) {
@@ -170,12 +301,10 @@ class LidarSerialService {
               buffer = buffer.subarray(idx);
             }
 
-            // Agar bufer juda kattalashib ketsa (noto'g'ri oqim), tozalash
             if (buffer.length > 2048) {
               buffer = buffer.subarray(buffer.length - 1024);
             }
 
-            // UI'ga har 33 ms da (30 FPS) barqaror yetkazish
             const now = performance.now();
             if (now - lastEmitTime >= 33) {
               lastEmitTime = now;
@@ -200,17 +329,12 @@ class LidarSerialService {
    * 47-baytli STL-19P paketini dekodlash
    */
   private parsePacket(pkt: Uint8Array): void {
-    // 1. Aylanish tezligi (deg/sec)
     const speedDegSec = pkt[2] | (pkt[3] << 8);
     this.lastSpeedRpm = Math.round((speedDegSec / 360) * 60);
 
-    // 2. Boshlang'ich burchak (0.01 gradus)
     const startAngle = (pkt[4] | (pkt[5] << 8)) / 100.0;
-
-    // 3. Yakuniy burchak (0.01 gradus)
     const endAngle = (pkt[42] | (pkt[43] << 8)) / 100.0;
 
-    // Burchak to'liq aylanani bosib o'tganda Hz hisoblash
     if (startAngle < this.lastStartAngle && this.lastStartAngle > 270) {
       this.sweepsCount++;
       const now = performance.now();
@@ -222,11 +346,9 @@ class LidarSerialService {
     }
     this.lastStartAngle = startAngle;
 
-    // 4. Burchak qadami
     const diff = (endAngle - startAngle + 360.0) % 360.0;
     const step = diff / 11.0;
 
-    // 5. 12 ta masofa nuqtasi
     for (let i = 0; i < 12; i++) {
       const offset = 6 + i * 3;
       const distMm = pkt[offset] | (pkt[offset + 1] << 8);
@@ -235,7 +357,6 @@ class LidarSerialService {
 
       const angle = Math.round((startAngle + step * i) % 360.0);
       if (angle >= 0 && angle < 360) {
-        // Filtr: 0.03m dan 12.0m gacha bo'lgan haqiqiy masofalar
         if (distM >= 0.03 && distM <= 12.0) {
           this.distances[angle] = +distM.toFixed(3);
           this.intensities[angle] = intensity;
@@ -248,33 +369,65 @@ class LidarSerialService {
    * 360 graduslik ma'lumotlar va 4 sektor masofalarini chiqarish
    */
   private emitFrame(): void {
-    if (!this.onFrameCallback) return;
-
     const points: LidarPoint[] = new Array(360);
+    let minDist = 999;
+    let minAngle = 0;
+
     for (let deg = 0; deg < 360; deg++) {
+      const d = this.distances[deg] || 0.0;
       points[deg] = {
         angle: deg,
-        distance: this.distances[deg] || 0.0,
+        distance: d,
         intensity: this.intensities[deg] || 0
       };
+      if (d > 0.05 && d < minDist) {
+        minDist = d;
+        minAngle = deg;
+      }
     }
 
-    // 4 Sektor hisobi
-    const sectors = {
-      front: this.calcSectorDistance(345, 15),
-      right: this.calcSectorDistance(75, 105),
-      rear: this.calcSectorDistance(165, 195),
-      left: this.calcSectorDistance(255, 285)
+    const frontDistM = this.calcSectorDistance(330, 30);
+    const rightDistM = this.calcSectorDistance(60, 120);
+    const rearDistM = this.calcSectorDistance(150, 210);
+    const leftDistM = this.calcSectorDistance(240, 300);
+
+    const frontCm = Math.round(frontDistM * 100);
+    const isBlocked = frontDistM <= 0.45; // 45 sm ichida to'siq
+    let evasion: 'CLEAR' | 'LEFT' | 'RIGHT' | 'REVERSE' = 'CLEAR';
+    if (isBlocked) {
+      if (leftDistM >= rightDistM && leftDistM > 0.40) evasion = 'LEFT';
+      else if (rightDistM > leftDistM && rightDistM > 0.40) evasion = 'RIGHT';
+      else evasion = 'REVERSE';
+    }
+
+    this.lastObstacleInfo = {
+      frontCm,
+      rightCm: Math.round(rightDistM * 100),
+      rearCm: Math.round(rearDistM * 100),
+      leftCm: Math.round(leftDistM * 100),
+      minDistM: minDist < 900 ? +minDist.toFixed(2) : 9.99,
+      minAngleDeg: minAngle,
+      isBlocked,
+      evasion,
+      lastUpdated: Date.now(),
+      source: this.isWsConnected ? 'websocket' : this.isReading ? 'serial' : 'none'
     };
 
-    this.onFrameCallback({
-      points,
-      sectors,
-      rateHz: this.measuredHz > 0 ? this.measuredHz : 10.0,
-      speedRpm: this.lastSpeedRpm,
-      packetsReceived: this.packetsCount,
-      crcErrors: 0
-    });
+    if (this.onFrameCallback) {
+      this.onFrameCallback({
+        points,
+        sectors: {
+          front: frontDistM,
+          right: rightDistM,
+          rear: rearDistM,
+          left: leftDistM
+        },
+        rateHz: this.measuredHz > 0 ? this.measuredHz : 10.0,
+        speedRpm: this.lastSpeedRpm,
+        packetsReceived: this.packetsCount,
+        crcErrors: 0
+      });
+    }
   }
 
   private calcSectorDistance(startDeg: number, endDeg: number): number {
@@ -299,7 +452,6 @@ class LidarSerialService {
     }
 
     if (count === 0) return 5.0;
-    // Xavfsizlik uchun minimal masofaga ko'proq og'irlik beriladi
     return +(min * 0.7 + (sum / count) * 0.3).toFixed(2);
   }
 }

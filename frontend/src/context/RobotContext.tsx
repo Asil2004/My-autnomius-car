@@ -29,6 +29,7 @@ import { headingService } from '../services/headingService';
 import { navigationService } from '../services/navigationService';
 import { autopilotService } from '../services/autopilotService';
 import { esp32Service } from '../services/esp32Service';
+import { lidarSerialService } from '../services/lidarSerialService';
 
 export interface LogMessage {
   id: string;
@@ -648,11 +649,15 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       addLog('SERIAL', 'info', `Buyruq uzatildi: ${cmdNames[cmd] || cmd}`);
     }
 
-    // Oldinga harakatda avtotormoz to'siq tekshiruvi
+    // Oldinga harakatda avtotormoz to'siq tekshiruvi (LiDAR va Sonar orqali)
     const isGoingForward = cmd === 'F' || cmd === 'G' || cmd === 'I' || cmd === 'Q' || cmd === 'E';
-    if (isGoingForward && ((sonars.front ?? Infinity) <= 28 || cameraObstacle.isBlocked)) {
+    const lidarObs = lidarSerialService.getObstacleInfo();
+    const isLidarBlocked = lidarObs.isBlocked && (Date.now() - lidarObs.lastUpdated < 2500);
+    const isSonarBlocked = (sonars.front ?? Infinity) <= 25;
+    if (isGoingForward && (isSonarBlocked || isLidarBlocked)) {
       tacticalAudio.playObstacleAlert();
-      addLog('AI', 'error', `🛑 AVTOTORMOZ: Kamera "Ko'zi" to'siqni aniqladi (${sonars.front} sm)! Oldinga harakat qulflandi!`);
+      const distInfo = isLidarBlocked ? `LiDAR ${lidarObs.frontCm} sm` : `Sonar ${sonars.front} sm`;
+      addLog('AI', 'error', `🛑 AVTOTORMOZ: To'siq aniqlandi (${distInfo})! Oldinga harakat qulflandi!`);
       setLastCommand('S');
       setIsMoving(false);
       currentCmdRef.current = 'S';
@@ -779,22 +784,36 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     [addLog]
   );
 
-  // GPS avtopilot: ESP32 buyrug'i va to'siq ma'lumoti (kamera + sonar) shu kontekstdan olinadi
+  // GPS avtopilot: ESP32 buyrug'i va to'siq ma'lumoti (LiDAR + sonar) shu kontekstdan olinadi
   const sendCmdRef = useRef(sendMecanumCommand);
   sendCmdRef.current = sendMecanumCommand;
-  const obstacleRef = useRef({ cameraObstacle, sonars });
-  obstacleRef.current = { cameraObstacle, sonars };
+  const obstacleRef = useRef({ sonars });
+  obstacleRef.current = { sonars };
   useEffect(() => {
+    // Agar Web Serial qo'llab-quvvatlanmasa (masalan Android planshetda), avtomatik WebSocket ko'prigiga ulanish
+    if (!lidarSerialService.isSupported() && !lidarSerialService.isOpen()) {
+      const savedWs = localStorage.getItem('qalqon_lidar_ws');
+      const piIp = localStorage.getItem('qalqon_pi_ip');
+      const host = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
+      const wsUrl = savedWs || (piIp ? `ws://${piIp}:8000/ws` : `ws://${host}:8000/ws`);
+      lidarSerialService.connectWebSocket(wsUrl).catch(() => {});
+    }
+
     autopilotService.setDriver((cmd) => sendCmdRef.current(cmd));
     autopilotService.setObstacleProvider(() => {
-      const { cameraObstacle: c, sonars: s } = obstacleRef.current;
+      const { sonars: s } = obstacleRef.current;
+      const l = lidarSerialService.getObstacleInfo();
+      const isLidarFresh = Date.now() - l.lastUpdated < 2500;
+      const lidarDist = isLidarFresh && l.frontCm > 0 && l.frontCm < 300 ? l.frontCm : Infinity;
+      const sonarDist = s.front ?? Infinity;
+      const minDist = Math.min(lidarDist, sonarDist);
       return {
-        distanceCm: c.distanceCm,
-        label: c.label,
-        evasion: c.evasionDirection,
-        cameraT: lastCameraObstacleUpdateRef.current,
-        // Sonar datchigi yo'q (null): faqat kamera hisobga olinadi
-        sonarFrontCm: s.front ?? Infinity
+        distanceCm: minDist,
+        label: l.isBlocked ? `LiDAR (${l.frontCm} sm)` : s.front ? `Sonar (${s.front} sm)` : 'Ochiq',
+        evasion: l.evasion,
+        sonarFrontCm: sonarDist,
+        lidarFrontCm: lidarDist,
+        lidarActive: lidarSerialService.isOpen()
       };
     });
     return () => {

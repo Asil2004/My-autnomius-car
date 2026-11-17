@@ -85,11 +85,23 @@ def parse_ld19_packet(pkt: bytes):
     return speed, pts
 
 def auto_detect_lidar_port() -> str:
-    """LDROBOT STL-19P CP210x portini avtomatik topish"""
+    """LDROBOT STL-19P CP210x portini avtomatik topish (Windows va Linux/Raspberry Pi)"""
+    env_port = os.environ.get("LIDAR_PORT")
+    if env_port:
+        return env_port
+
     for p in list_ports.comports():
-        desc = f"{p.description} {p.manufacturer or ''}".lower()
-        if any(k in desc for k in ("cp210", "ch340", "ftdi", "silicon labs", "usb-serial", "lidar")):
+        text = f"{p.device} {p.description} {p.manufacturer or ''}".lower()
+        if any(k in text for k in ("cp210", "ch340", "ftdi", "silicon labs", "usb-serial", "lidar", "ttyusb", "ttyacm")):
             return p.device
+
+    # Linux / Raspberry Pi standart yo'llarini tekshirish
+    if os.name != 'nt':
+        for dev in ("/dev/ttyUSB0", "/dev/ttyUSB1", "/dev/ttyACM0", "/dev/ttyACM1", "/dev/ttyAMA0"):
+            if os.path.exists(dev):
+                return dev
+        return "/dev/ttyUSB0"
+
     return "COM3"
 
 # ---------------------------------------------------------------------------

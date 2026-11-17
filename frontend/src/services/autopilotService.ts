@@ -19,14 +19,14 @@ export interface AutopilotWaypoint {
 }
 
 export interface ObstacleInfo {
-  /** Oldingi eng yaqin to'siq, sm */
+  /** Oldingi eng yaqin to'siq (LiDAR yoki Sonar), sm */
   distanceCm: number;
   label: string;
   evasion: 'CLEAR' | 'LEFT' | 'RIGHT' | 'REVERSE';
-  /** Oxirgi kamera tahlili vaqti (Date.now), 0 = hech qachon */
-  cameraT: number;
-  /** Sonar oldi, sm */
-  sonarFrontCm: number;
+  sonarFrontCm?: number;
+  lidarFrontCm?: number;
+  lidarActive?: boolean;
+  cameraT?: number;
 }
 
 export type AutopilotPhase =
@@ -56,18 +56,16 @@ export interface AutopilotState {
 export const AUTOPILOT_CONFIG = {
   tickMs: 200,
   /** Nuqtaga yetdi deb hisoblash radiusi, m (GPS aniqligi yomon bo'lsa biroz kattalashadi) */
-  arriveMinM: 2.5,
-  arriveMaxM: 6,
+  arriveMinM: 3.0,
+  arriveMaxM: 8.0,
   /** Joylashuv aniqligi shundan yomon bo'lsa yurmaydi, m */
-  maxAccuracyM: 15,
+  maxAccuracyM: 30,
   /** Yo'nalish xatosi: shundan katta -> joyida burilish */
   spinDeg: 40,
   /** shundan katta -> egri yurish */
   curveDeg: 12,
-  /** Avtopilotda to'siqqa ruxsat etilgan eng yaqin masofa, sm */
-  stopCm: 60,
-  /** Kamera tahlili shuncha vaqt kelmasa -> kutish */
-  cameraTimeoutMs: 3000,
+  /** Avtopilotda to'siqqa ruxsat etilgan eng yaqin masofa, sm (LiDAR/Sonar) */
+  stopCm: 50,
   /** To'siq oldida to'xtab kutish (o'tib ketuvchi odam/mashina uchun) */
   obstacleWaitMs: 2000,
   /** Chetlab o'tishda: yo'l ochilgandan keyin yana shuncha burilish (robot kengligi uchun zaxira) */
@@ -243,15 +241,21 @@ class AutopilotService {
     const err = wrap180(bearingDeg(nav.lat, nav.lon, target.lat, target.lon) - nav.heading);
     this.set({ targetIndex: idx, distanceToTargetM: dist, distanceToEndM: rest, bearingErrorDeg: Math.round(err) });
 
-    // 3) Kamera ishlamasa ko'r yurmaydi
-    const cameraFresh = !!obs && obs.cameraT > 0 && now - obs.cameraT < cfg.cameraTimeoutMs;
-    if (!cameraFresh) {
-      this.drive('S');
-      this.enter('waiting-camera', 'Kamera to‘siq tahlili kutilmoqda (kamera yoki HUD dagi AI yoqilmagan)');
-      return;
+    // 3) To'siq tekshiruvi (LiDAR va Sonar orqali)
+    // Kamera talabi olib tashlandi: faqat LiDAR yoki Sonar oldinda to'siq ko'rsagina to'xtaydi/chetlaydi
+    let frontCm = Infinity;
+    if (obs) {
+      if (Number.isFinite(obs.lidarFrontCm) && obs.lidarFrontCm! > 0) {
+        frontCm = Math.min(frontCm, obs.lidarFrontCm!);
+      }
+      if (Number.isFinite(obs.sonarFrontCm) && obs.sonarFrontCm! > 0) {
+        frontCm = Math.min(frontCm, obs.sonarFrontCm!);
+      }
+      if (Number.isFinite(obs.distanceCm) && obs.distanceCm > 0 && obs.distanceCm < frontCm) {
+        frontCm = obs.distanceCm;
+      }
     }
-    const frontCm = Math.min(obs!.distanceCm, obs!.sonarFrontCm);
-    const blocked = frontCm <= cfg.stopCm;
+    const blocked = Number.isFinite(frontCm) && frontCm <= cfg.stopCm;
     if (!blocked) this.clearSince = this.clearSince || now;
     else this.clearSince = 0;
 
