@@ -186,6 +186,21 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           setEsp32Connected(true);
           setEsp32Status('ONLINE (MQTT)');
           addLogRef.current('SYSTEM', 'success', `ESP32 MQTT brokerga ulandi (${topic})`);
+
+          // Robot telemetriyasiga obuna bo'lish (MPU-6050 IMU, tezlik, holat)
+          try {
+            client.subscribe('qalqon/robot/telemetry');
+          } catch {}
+        });
+
+        client.on('message', (incomingTopic: string, payload: any) => {
+          if (incomingTopic === 'qalqon/robot/telemetry') {
+            try {
+              const text = payload.toString();
+              const data = JSON.parse(text);
+              headingService.ingestTelemetry(data);
+            } catch {}
+          }
         });
 
         client.on('error', (err: any) => {
@@ -238,6 +253,31 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setEsp32EnabledState(enabled);
     addLog('SERIAL', 'info', `ESP32 to'g'ridan-to'g'ri aloqa: ${enabled ? 'YOQILDI' : 'O`CHIRILDI'}`);
   };
+
+  // Lokal Wi-Fi (HTTP) orqali ESP32 telemetriyasini qabul qilish (MQTT bo'lmaganda yoki parallel)
+  useEffect(() => {
+    let active = true;
+    const interval = setInterval(async () => {
+      if (!active || !esp32Enabled) return;
+      try {
+        const data = await esp32Service.fetchStatus();
+        if (data && active) {
+          if (data.imu) {
+            headingService.ingestTelemetry(data.imu);
+          }
+          if (!esp32Connected) {
+            setEsp32Connected(true);
+            setEsp32Status('ONLINE (HTTP)');
+          }
+        }
+      } catch {}
+    }, 800);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [esp32Enabled, esp32Connected]);
 
   // 360° Analog Joystik koordinatalari (-100 dan +100 gacha)
   const sendJoystickCoordinates = useCallback((x: number, y: number) => {

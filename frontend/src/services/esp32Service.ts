@@ -152,6 +152,70 @@ class ESP32Service {
         clearTimeout(timeoutId);
       });
   }
+
+  /**
+   * ESP32 statusini tekshirish (Wi-Fi, harakat, tezlik, IMU)
+   */
+  public async fetchStatus(): Promise<any> {
+    if (!this.isEnabled) return null;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 1200);
+      const res = await fetch(`${this.baseIp}/status`, {
+        cache: 'no-store',
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * ESP32 MPU-6050 datchigidan jonli telemetriya (yaw, pitch, roll, rate)
+   */
+  public async fetchImu(): Promise<any> {
+    if (!this.isEnabled) return null;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 1000);
+      const res = await fetch(`${this.baseIp}/imu`, {
+        cache: 'no-store',
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * MPU-6050 giroskop yaw burchagini 0° ga tenglash (Zero / Tara)
+   */
+  public async zeroImu(): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseIp}/imu/zero`, { cache: 'no-store' });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * MPU-6050 giroskopini qayta kalibrlash (dreyf biasini tozalash)
+   */
+  public async calibrateImu(): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseIp}/imu/calibrate`, { cache: 'no-store' });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
 }
 
 export const esp32Service = new ESP32Service();

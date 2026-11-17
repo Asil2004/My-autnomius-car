@@ -537,9 +537,9 @@
         else if (inputs.right && !inputs.left) nextCmd = 'J'; // Orqaga-o'ngga
         else nextCmd = 'B'; // To'g'ri orqaga
       } else if (inputs.left && !inputs.right) {
-        nextCmd = 'L'; // Chapga burilish (Chap 50%, O'ng 100%)
+        nextCmd = 'L'; // Joyida chapga tank-burilish
       } else if (inputs.right && !inputs.left) {
-        nextCmd = 'R'; // O'ngga burilish (Chap 100%, O'ng 50%)
+        nextCmd = 'R'; // Joyida o'ngga tank-burilish
       } else {
         nextCmd = 'S'; // To'xtash
       }
@@ -558,8 +558,8 @@
       const labels = {
         F: "To'g'ri Oldinga (⬆️)",
         B: "Orqaga (⬇️)",
-        L: "Chapga burilish (Chap 50%, O'ng 100%)",
-        R: "O'ngga burilish (Chap 100%, O'ng 50%)",
+        L: "Joyida Chapga (↺)",
+        R: "Joyida O'ngga (↻)",
         G: "Oldinga-Chapga Silliq (↖️)",
         I: "Oldinga-O'ngga Silliq (↗️)",
         H: "Orqaga-Chapga (↙️)",

@@ -12,6 +12,7 @@ import {
   Layers
 } from 'lucide-react';
 import { headingService, type HeadingState } from '../services/headingService';
+import { esp32Service } from '../services/esp32Service';
 
 interface GyroCalibrationModalProps {
   onClose: () => void;
@@ -240,8 +241,47 @@ export const GyroCalibrationModal: React.FC<GyroCalibrationModalProps> = ({ onCl
             <div className="p-2 rounded-lg bg-tactical-900 border border-tactical-800">
               <div className="text-[10px] text-slate-400">Manba</div>
               <div className="text-xs font-bold text-police-cyan mt-0.5 uppercase">
-                {details.source === 'device' ? 'Planshet' : details.source}
+                {details.source === 'device' ? 'Planshet' : details.source === 'imu' ? 'ESP32 IMU' : details.source}
               </div>
+            </div>
+          </div>
+
+          {/* ESP32 MPU-6050 Uskunaviy Datchik Boshqaruvi */}
+          <div className="p-3 bg-tactical-900/80 rounded-xl border border-police-cyan/40 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-police-cyan flex items-center gap-1.5">
+                <Compass className="w-4 h-4 text-police-cyan" />
+                <span>ESP32 MPU-6050 USKUNAVIY DATCHIK</span>
+              </span>
+              <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${details.source === 'imu' ? 'bg-cyan-950 text-cyan-300 border border-cyan-500/50' : 'bg-tactical-950 text-slate-400'}`}>
+                {details.source === 'imu' ? 'FAOL (IMU)' : 'STANDBY'}
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Robot shassisiga o'rnatilgan MPU-6050 6-o'qli giroskop va akselerometrni to'g'ridan-to'g'ri boshqarish:
+            </p>
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={async () => {
+                  await esp32Service.zeroImu();
+                  showBanner("ESP32 MPU-6050 0° (Nol)ga tenglandi.");
+                }}
+                className="py-2 px-3 rounded-lg bg-tactical-950 hover:bg-tactical-800 border border-police-cyan/60 text-police-cyan font-bold transition-all active:scale-95 text-center"
+              >
+                🎯 ESP32 0° Qilish
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  showBanner("ESP32 MPU-6050 kalibrlanmoqda (1s qimirlatmang)...");
+                  await esp32Service.calibrateImu();
+                  showBanner("ESP32 giroskop muvaffaqiyatli kalibrlandi!");
+                }}
+                className="py-2 px-3 rounded-lg bg-tactical-950 hover:bg-tactical-800 border border-amber-500/60 text-amber-300 font-bold transition-all active:scale-95 text-center"
+              >
+                ⚙️ ESP32 Kalibrlash
+              </button>
             </div>
           </div>
 

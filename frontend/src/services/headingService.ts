@@ -189,7 +189,35 @@ class HeadingService {
     if (!d || typeof d !== 'object') return false;
     const o = d as Record<string, unknown>;
     const imu = (o.imu ?? o.gyro ?? o.orientation) as Record<string, unknown> | undefined;
-    const candidates = [imu?.yaw, imu?.heading, imu?.azimuth, o.yaw, o.compass, o.azimuth, (o.motion as Record<string, unknown> | undefined)?.heading];
+
+    // Pitch, Roll va aylanish tezligi (rate) ni qabul qilish
+    const pRaw = imu?.pitch ?? o.pitch;
+    const pNum = typeof pRaw === 'string' ? parseFloat(pRaw) : (pRaw as number);
+    if (typeof pNum === 'number' && isFinite(pNum)) {
+      this.lastPitch = Math.round(pNum * 10) / 10;
+    }
+
+    const rRaw = imu?.roll ?? o.roll;
+    const rNum = typeof rRaw === 'string' ? parseFloat(rRaw) : (rRaw as number);
+    if (typeof rNum === 'number' && isFinite(rNum)) {
+      this.lastRoll = Math.round(rNum * 10) / 10;
+    }
+
+    const rateRaw = imu?.rate ?? imu?.gyroRateZ ?? o.rate;
+    const rateNum = typeof rateRaw === 'string' ? parseFloat(rateRaw) : (rateRaw as number);
+    if (typeof rateNum === 'number' && isFinite(rateNum)) {
+      this.gyroAlphaRate = Math.round(rateNum * 10) / 10;
+    }
+
+    const candidates = [
+      imu?.yaw,
+      imu?.heading,
+      imu?.azimuth,
+      o.yaw,
+      o.compass,
+      o.azimuth,
+      (o.motion as Record<string, unknown> | undefined)?.heading
+    ];
     for (const v of candidates) {
       const n = typeof v === 'string' ? parseFloat(v) : (v as number);
       if (typeof n === 'number' && isFinite(n)) {
