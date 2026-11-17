@@ -187,18 +187,22 @@ class LidarSerialService {
 
     const nav = navigator as any;
     try {
-      this.port = await nav.serial.requestPort({
-        filters: [
-          { usbVendorId: 0x10c4, usbProductId: 0xea60 }, // Silicon Labs CP2102 (LDROBOT)
-          { usbVendorId: 0x1a86, usbProductId: 0x7523 }, // CH340
-          { usbVendorId: 0x0403, usbProductId: 0x6001 }  // FTDI
-        ]
-      });
+      // 1. Filtrlarsiz ochish: barcha ulangan USB serial qurilmalarni ko'rsatish
+      this.port = await nav.serial.requestPort();
     } catch (e: any) {
+      // 2. Agar bo'sh filters bo'lmasa, ma'lum chip VID lari bilan urinib ko'rish
       try {
-        this.port = await nav.serial.requestPort();
+        this.port = await nav.serial.requestPort({
+          filters: [
+            { usbVendorId: 0x10c4 }, // Silicon Labs CP210x (har qanday PID)
+            { usbVendorId: 0x1a86 }, // WCH CH340 / CH341 / CH343
+            { usbVendorId: 0x0403 }, // FTDI
+            { usbVendorId: 0x067b }, // Prolific PL2303
+            { usbVendorId: 0x303a }  // Espressif USB CDC
+          ]
+        });
       } catch {
-        throw new Error(e?.message || "LiDAR porti tanlanmadi");
+        throw new Error(e?.message || "LiDAR porti tanlanmadi yoki bekor qilindi");
       }
     }
 

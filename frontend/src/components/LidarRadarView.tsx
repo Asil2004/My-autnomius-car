@@ -63,6 +63,12 @@ export const LidarRadarView: React.FC = () => {
 
   // Web Serial Portni ochish (Web Serial API @ 230400 bps)
   const handleOpenPort = useCallback(async () => {
+    if (!isSerialSupported) {
+      setPortError(
+        "Android Chrome da Web Serial datchigi yoqilmagan. Sozlash: 1) chrome://flags ga kiring; 2) 'Experimental Web Platform features' ni Enabled qiling va qayta ishga tushiring; 3) Yoki LiDAR ni Raspberry Pi 5 ga ulab, WebSocket orqali ulang."
+      );
+      return;
+    }
     try {
       setIsOpening(true);
       setPortError(null);
@@ -78,7 +84,7 @@ export const LidarRadarView: React.FC = () => {
     } finally {
       setIsOpening(false);
     }
-  }, [addLog]);
+  }, [isSerialSupported, addLog]);
 
   // WebSocket (Raspberry Pi 5 / PC) orqali ulanish
   const handleConnectWs = useCallback(async () => {
@@ -445,17 +451,18 @@ export const LidarRadarView: React.FC = () => {
                 </div>
               </div>
 
-              {/* 2. Web Serial API (Faqat kompyuter/desktop brauzerlar uchun) */}
-              {isSerialSupported && (
-                <button
-                  onClick={handleOpenPort}
-                  disabled={isOpening}
-                  className="w-full py-2 px-3 rounded-lg font-mono font-bold text-xs flex items-center justify-center gap-2 bg-emerald-700 hover:bg-emerald-600 text-white border border-emerald-500 shadow transition-all active:scale-95"
-                >
-                  <Usb className="w-3.5 h-3.5 text-white" />
-                  <span>{isOpening ? 'Port qidirilmoqda...' : '⚡ BEVOSITA USB/COM PORT (WEB SERIAL)'}</span>
-                </button>
-              )}
+              {/* 2. Web Serial API (USB / OTG kabel orqali bevosita ulanish) */}
+              <button
+                onClick={handleOpenPort}
+                disabled={isOpening}
+                className="w-full py-2.5 px-3 rounded-lg font-mono font-bold text-xs flex items-center justify-center gap-2 bg-emerald-700 hover:bg-emerald-600 text-white border border-emerald-500 shadow transition-all active:scale-95"
+              >
+                <Usb className="w-4 h-4 text-white" />
+                <span>{isOpening ? 'Port qidirilmoqda...' : '⚡ BEVOSITA USB / OTG PORT (CP2102)'}</span>
+              </button>
+              <div className="text-[9px] text-slate-400 font-mono text-center">
+                Planshetga Type-C OTG kabel orqali ulangan bo'lsa yoki kompyuterda.
+              </div>
             </div>
           )}
         </div>
