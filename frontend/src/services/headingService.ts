@@ -15,16 +15,25 @@ export type HeadingSource = 'imu' | 'device' | 'gps' | 'none';
 export type HeadingMode = 'auto' | 'imu' | 'device' | 'gps' | 'off';
 
 export interface HeadingState {
-  /** 0..360, shimoldan soat yo'nalishida (filtrlangan) */
+  /** 0..360, shimoldan soat yo'nalishida (kalibrlangan va filtrlangan) */
   heading: number;
+  /** Datchikdan olingan xom (offsetsiz) burchak */
+  rawHeading?: number;
   source: HeadingSource;
   /** Burilish tezligi, °/s (musbat = o'ngga) */
   rate: number;
   /** Oxirgi o'lchov vaqti (ms) */
   t: number;
+  /** Kalibrlash ofseti (gradus) */
+  offset?: number;
+  /** Vertikal egilish (Pitch, beta) */
+  pitch?: number;
+  /** Gorizontal egilish (Roll, gamma) */
+  roll?: number;
 }
 
 const MODE_KEY = 'qalqon.headingMode.v1';
+const OFFSET_KEY = 'qalqon.gyroOffset.v1';
 const FRESH_MS: Record<Exclude<HeadingSource, 'none'>, number> = { imu: 2000, device: 1500, gps: 5000 };
 // Filtr vaqt doimiysi: kichik = tezroq javob, katta = silliqroq (IMU tezroq, kompas shovqinliroq)
 const TAU_MS: Record<Exclude<HeadingSource, 'none'>, number> = { imu: 80, device: 180, gps: 600 };
@@ -48,8 +57,13 @@ class HeadingService {
   private ch: Record<Exclude<HeadingSource, 'none'>, Channel> = { imu: newChannel(), device: newChannel(), gps: newChannel() };
   private listeners = new Set<(s: HeadingState) => void>();
   private mode: HeadingMode = 'auto';
+  private calibrationOffset = 0;
+  private lastPitch = 0;
+  private lastRoll = 0;
+  private gyroAlphaRate = 0;
   private deviceListening = false;
   private deviceHandler: ((e: DeviceOrientationEvent) => void) | null = null;
+  private motionHandler: ((e: DeviceMotionEvent) => void) | null = null;
 
   constructor() {
     try {
@@ -57,6 +71,16 @@ class HeadingService {
       if (m && ['auto', 'imu', 'device', 'gps', 'off'].includes(m)) this.mode = m;
     } catch {
       /* standart: auto */
+    }
+
+    try {
+      const savedOffset = localStorage.getItem(OFFSET_KEY);
+      if (savedOffset !== null) {
+        const parsed = parseFloat(savedOffset);
+        if (isFinite(parsed)) this.calibrationOffset = parsed;
+      }
+    } catch {
+      /* standart: 0 */
     }
   }
 
@@ -73,6 +97,76 @@ class HeadingService {
     }
     this.syncDeviceListener();
     this.emit();
+  }
+
+  /** Kalibrlash ofsetini olish */
+  getOffset(): number {
+    return this.calibrationOffset;
+  }
+
+  /** Kalibrlash ofsetini belgilash */
+  setOffset(deg: number) {
+    this.calibrationOffset = norm(Math.round(deg * 10) / 10);
+    try {
+      localStorage.setItem(OFFSET_KEY, this.calibrationOffset.toString());
+    } catch {}
+    this.emit();
+  }
+
+  /**
+   * Joriy turgan yo'nalishni 0° (Robotning to'g'ri oldi) deb belgilash (TARA)
+   */
+  zeroCurrentHeading(): number {
+    const src = this.pick();
+    const raw = src !== 'none' ? this.ch[src].last : 0;
+    this.setOffset(raw);
+    return this.calibrationOffset;
+  }
+
+  /**
+   * Ma'lum kompas burchagiga (masalan 0° Shimol, 90° Sharq) nisbatan kalibrlash
+   */
+  calibrateTo(targetDeg: number): number {
+    const src = this.pick();
+    const raw = src !== 'none' ? this.ch[src].last : 0;
+    const newOffset = norm(raw - targetDeg);
+    this.setOffset(newOffset);
+    return newOffset;
+  }
+
+  /**
+   * Kalibrlashni zavod holatiga qaytarish (ofset = 0°)
+   */
+  resetCalibration() {
+    this.setOffset(0);
+  }
+
+  /** To'liq telemetriya ma'lumotlarini olish */
+  getDetails(): {
+    heading: number;
+    rawHeading: number;
+    offset: number;
+    pitch: number;
+    roll: number;
+    rate: number;
+    source: HeadingSource;
+    mode: HeadingMode;
+    gyroAlphaRate: number;
+  } {
+    const st = this.getState();
+    const src = this.pick();
+    const raw = src !== 'none' ? this.ch[src].last : 0;
+    return {
+      heading: st ? st.heading : 0,
+      rawHeading: Math.round(raw * 10) / 10,
+      offset: this.calibrationOffset,
+      pitch: this.lastPitch,
+      roll: this.lastRoll,
+      rate: st ? st.rate : 0,
+      source: src,
+      mode: this.mode,
+      gyroAlphaRate: this.gyroAlphaRate
+    };
   }
 
   /** Robot IMU / giroskop qiymati (gradus, shimoldan soat yo'nalishida) */
@@ -147,7 +241,17 @@ class HeadingService {
     const src = this.pick();
     if (src === 'none') return null;
     const c = this.ch[src];
-    return { heading: c.last, source: src, rate: c.rate, t: c.t };
+    const calibrated = norm(c.last - this.calibrationOffset);
+    return {
+      heading: Math.round(calibrated * 10) / 10,
+      rawHeading: Math.round(c.last * 10) / 10,
+      source: src,
+      rate: Math.round(c.rate * 10) / 10,
+      t: c.t,
+      offset: this.calibrationOffset,
+      pitch: this.lastPitch,
+      roll: this.lastRoll
+    };
   }
 
   subscribe(cb: (s: HeadingState | null) => void): () => void {
@@ -181,16 +285,31 @@ class HeadingService {
           // alpha: soat yo'nalishiga TESKARI. Ekran burilgan bo'lsa (planshet yotiq) burchak qo'shiladi
           const screenAngle = (screen.orientation?.angle ?? 0) as number;
           heading = norm(360 - e.alpha + screenAngle);
+        } else if (e.alpha !== null) {
+          const screenAngle = (screen.orientation?.angle ?? 0) as number;
+          heading = norm(360 - e.alpha + screenAngle);
         }
+
+        if (typeof e.beta === 'number' && isFinite(e.beta)) this.lastPitch = Math.round(e.beta * 10) / 10;
+        if (typeof e.gamma === 'number' && isFinite(e.gamma)) this.lastRoll = Math.round(e.gamma * 10) / 10;
         if (heading !== null) this.push('device', heading);
       };
-      // Android Chrome: absolyut (magnitometr bilan) hodisa; boshqalarda oddiy deviceorientation
+
+      this.motionHandler = (e: DeviceMotionEvent) => {
+        if (e.rotationRate && typeof e.rotationRate.alpha === 'number' && isFinite(e.rotationRate.alpha)) {
+          this.gyroAlphaRate = Math.round(e.rotationRate.alpha * 10) / 10;
+        }
+      };
+
       window.addEventListener('deviceorientationabsolute', this.deviceHandler as EventListener);
       window.addEventListener('deviceorientation', this.deviceHandler as EventListener);
+      window.addEventListener('devicemotion', this.motionHandler as EventListener);
     } else if (this.deviceHandler) {
       window.removeEventListener('deviceorientationabsolute', this.deviceHandler as EventListener);
       window.removeEventListener('deviceorientation', this.deviceHandler as EventListener);
+      if (this.motionHandler) window.removeEventListener('devicemotion', this.motionHandler as EventListener);
       this.deviceHandler = null;
+      this.motionHandler = null;
     }
     this.deviceListening = want;
   }

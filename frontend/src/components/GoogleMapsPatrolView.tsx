@@ -13,8 +13,10 @@ import {
   Radio,
   PenLine,
   Check,
-  Undo2
+  Undo2,
+  Sliders
 } from 'lucide-react';
+import { GyroCalibrationModal } from './GyroCalibrationModal';
 import { useRobot } from '../context/RobotContext';
 import { headingService, SmoothAngle, type HeadingMode, type HeadingSource } from '../services/headingService';
 import { navigationService, type NavState } from '../services/navigationService';
@@ -107,6 +109,7 @@ export const GoogleMapsPatrolView: React.FC = () => {
     rate: 0
   });
   const [headingMode, setHeadingModeState] = useState<HeadingMode>(() => headingService.getMode());
+  const [showGyroModal, setShowGyroModal] = useState(false);
   const changeHeadingMode = useCallback(async (m: HeadingMode) => {
     if (m === 'device' || m === 'auto') await headingService.requestDevicePermission();
     headingService.setMode(m);
@@ -895,6 +898,15 @@ export const GoogleMapsPatrolView: React.FC = () => {
                 <option value="gps">Faqat GPS</option>
                 <option value="off">O'chiq</option>
               </select>
+
+              <button
+                onClick={() => setShowGyroModal(true)}
+                className="mt-1.5 w-full py-1 px-2 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/60 text-amber-300 font-bold text-[10px] flex items-center justify-center gap-1.5 shadow transition-all active:scale-95"
+                title="Planshet giroskop va kompasini kalibrlash oynasini ochish"
+              >
+                <Sliders className="w-3 h-3 text-amber-400" />
+                <span>⚙️ Giroskopni Kalibrlash</span>
+              </button>
             </div>
 
             <div className="bg-tactical-900/90 border-l-2 border-emerald-500 p-2 rounded">
@@ -916,6 +928,9 @@ export const GoogleMapsPatrolView: React.FC = () => {
           </ul>
         </div>
       </div>
+
+      {/* Planshet Giroskop va Kompasini Kalibrlash Modali */}
+      {showGyroModal && <GyroCalibrationModal onClose={() => setShowGyroModal(false)} />}
     </div>
   );
 };
