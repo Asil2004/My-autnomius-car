@@ -93,20 +93,20 @@ void orqagaYur(int chapKuch, int ongKuch) {
   oxirgiBuyruqVaqti = millis();
 }
 
-void joyidaChapga(int kuch) {
+void joyidaChapga(int chapOrqaKuch, int ongOldinKuch) {
   analogWrite(chapOldinga_RPWM, 0);
-  analogWrite(chapOrqaga_LPWM, constrain(kuch, 0, 255));
-  analogWrite(ongOldinga_RPWM, constrain(kuch, 0, 255));
+  analogWrite(chapOrqaga_LPWM, constrain(chapOrqaKuch, 0, 255));
+  analogWrite(ongOldinga_RPWM, constrain(ongOldinKuch, 0, 255));
   analogWrite(ongOrqaga_LPWM, 0);
   harakatda = true;
   oxirgiBuyruqVaqti = millis();
 }
 
-void joyidaOngga(int kuch) {
-  analogWrite(chapOldinga_RPWM, constrain(kuch, 0, 255));
+void joyidaOngga(int chapOldinKuch, int ongOrqaKuch) {
+  analogWrite(chapOldinga_RPWM, constrain(chapOldinKuch, 0, 255));
   analogWrite(chapOrqaga_LPWM, 0);
   analogWrite(ongOldinga_RPWM, 0);
-  analogWrite(ongOrqaga_LPWM, constrain(kuch, 0, 255));
+  analogWrite(ongOrqaga_LPWM, constrain(ongOrqaKuch, 0, 255));
   harakatda = true;
   oxirgiBuyruqVaqti = millis();
 }
@@ -130,14 +130,14 @@ void buyruqniBajar(char xarf) {
   switch (xarf) {
     case 'F': oldingaYur(tezlik, tezlik); break;        // To'g'ri oldinga (100% / 100%)
     case 'B': orqagaYur(tezlik, tezlik); break;         // To'g'ri orqaga (100% / 100%)
-    case 'L':
+    case 'L': joyidaChapga(yarimKuch, tezlik); break;   // Tank chapga: chap 50% orqaga, o'ng 100% oldinga
+    case 'R': joyidaOngga(tezlik, yarimKuch); break;    // Tank o'ngga: chap 100% oldinga, o'ng 50% orqaga
     case 'G':
-    case 'Q': oldingaYur(yarimKuch, tezlik); break;     // Chapga burilish: chap balonlar 50% sekinroq, o'ng 100%
-    case 'R':
+    case 'Q': oldingaYur(yarimKuch, tezlik); break;     // Oldinga-chapga yoy: chap 50% oldinga, o'ng 100% oldinga
     case 'I':
-    case 'E': oldingaYur(tezlik, yarimKuch); break;     // O'ngga burilish: o'ng balonlar 50% sekinroq, chap 100%
-    case 'H': orqagaYur(yarimKuch, tezlik); break;      // Orqaga-chapga: chap balonlar 50% sekinroq
-    case 'J': orqagaYur(tezlik, yarimKuch); break;      // Orqaga-o'ngga: o'ng balonlar 50% sekinroq
+    case 'E': oldingaYur(tezlik, yarimKuch); break;     // Oldinga-o'ngga yoy: chap 100% oldinga, o'ng 50% oldinga
+    case 'H': orqagaYur(yarimKuch, tezlik); break;      // Orqaga-chapga: chap 50% orqaga, o'ng 100% orqaga
+    case 'J': orqagaYur(tezlik, yarimKuch); break;      // Orqaga-o'ngga: chap 100% orqaga, o'ng 50% orqaga
     case 'S': toxta(); break;                           // To'xtash
     default:  toxta(); break;
   }
@@ -512,6 +512,18 @@ void handleMove() {
 
     float mag = constrain(sqrt((float)(jx * jx + jy * jy)) / 100.0f, 0.0f, 1.0f);
     int baseKuch = (int)(tezlik * mag);
+
+    if (abs(jy) < 20 && abs(jx) > abs(jy)) {
+      int yarimKuch = (baseKuch * burilishNisbati) / 100;
+      if (jx < 0) {
+        joyidaChapga(yarimKuch, baseKuch);
+      } else {
+        joyidaOngga(baseKuch, yarimKuch);
+      }
+      server.send(200, "application/json", "{\"status\":\"ok\",\"x\":" + String(jx) + ",\"y\":" + String(jy) + "}");
+      return;
+    }
+
     float turnRatio = abs(jx) / 100.0f;
     float maxKamayish = (100 - burilishNisbati) / 100.0f;
 

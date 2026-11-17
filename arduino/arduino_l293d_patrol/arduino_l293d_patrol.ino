@@ -271,13 +271,21 @@ void moveBackwardLeft() {
 }
 
 void turnLeft() {
-  // Chap balonlar 50% sekinroq, o'ng balonlar 100% tezlikda oldinga aylanadi
-  moveForwardLeft();
+  // Tank chapga: chap balonlar 50% orqaga, o'ng balonlar 100% oldinga aylanadi
+  applyDifferentialSpeeds((int)(currentSpeed * CURVE_POWER_RATIO), currentSpeed);
+  motorFL.run(BACKWARD);
+  motorRL.run(BACKWARD);
+  motorRR.run(FORWARD);
+  motorFR.run(FORWARD);
 }
 
 void turnRight() {
-  // O'ng balonlar 50% sekinroq, chap balonlar 100% tezlikda oldinga aylanadi
-  moveForwardRight();
+  // Tank o'ngga: chap balonlar 100% oldinga, o'ng balonlar 50% orqaga aylanadi
+  applyDifferentialSpeeds(currentSpeed, (int)(currentSpeed * CURVE_POWER_RATIO));
+  motorFL.run(FORWARD);
+  motorRL.run(FORWARD);
+  motorRR.run(BACKWARD);
+  motorFR.run(BACKWARD);
 }
 
 void stopAll() {
