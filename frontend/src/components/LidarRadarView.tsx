@@ -9,7 +9,13 @@ import {
   CheckCircle2,
   XCircle,
   Wifi,
-  Radio
+  Radio,
+  RefreshCw,
+  Search,
+  ChevronDown,
+  ChevronUp,
+  Info,
+  Check
 } from 'lucide-react';
 import { lidarSerialService, type LidarFrameData } from '../services/lidarSerialService';
 import type { LidarPoint } from '../types/robot';
@@ -25,6 +31,18 @@ export const LidarRadarView: React.FC = () => {
   const [isOpening, setIsOpening] = useState(false);
   const [portName, setPortName] = useState<string>(() => lidarSerialService.getPortName());
   const [portError, setPortError] = useState<string | null>(null);
+
+  // Oldindan ruxsat berilgan apparat portlari ro'yxati
+  const [knownPorts, setKnownPorts] = useState<Array<{ id: string; name: string; type: 'serial' | 'usb'; raw: any }>>([]);
+  const [isScanningPorts, setIsScanningPorts] = useState(false);
+
+  // Raspberry Pi 5 Ping tekshiruvi holati
+  const [piPingStatus, setPiPingStatus] = useState<{ ok: boolean; text: string } | null>(null);
+  const [isPingingPi, setIsPingingPi] = useState(false);
+  const [showHelpGuide, setShowHelpGuide] = useState(false);
+
+  // Brauzer imkoniyatlari
+  const capabilities = useRef(lidarSerialService.getCapabilities()).current;
 
   // WebSocket URL (Raspberry Pi 5 yoki PC)
   const [wsUrl, setWsUrl] = useState<string>(() => {
@@ -42,7 +60,18 @@ export const LidarRadarView: React.FC = () => {
   const [livePackets, setLivePackets] = useState<number>(0);
   const [hardwareSectors, setHardwareSectors] = useState<{ front: number; right: number; rear: number; left: number } | null>(null);
 
-  const isSerialSupported = lidarSerialService.isSupported();
+
+  // Aniqlangan portlarni qayta skanerlash
+  const refreshKnownPorts = useCallback(async () => {
+    setIsScanningPorts(true);
+    try {
+      const list = await lidarSerialService.getKnownPorts();
+      setKnownPorts(list);
+    } catch (_) {}
+    finally {
+      setIsScanningPorts(false);
+    }
+  }, []);
 
   // Kadrlar kelganda qabul qilish listeneri
   useEffect(() => {
@@ -59,16 +88,42 @@ export const LidarRadarView: React.FC = () => {
       setIsPortOpen(true);
       setPortName(lidarSerialService.getPortName());
     }
-  }, []);
 
-  // Web Serial Portni ochish (Web Serial API @ 230400 bps)
-  const handleOpenPort = useCallback(async () => {
-    if (!isSerialSupported) {
-      setPortError(
-        "Android Chrome da Web Serial datchigi yoqilmagan. Sozlash: 1) chrome://flags ga kiring; 2) 'Experimental Web Platform features' ni Enabled qiling va qayta ishga tushiring; 3) Yoki LiDAR ni Raspberry Pi 5 ga ulab, WebSocket orqali ulang."
-      );
-      return;
+    refreshKnownPorts();
+
+    // USB / Serial ulanish/uzilish hodisalarini kuzatish
+    const nav = typeof navigator !== 'undefined' ? (navigator as any) : null;
+    const onDeviceChange = () => {
+      refreshKnownPorts();
+      if (!lidarSerialService.isOpen()) {
+        setIsPortOpen(false);
+        setPortName('');
+      }
+    };
+
+    if (nav?.serial?.addEventListener) {
+      nav.serial.addEventListener('connect', onDeviceChange);
+      nav.serial.addEventListener('disconnect', onDeviceChange);
     }
+    if (nav?.usb?.addEventListener) {
+      nav.usb.addEventListener('connect', onDeviceChange);
+      nav.usb.addEventListener('disconnect', onDeviceChange);
+    }
+
+    return () => {
+      if (nav?.serial?.removeEventListener) {
+        nav.serial.removeEventListener('connect', onDeviceChange);
+        nav.serial.removeEventListener('disconnect', onDeviceChange);
+      }
+      if (nav?.usb?.removeEventListener) {
+        nav.usb.removeEventListener('connect', onDeviceChange);
+        nav.usb.removeEventListener('disconnect', onDeviceChange);
+      }
+    };
+  }, [refreshKnownPorts]);
+
+  // USB / OTG Portni ochish (Web Serial yoki WebUSB @ 230400 bps)
+  const handleOpenPort = useCallback(async () => {
     try {
       setIsOpening(true);
       setPortError(null);
@@ -76,7 +131,8 @@ export const LidarRadarView: React.FC = () => {
       const res = await lidarSerialService.openPort(230400);
       setIsPortOpen(true);
       setPortName(res.portName);
-      addLog('SERIAL', 'success', `LiDAR porti ochildi: ${res.portName} @ 230400 bps`);
+      addLog('SERIAL', 'success', `LiDAR porti ochildi: ${res.portName}`);
+      refreshKnownPorts();
     } catch (err: any) {
       const msg = err?.message || 'LiDAR portini ochishda xatolik yuz berdi';
       setPortError(msg);
@@ -84,7 +140,53 @@ export const LidarRadarView: React.FC = () => {
     } finally {
       setIsOpening(false);
     }
-  }, [isSerialSupported, addLog]);
+  }, [addLog, refreshKnownPorts]);
+
+  // Mavjud aniqlangan portni ochish
+  const handleOpenExistingPort = useCallback(async (item: { type: 'serial' | 'usb'; raw: any }) => {
+    try {
+      setIsOpening(true);
+      setPortError(null);
+
+      const res = await lidarSerialService.openExistingPort(item, 230400);
+      setIsPortOpen(true);
+      setPortName(res.portName);
+      addLog('SERIAL', 'success', `LiDAR porti ochildi: ${res.portName}`);
+    } catch (err: any) {
+      const msg = err?.message || 'LiDAR portini ochishda xatolik yuz berdi';
+      setPortError(msg);
+      addLog('SERIAL', 'error', `LiDAR xatosi: ${msg}`);
+    } finally {
+      setIsOpening(false);
+    }
+  }, [addLog]);
+
+  // Raspberry Pi 5 LiDAR Serverini tekshirish (Ping)
+  const handlePingPi = useCallback(async () => {
+    try {
+      setIsPingingPi(true);
+      setPiPingStatus(null);
+      const res = await lidarSerialService.pingPiStatus(wsUrl);
+      if (res.ok && res.status) {
+        setPiPingStatus({
+          ok: true,
+          text: `Pi 5 Aloqada! Sensor: ${res.status.port || '/dev/ttyUSB0'} (${res.status.status || 'ONLINE'}, ${res.status.rate_hz || 10} Hz)`
+        });
+      } else {
+        setPiPingStatus({
+          ok: false,
+          text: `Pi 5 bilan aloqa yo'q: ${res.error || 'Ulanib bo‘lmadi'}. Pi IP sini tekshiring va 'python lidar_bridge_server.py' ishga tushganligiga ishonch hosil qiling.`
+        });
+      }
+    } catch (err: any) {
+      setPiPingStatus({
+        ok: false,
+        text: `Xatolik: ${err?.message || 'Ulanib bo‘lmadi'}`
+      });
+    } finally {
+      setIsPingingPi(false);
+    }
+  }, [wsUrl]);
 
   // WebSocket (Raspberry Pi 5 / PC) orqali ulanish
   const handleConnectWs = useCallback(async () => {
@@ -375,23 +477,26 @@ export const LidarRadarView: React.FC = () => {
           <div className="flex items-center justify-between pb-2 mb-3 border-b border-tactical-700/60 font-mono text-xs">
             <span className="font-bold text-white flex items-center space-x-2">
               <Usb className="w-4 h-4 text-police-cyan" />
-              <span>LIDAR PORTI BOSHQARUVI</span>
+              <span>LIDAR PORTI VA ULASH</span>
             </span>
             <span
               className={`text-[10px] px-2 py-0.5 rounded font-bold ${
                 isPortOpen
-                  ? 'bg-emerald-950 text-emerald-400 border border-emerald-600'
+                  ? 'bg-emerald-950 text-emerald-400 border border-emerald-600 animate-pulse'
                   : 'bg-tactical-800 text-slate-400'
               }`}
             >
-              {isPortOpen ? 'ULANGAN (ONLINE)' : 'PORT YOPIQ'}
+              {isPortOpen ? 'ULANGAN (ONLINE)' : 'PORT KUTILMOQDA'}
             </span>
           </div>
 
+          {/* Port parametrlari holati */}
           <div className="space-y-2 font-mono text-xs mb-3">
             <div className="flex justify-between p-2 rounded bg-tactical-950 border border-tactical-800">
-              <span className="text-slate-400">Ulanish usuli:</span>
-              <span className="text-white font-bold">{portName || (isSerialSupported ? 'Web Serial / WebSocket' : 'WebSocket')}</span>
+              <span className="text-slate-400">Faol Port:</span>
+              <span className="text-police-cyan font-bold truncate max-w-[200px]" title={portName}>
+                {portName || 'Port tanlanmagan'}
+              </span>
             </div>
 
             <div className="flex justify-between p-2 rounded bg-tactical-950 border border-tactical-800">
@@ -400,7 +505,7 @@ export const LidarRadarView: React.FC = () => {
             </div>
 
             <div className="flex justify-between p-2 rounded bg-tactical-950 border border-tactical-800">
-              <span className="text-slate-400">Jonli oqim:</span>
+              <span className="text-slate-400">Jonli oqim tezligi:</span>
               <span className="text-emerald-400 font-bold">
                 {isPortOpen ? `${liveRateHz.toFixed(1)} Hz (${liveSpeedRpm} RPM)` : 'Kutish'}
               </span>
@@ -408,11 +513,11 @@ export const LidarRadarView: React.FC = () => {
 
             <div className="flex justify-between p-2 rounded bg-tactical-950 border border-tactical-800">
               <span className="text-slate-400">Qabul qilingan paketlar:</span>
-              <span className="text-police-cyan font-bold">{livePackets} ta paket</span>
+              <span className="text-white font-bold">{livePackets} ta paket</span>
             </div>
           </div>
 
-          {/* Asosiy Portni Ochish / Yopish Tugmalari */}
+          {/* Asosiy Portni Ochish / Yopish */}
           {isPortOpen ? (
             <button
               onClick={handleClosePort}
@@ -422,13 +527,84 @@ export const LidarRadarView: React.FC = () => {
               <span>LIDAR ALOQASINI UZISH (DISCONNECT)</span>
             </button>
           ) : (
-            <div className="flex flex-col gap-2.5">
-              {/* 1. Raspberry Pi 5 / PC WebSocket orqali (Planshet va tarmoq uchun ideal) */}
-              <div className="p-2.5 bg-tactical-950 rounded-lg border border-police-cyan/40 flex flex-col gap-2">
-                <div className="text-[11px] font-bold text-police-cyan flex items-center gap-1.5">
-                  <Wifi className="w-3.5 h-3.5" />
-                  <span>Raspberry Pi 5 LiDAR Ko'prigi (Tarmoq / Wi-Fi)</span>
+            <div className="flex flex-col gap-3 font-mono">
+              {/* 1. USB / OTG Datchik Portlari */}
+              <div className="p-3 bg-tactical-950 rounded-lg border border-tactical-800 flex flex-col gap-2">
+                <div className="flex items-center justify-between text-xs font-bold text-police-cyan">
+                  <span className="flex items-center gap-1.5">
+                    <Usb className="w-4 h-4" />
+                    <span>USB / OTG PORT (PLANCHET / PC)</span>
+                  </span>
+                  <button
+                    onClick={refreshKnownPorts}
+                    disabled={isScanningPorts}
+                    title="Portlarni qayta skanerlash"
+                    className="p-1 rounded hover:bg-tactical-800 text-slate-400 hover:text-white transition-all"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isScanningPorts ? 'animate-spin' : ''}`} />
+                  </button>
                 </div>
+
+                {/* Mavjud / Avval juftlangan portlar ro'yxati */}
+                {knownPorts.length > 0 && (
+                  <div className="space-y-1.5 my-1">
+                    <div className="text-[10px] text-slate-400">Juftlangan / Tayyor portlar:</div>
+                    {knownPorts.map((kp) => (
+                      <div
+                        key={kp.id}
+                        className="flex items-center justify-between p-2 rounded bg-tactical-900 border border-tactical-700/60"
+                      >
+                        <span className="text-[11px] text-emerald-300 font-bold truncate max-w-[170px]" title={kp.name}>
+                          {kp.name}
+                        </span>
+                        <button
+                          onClick={() => handleOpenExistingPort(kp)}
+                          disabled={isOpening}
+                          className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold rounded flex items-center gap-1 shadow transition-all active:scale-95"
+                        >
+                          <Check className="w-3 h-3" />
+                          <span>Ulash</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Asosiy Port Tanlash Tugmasi */}
+                <button
+                  onClick={handleOpenPort}
+                  disabled={isOpening}
+                  className="w-full py-2.5 px-3 rounded-lg font-mono font-bold text-xs flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-all active:scale-95 animate-pulse"
+                >
+                  <Search className="w-4 h-4 text-white" />
+                  <span>{isOpening ? 'Port tanlanmoqda...' : '⚡ USB / OTG PORTNI TANLASH'}</span>
+                </button>
+
+                {/* Datchik imkoniyatlari belgisi */}
+                <div className="grid grid-cols-2 gap-1 text-[10px] text-slate-400 pt-1">
+                  <div className="flex items-center gap-1">
+                    <span className={capabilities.hasSerial ? 'text-emerald-400' : 'text-slate-500'}>
+                      {capabilities.hasSerial ? '● Web Serial: Faol' : '○ Web Serial: Flags kerak'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className={capabilities.hasUsb ? 'text-emerald-400' : 'text-slate-500'}>
+                      {capabilities.hasUsb ? '● WebUSB: OTG tayyor' : '○ WebUSB: Yo\'q'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. Raspberry Pi 5 LiDAR Ko'prigi (Wi-Fi / LAN) */}
+              <div className="p-3 bg-tactical-950 rounded-lg border border-police-cyan/30 flex flex-col gap-2">
+                <div className="text-xs font-bold text-police-cyan flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Wifi className="w-4 h-4" />
+                    <span>RASPBERRY PI 5 KO'PRIGI</span>
+                  </span>
+                  <span className="text-[10px] text-slate-400">Wi-Fi / LAN</span>
+                </div>
+
                 <div className="flex gap-1.5">
                   <input
                     type="text"
@@ -437,31 +613,76 @@ export const LidarRadarView: React.FC = () => {
                     placeholder="ws://192.168.1.100:8000/ws"
                     className="flex-1 bg-tactical-900 border border-tactical-700 rounded px-2 py-1 text-xs text-slate-200 font-mono focus:outline-none focus:border-police-cyan"
                   />
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={handlePingPi}
+                    disabled={isPingingPi}
+                    className="flex-1 py-1.5 bg-tactical-800 hover:bg-tactical-700 text-slate-200 text-xs font-bold rounded flex items-center justify-center gap-1 border border-tactical-600 transition-all active:scale-95"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isPingingPi ? 'animate-spin' : ''}`} />
+                    <span>{isPingingPi ? 'Tekshirilmoqda...' : '🔍 Tekshirish (Ping)'}</span>
+                  </button>
+
                   <button
                     onClick={handleConnectWs}
                     disabled={isOpening}
-                    className="px-3 py-1 bg-police-blue hover:bg-blue-600 text-white text-xs font-bold rounded flex items-center gap-1 shadow transition-all active:scale-95 shrink-0"
+                    className="flex-1 py-1.5 bg-police-blue hover:bg-blue-600 text-white text-xs font-bold rounded flex items-center justify-center gap-1 shadow transition-all active:scale-95"
                   >
                     <Radio className="w-3.5 h-3.5" />
-                    <span>Ulash</span>
+                    <span>⚡ Ulash</span>
                   </button>
                 </div>
-                <div className="text-[9px] text-slate-400">
-                  Planshet (Redmi Pad) va barcha qurilmalar uchun. Pi 5 da <code>python lidar_bridge_server.py</code> ishga tushiriladi.
-                </div>
+
+                {/* Pi Ping Natijasi */}
+                {piPingStatus && (
+                  <div
+                    className={`p-2 rounded text-[11px] font-mono border ${
+                      piPingStatus.ok
+                        ? 'bg-emerald-950/80 border-emerald-600 text-emerald-300'
+                        : 'bg-rose-950/80 border-rose-600 text-rose-300'
+                    }`}
+                  >
+                    {piPingStatus.text}
+                  </div>
+                )}
               </div>
 
-              {/* 2. Web Serial API (USB / OTG kabel orqali bevosita ulanish) */}
-              <button
-                onClick={handleOpenPort}
-                disabled={isOpening}
-                className="w-full py-2.5 px-3 rounded-lg font-mono font-bold text-xs flex items-center justify-center gap-2 bg-emerald-700 hover:bg-emerald-600 text-white border border-emerald-500 shadow transition-all active:scale-95"
-              >
-                <Usb className="w-4 h-4 text-white" />
-                <span>{isOpening ? 'Port qidirilmoqda...' : '⚡ BEVOSITA USB / OTG PORT (CP2102)'}</span>
-              </button>
-              <div className="text-[9px] text-slate-400 font-mono text-center">
-                Planshetga Type-C OTG kabel orqali ulangan bo'lsa yoki kompyuterda.
+              {/* 3. Redmi Pad 2 Pro Planshetida Ishlatish Ko'rsatmasi */}
+              <div className="rounded-lg border border-tactical-800 bg-tactical-950/60 overflow-hidden text-xs">
+                <button
+                  onClick={() => setShowHelpGuide(!showHelpGuide)}
+                  className="w-full p-2.5 flex items-center justify-between text-slate-300 hover:text-white transition-all"
+                >
+                  <span className="flex items-center gap-1.5 font-bold text-amber-400">
+                    <Info className="w-4 h-4" />
+                    <span>Redmi Pad 2 Pro da portni chiqarish:</span>
+                  </span>
+                  {showHelpGuide ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                </button>
+
+                {showHelpGuide && (
+                  <div className="p-3 pt-0 border-t border-tactical-800/60 text-[11px] text-slate-300 space-y-2">
+                    <div className="p-2 rounded bg-tactical-900 border border-tactical-800">
+                      <b className="text-police-cyan">A) OTG kabel orqali planshetga ulanganda:</b>
+                      <ol className="list-decimal list-inside mt-1 space-y-1 text-slate-400">
+                        <li>Planshet <b>Sozlamalar &rarr; Qo'shimcha sozlamalar &rarr; OTG</b> ni yoqing (Xiaomi/HyperOS da kerak).</li>
+                        <li><b>"⚡ USB / OTG PORTNI TANLASH"</b> tugmasini bosing — ekranda <i>"CP2102 USB to UART"</i> oynasi chiqadi.</li>
+                        <li>Qurilmani belgilab <b>"Ruxsat berish"</b> (Connect) ni bosing.</li>
+                      </ol>
+                    </div>
+
+                    <div className="p-2 rounded bg-tactical-900 border border-tactical-800">
+                      <b className="text-police-cyan">B) Raspberry Pi 5 orqali simsiz (Tavsiya etiladi):</b>
+                      <ol className="list-decimal list-inside mt-1 space-y-1 text-slate-400">
+                        <li>LiDAR ni Pi 5 USB portiga ulang (CP2102 avtomatik <code>/dev/ttyUSB0</code> bo'ladi).</li>
+                        <li>Pi 5 terminalida: <code>python lidar_bridge_server.py</code></li>
+                        <li>Planshetda yuqoridagi maydonga Pi IP sini yozib <b>"Tekshirish"</b> va <b>"Ulash"</b> ni bosing.</li>
+                      </ol>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}

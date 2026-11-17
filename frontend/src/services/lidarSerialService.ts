@@ -3,7 +3,8 @@
  * QALQON ROBOT — LDROBOT STL-19P (LD19 / D300) 360° LIDAR DRAYVERI
  * Qo'llab-quvvatlaydi:
  *   1. Web Serial API (Desktop Chrome / Edge / Pi Chromium orqali to'g'ridan-to'g'ri USB/COM port);
- *   2. WebSocket Ko'prigi (Raspberry Pi 5 yoki PC lidar_bridge_server.py orqali Wi-Fi tarmoqda).
+ *   2. WebUSB API (Android Chrome / Planshetda to'g'ridan-to'g'ri Type-C OTG orqali CP2102 / CH340);
+ *   3. WebSocket Ko'prigi (Raspberry Pi 5 yoki PC lidar_bridge_server.py orqali Wi-Fi tarmoqda).
  * =============================================================================
  */
 
@@ -33,7 +34,7 @@ export interface LidarObstacleInfo {
   isBlocked: boolean;
   evasion: 'CLEAR' | 'LEFT' | 'RIGHT' | 'REVERSE';
   lastUpdated: number;
-  source: 'serial' | 'websocket' | 'none';
+  source: 'serial' | 'webusb' | 'websocket' | 'none';
 }
 
 type FrameCallback = (data: LidarFrameData) => void;
@@ -41,6 +42,7 @@ type FrameCallback = (data: LidarFrameData) => void;
 class LidarSerialService {
   private port: any = null;
   private reader: any = null;
+  private usbDevice: any = null;
   private isReading = false;
   private ws: WebSocket | null = null;
   private isWsConnected = false;
@@ -74,10 +76,37 @@ class LidarSerialService {
   };
 
   /**
-   * Brauzerda Web Serial API qo'llab-quvvatlanishini tekshirish
+   * Brauzerda Web Serial yoki WebUSB API mavjudligini tekshirish
    */
   public isSupported(): boolean {
+    return (
+      typeof navigator !== 'undefined' &&
+      (('serial' in navigator) || ('usb' in navigator))
+    );
+  }
+
+  public isSerialAvailable(): boolean {
     return typeof navigator !== 'undefined' && 'serial' in navigator;
+  }
+
+  public isUsbAvailable(): boolean {
+    return typeof navigator !== 'undefined' && 'usb' in navigator;
+  }
+
+  public getCapabilities(): {
+    hasSerial: boolean;
+    hasUsb: boolean;
+    isSecureContext: boolean;
+    origin: string;
+  } {
+    const isSecureContext = typeof window !== 'undefined' && !!window.isSecureContext;
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    return {
+      hasSerial: typeof navigator !== 'undefined' && 'serial' in navigator,
+      hasUsb: typeof navigator !== 'undefined' && 'usb' in navigator,
+      isSecureContext,
+      origin
+    };
   }
 
   public isOpen(): boolean {
@@ -90,6 +119,70 @@ class LidarSerialService {
 
   public getObstacleInfo(): LidarObstacleInfo {
     return this.lastObstacleInfo;
+  }
+
+  /**
+   * Avval ruxsat berilgan (juftlangan) portlar yoki USB datchiklarni olish
+   */
+  public async getKnownPorts(): Promise<Array<{ id: string; name: string; type: 'serial' | 'usb'; raw: any }>> {
+    const nav = typeof navigator !== 'undefined' ? (navigator as any) : null;
+    if (!nav) return [];
+    const list: Array<{ id: string; name: string; type: 'serial' | 'usb'; raw: any }> = [];
+
+    // 1. Web Serial orqali oldin ruxsat olingan portlar
+    if ('serial' in nav && nav.serial.getPorts) {
+      try {
+        const ports = await nav.serial.getPorts();
+        ports.forEach((p: any, idx: number) => {
+          const info = p.getInfo ? p.getInfo() : {};
+          const vid = info.usbVendorId ? `0x${info.usbVendorId.toString(16).toUpperCase()}` : '';
+          const pid = info.usbProductId ? `0x${info.usbProductId.toString(16).toUpperCase()}` : '';
+          const label = vid
+            ? `USB Serial (VID: ${vid}${pid ? ` PID: ${pid}` : ''})`
+            : `Serial Port #${idx + 1}`;
+          list.push({ id: `serial-${idx}`, name: label, type: 'serial', raw: p });
+        });
+      } catch (_) {}
+    }
+
+    // 2. WebUSB orqali oldin ruxsat olingan datchiklar
+    if ('usb' in nav && nav.usb.getDevices) {
+      try {
+        const devs = await nav.usb.getDevices();
+        devs.forEach((d: any, idx: number) => {
+          const vid = `0x${d.vendorId.toString(16).toUpperCase()}`;
+          const label = d.productName || `USB Datchik #${idx + 1} (VID: ${vid})`;
+          list.push({ id: `usb-${idx}`, name: label, type: 'usb', raw: d });
+        });
+      } catch (_) {}
+    }
+
+    return list;
+  }
+
+  /**
+   * Raspberry Pi 5 LiDAR Serveri holatini tekshirish (Ping REST /api/status)
+   */
+  public async pingPiStatus(baseUrl: string): Promise<{ ok: boolean; status?: any; error?: string }> {
+    try {
+      const clean = baseUrl.trim().replace(/\/+$/, '');
+      const httpUrl = clean
+        .replace(/^ws:\/\//i, 'http://')
+        .replace(/^wss:\/\//i, 'https://')
+        .replace(/\/ws$/i, '');
+
+      const urlToFetch = httpUrl.startsWith('http') ? `${httpUrl}/api/status` : `http://${httpUrl}/api/status`;
+      const resp = await fetch(urlToFetch, {
+        signal: AbortSignal.timeout ? AbortSignal.timeout(3500) : undefined
+      });
+      if (!resp.ok) {
+        return { ok: false, error: `HTTP ${resp.status}: Server javob bermadi` };
+      }
+      const data = await resp.json();
+      return { ok: true, status: data };
+    } catch (err: any) {
+      return { ok: false, error: err?.message || "Serverga ulanib bo'lmadi" };
+    }
   }
 
   /**
@@ -151,7 +244,7 @@ class LidarSerialService {
               if (data.rate_hz) this.measuredHz = data.rate_hz;
               if (data.rpm) this.lastSpeedRpm = data.rpm;
               if (data.packets_count) this.packetsCount = data.packets_count;
-              this.emitFrame();
+              this.emitFrame('websocket');
             }
           } catch (_) {}
         };
@@ -174,65 +267,182 @@ class LidarSerialService {
   }
 
   /**
-   * 2. Haqiqiy USB COM portni ochish (Web Serial API @ 230400 baud)
+   * 2. USB COM portni ochish:
+   *  - Web Serial (Desktop yoki Android flags) bo'lsa: Web Serial API orqali
+   *  - Aks holda (Android standart Chrome): WebUSB API orqali bevosita CP2102/CH340 chipiga ulanadi
    */
   public async openPort(baudRate = 230400): Promise<{ portName: string }> {
     await this.closePort();
 
-    if (!this.isSupported()) {
-      throw new Error(
-        "Brauzeringizda Web Serial API qo'llab-quvvatlanmaydi. Iltimos, Desktop Chrome/Edge ishlating yoki 'Raspberry Pi WebSocket' orqali ulaning."
-      );
-    }
+    const nav = typeof navigator !== 'undefined' ? (navigator as any) : null;
+    if (!nav) throw new Error("Brauzer muhiti topilmadi");
 
-    const nav = navigator as any;
-    try {
-      // 1. Filtrlarsiz ochish: barcha ulangan USB serial qurilmalarni ko'rsatish
-      this.port = await nav.serial.requestPort();
-    } catch (e: any) {
-      // 2. Agar bo'sh filters bo'lmasa, ma'lum chip VID lari bilan urinib ko'rish
+    // A) WEB SERIAL API (Desktop Chrome / Edge / Pi Chromium / Android flags)
+    if ('serial' in nav) {
+      let selectedPort: any = null;
       try {
-        this.port = await nav.serial.requestPort({
-          filters: [
-            { usbVendorId: 0x10c4 }, // Silicon Labs CP210x (har qanday PID)
-            { usbVendorId: 0x1a86 }, // WCH CH340 / CH341 / CH343
-            { usbVendorId: 0x0403 }, // FTDI
-            { usbVendorId: 0x067b }, // Prolific PL2303
-            { usbVendorId: 0x303a }  // Espressif USB CDC
-          ]
+        try {
+          selectedPort = await nav.serial.requestPort();
+        } catch (firstErr: any) {
+          if (firstErr?.name === 'NotFoundError' || firstErr?.message?.includes('No port selected')) {
+            throw new Error("Port tanlash bekor qilindi");
+          }
+          // Agar parametrsiz requestPort rad etilsa, ma'lum filterlar bilan chaqiramiz
+          selectedPort = await nav.serial.requestPort({
+            filters: [
+              { usbVendorId: 0x10c4 }, // CP210x (LD19 / STL-19P)
+              { usbVendorId: 0x1a86 }, // CH340 / CH341
+              { usbVendorId: 0x0403 }, // FTDI
+              { usbVendorId: 0x067b }  // PL2303
+            ]
+          });
+        }
+      } catch (serialErr: any) {
+        if (serialErr?.name === 'NotFoundError' || serialErr?.message?.includes('No port selected') || serialErr?.message?.includes('bekor qilindi')) {
+          throw new Error("Port tanlash bekor qilindi");
+        }
+        // Agar Web Serial xatolik bersa (masalan Androidda WebUSB imkoni bo'lsa)
+        if (!('usb' in nav)) {
+          throw new Error(`Serial port xatosi: ${serialErr?.message || serialErr}`);
+        }
+      }
+
+      if (selectedPort) {
+        this.port = selectedPort;
+        await this.port.open({
+          baudRate,
+          bufferSize: 65536,
+          dataBits: 8,
+          stopBits: 1,
+          parity: 'none',
+          flowControl: 'none'
         });
-      } catch {
-        throw new Error(e?.message || "LiDAR porti tanlanmadi yoki bekor qilindi");
+
+        const info = this.port.getInfo ? this.port.getInfo() : {};
+        const vid = info.usbVendorId ? `0x${info.usbVendorId.toString(16).toUpperCase()}` : '';
+        const portName = vid ? `CP2102/Serial (VID: ${vid})` : 'USB Serial Port';
+
+        this.currentPortName = `${portName} @ ${baudRate} bps`;
+        this.isReading = true;
+        this.readLoop();
+
+        return { portName: this.currentPortName };
       }
     }
 
-    if (!this.port) {
-      throw new Error("Port tanlanmadi");
+    // B) WEBUSB API (Android Chrome — OTG orqali to'g'ridan-to'g'ri planshetda ishlaydi)
+    if ('usb' in nav) {
+      let dev: any = null;
+      const usbFilters = [
+        { vendorId: 0x10c4 }, // Silicon Labs CP2102 / CP2104 (LDROBOT STL-19P datchigi)
+        { vendorId: 0x1a86 }, // WCH CH340 / CH341
+        { vendorId: 0x0403 }, // FTDI FT232
+        { vendorId: 0x067b }, // Prolific PL2303
+        { vendorId: 0x2341 }, // Arduino
+        { vendorId: 0x303a }, // Espressif ESP32
+        { vendorId: 0x2e8a }, // Raspberry Pi Pico
+        { vendorId: 0x1366 }  // Segger
+      ];
+
+      try {
+        dev = await nav.usb.requestDevice({ filters: usbFilters });
+      } catch (usbErr: any) {
+        if (usbErr?.name === 'NotFoundError' || usbErr?.message?.includes('No device selected')) {
+          throw new Error("USB datchik tanlash bekor qilindi");
+        }
+        throw new Error(usbErr?.message || "USB datchik topilmadi");
+      }
+
+      if (!dev) throw new Error("USB datchik tanlanmadi");
+
+      await dev.open();
+      if (dev.configuration === null) {
+        await dev.selectConfiguration(1);
+      }
+      await dev.claimInterface(0);
+
+      // CP2102 UART baud rate sozlash
+      try {
+        await dev.controlTransferOut(
+          { requestType: 'vendor', recipient: 'interface', request: 0x1e, value: 0, index: 0 },
+          new Uint32Array([baudRate]).buffer
+        );
+        await dev.controlTransferOut(
+          { requestType: 'vendor', recipient: 'interface', request: 0x00, value: 1, index: 0 }
+        );
+      } catch (_) {}
+
+      this.usbDevice = dev;
+      const portName = dev.productName || `CP2102 USB (VID: 0x${dev.vendorId.toString(16).toUpperCase()})`;
+      this.currentPortName = `${portName} @ ${baudRate} bps (WebUSB)`;
+      this.isReading = true;
+
+      this.readUsbLoop(dev);
+
+      return { portName: this.currentPortName };
     }
 
-    await this.port.open({
-      baudRate,
-      bufferSize: 65536,
-      dataBits: 8,
-      stopBits: 1,
-      parity: 'none',
-      flowControl: 'none'
-    });
-
-    const info = this.port.getInfo ? this.port.getInfo() : {};
-    const portName = info.usbVendorId
-      ? `CP2102 (VID: 0x${info.usbVendorId.toString(16).toUpperCase()})`
-      : 'USB Serial Port';
-
-    this.currentPortName = `${portName} @ ${baudRate} bps`;
-    this.isReading = true;
-    this.readLoop();
-
-    return { portName: this.currentPortName };
+    throw new Error(
+      "Brauzeringizda USB/Serial portni ochish imkoni topilmadi. Iltimos, Raspberry Pi WebSocket orqali ulaning yoki Chrome sozlamalaridan Web Serial/USB ruxsatini yoqing."
+    );
   }
 
   /**
-   * Portni to'xtatish va toza yopish (Serial yoki WebSocket)
+   * Avval ruxsat olingan ma'lum bir portni to'g'ridan-to'g'ri ochish
+   */
+  public async openExistingPort(item: { type: 'serial' | 'usb'; raw: any }, baudRate = 230400): Promise<{ portName: string }> {
+    await this.closePort();
+
+    if (item.type === 'serial') {
+      const port = item.raw;
+      await port.open({
+        baudRate,
+        bufferSize: 65536,
+        dataBits: 8,
+        stopBits: 1,
+        parity: 'none',
+        flowControl: 'none'
+      });
+      this.port = port;
+      const info = port.getInfo ? port.getInfo() : {};
+      const vid = info.usbVendorId ? `0x${info.usbVendorId.toString(16).toUpperCase()}` : '';
+      this.currentPortName = `CP2102/Serial ${vid ? `(${vid})` : ''} @ ${baudRate} bps`;
+      this.isReading = true;
+      this.readLoop();
+      return { portName: this.currentPortName };
+    }
+
+    if (item.type === 'usb') {
+      const dev = item.raw;
+      await dev.open();
+      if (dev.configuration === null) {
+        await dev.selectConfiguration(1);
+      }
+      await dev.claimInterface(0);
+
+      try {
+        await dev.controlTransferOut(
+          { requestType: 'vendor', recipient: 'interface', request: 0x1e, value: 0, index: 0 },
+          new Uint32Array([baudRate]).buffer
+        );
+        await dev.controlTransferOut(
+          { requestType: 'vendor', recipient: 'interface', request: 0x00, value: 1, index: 0 }
+        );
+      } catch (_) {}
+
+      this.usbDevice = dev;
+      const portName = dev.productName || `CP2102 USB (VID: 0x${dev.vendorId.toString(16).toUpperCase()})`;
+      this.currentPortName = `${portName} @ ${baudRate} bps (WebUSB)`;
+      this.isReading = true;
+      this.readUsbLoop(dev);
+      return { portName: this.currentPortName };
+    }
+
+    throw new Error("Noma'lum port turi");
+  }
+
+  /**
+   * Portni to'xtatish va toza yopish (Serial, WebUSB yoki WebSocket)
    */
   public async closePort(): Promise<void> {
     this.isReading = false;
@@ -262,6 +472,13 @@ class LidarSerialService {
       } catch (_) {}
       this.port = null;
     }
+
+    if (this.usbDevice) {
+      try {
+        await this.usbDevice.close();
+      } catch (_) {}
+      this.usbDevice = null;
+    }
   }
 
   public onFrame(callback: FrameCallback): void {
@@ -269,7 +486,7 @@ class LidarSerialService {
   }
 
   /**
-   * Asinxron paket o'qish sikli (47 baytli STL-19P paketlari)
+   * Web Serial asinxron paket o'qish sikli (47 baytli STL-19P paketlari)
    */
   private async readLoop(): Promise<void> {
     let buffer = new Uint8Array(0);
@@ -312,7 +529,7 @@ class LidarSerialService {
             const now = performance.now();
             if (now - lastEmitTime >= 33) {
               lastEmitTime = now;
-              this.emitFrame();
+              this.emitFrame('serial');
             }
           }
         } finally {
@@ -324,6 +541,63 @@ class LidarSerialService {
       }
     } catch (err) {
       console.warn('[LiDAR Serial] O\'qish xatosi yoki port uzildi:', err);
+    } finally {
+      this.isReading = false;
+    }
+  }
+
+  /**
+   * WebUSB (Android OTG) o'qish sikli
+   */
+  private async readUsbLoop(device: any): Promise<void> {
+    let buffer = new Uint8Array(0);
+    let lastEmitTime = performance.now();
+
+    try {
+      while (this.isReading && device.opened) {
+        const endpoints = device.configuration?.interfaces?.[0]?.alternate?.endpoints || [];
+        const inEndpoint = endpoints.find((ep: any) => ep.direction === 'in')?.endpointNumber || 1;
+
+        const result = await device.transferIn(inEndpoint, 512);
+        if (result.status !== 'ok' || !result.data || result.data.byteLength === 0) {
+          continue;
+        }
+
+        const value = new Uint8Array(result.data.buffer, result.data.byteOffset, result.data.byteLength);
+
+        const newBuf = new Uint8Array(buffer.length + value.length);
+        newBuf.set(buffer, 0);
+        newBuf.set(value, buffer.length);
+        buffer = newBuf;
+
+        let idx = 0;
+        while (idx <= buffer.length - 47) {
+          if (buffer[idx] === 0x54 && buffer[idx + 1] === 0x2c) {
+            const pkt = buffer.subarray(idx, idx + 47);
+            this.parsePacket(pkt);
+            idx += 47;
+            this.packetsCount++;
+          } else {
+            idx++;
+          }
+        }
+
+        if (idx > 0) {
+          buffer = buffer.subarray(idx);
+        }
+
+        if (buffer.length > 2048) {
+          buffer = buffer.subarray(buffer.length - 1024);
+        }
+
+        const now = performance.now();
+        if (now - lastEmitTime >= 33) {
+          lastEmitTime = now;
+          this.emitFrame('webusb');
+        }
+      }
+    } catch (err) {
+      console.warn('[LiDAR WebUSB] O\'qish xatosi yoki port uzildi:', err);
     } finally {
       this.isReading = false;
     }
@@ -372,7 +646,7 @@ class LidarSerialService {
   /**
    * 360 graduslik ma'lumotlar va 4 sektor masofalarini chiqarish
    */
-  private emitFrame(): void {
+  private emitFrame(source: 'serial' | 'webusb' | 'websocket'): void {
     const points: LidarPoint[] = new Array(360);
     let minDist = 999;
     let minAngle = 0;
@@ -414,7 +688,7 @@ class LidarSerialService {
       isBlocked,
       evasion,
       lastUpdated: Date.now(),
-      source: this.isWsConnected ? 'websocket' : this.isReading ? 'serial' : 'none'
+      source
     };
 
     if (this.onFrameCallback) {
