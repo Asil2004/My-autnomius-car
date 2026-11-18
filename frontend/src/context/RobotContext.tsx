@@ -470,6 +470,12 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     watchIdRef.current = navigator.geolocation.watchPosition(
       (pos) => {
+        // Agar Trackk Cloud RTK serveri faol bo'lsa, brauzerning past aniqlikdagi GPS'i uni bosib ketmasligi kerak
+        const rtk = rtkGpsService.getData();
+        if (rtk && rtk.is_online && rtk.status === 'ok') {
+          return;
+        }
+
         const speedKmH = pos.coords.speed !== null && pos.coords.speed !== undefined
           ? +(pos.coords.speed * 3.6).toFixed(1)
           : 0;

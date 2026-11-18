@@ -16,7 +16,14 @@ import {
   Undo2,
   Sliders,
   Play,
-  RotateCcw
+  RotateCcw,
+  Download,
+  FileText,
+  Globe,
+  Cloud,
+  Copy,
+  CheckCircle2,
+  X
 } from 'lucide-react';
 import { GyroCalibrationModal } from './GyroCalibrationModal';
 import { useRobot } from '../context/RobotContext';
@@ -24,6 +31,7 @@ import { headingService, SmoothAngle, type HeadingMode, type HeadingSource } fro
 import { navigationService, type NavState } from '../services/navigationService';
 import { camLinkSettings } from '../services/camLinkSettings';
 import { fleetWatcher, selectedRobotStore, type FleetState } from '../services/robotCamLink';
+import { rtkGpsService, type RtkGpsData } from '../services/rtkGpsService';
 
 // Default center: Navoiy street (Opposite Qizilqum 13 & Navoiy City)
 const NAVOI_CENTER: [number, number] = [40.09985, 65.36835];
@@ -112,6 +120,24 @@ export const GoogleMapsPatrolView: React.FC = () => {
   });
   const [headingMode, setHeadingModeState] = useState<HeadingMode>(() => headingService.getMode());
   const [showGyroModal, setShowGyroModal] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [showApiModal, setShowApiModal] = useState(false);
+  const [exportSource, setExportSource] = useState<'waypoints' | 'history'>('waypoints');
+  const [isExporting, setIsExporting] = useState(false);
+  const [copiedApi, setCopiedApi] = useState(false);
+
+  // Trackk Cloud RTK real-vaqt ma'lumotlari
+  const [rtkData, setRtkData] = useState<RtkGpsData>(() => rtkGpsService.getData());
+  useEffect(() => rtkGpsService.subscribe(setRtkData), []);
+
+  // Xarita birinchi marta yuklanganda RTK koordinatasiga avtomatik markazlashtirish
+  const hasAutoCenteredRef = useRef(false);
+  useEffect(() => {
+    if (rtkData.is_online && rtkData.lat && rtkData.lng && !hasAutoCenteredRef.current && mapRef.current) {
+      hasAutoCenteredRef.current = true;
+      mapRef.current.setView([rtkData.lat, rtkData.lng], 19);
+    }
+  }, [rtkData.is_online, rtkData.lat, rtkData.lng]);
   const changeHeadingMode = useCallback(async (m: HeadingMode) => {
     if (m === 'device' || m === 'auto') await headingService.requestDevicePermission();
     headingService.setMode(m);
@@ -253,6 +279,157 @@ export const GoogleMapsPatrolView: React.FC = () => {
       setRoutingStatus(`✅ ${pts.length - 1} ta chiziq, ${m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${Math.round(m)} m`}`);
     }
   }, [renderPolyline, routeLengthM]);
+
+  // ---------------------------------------------------------------------------
+  // EKSPORT FUNKSIYALARI (CSV, GPX, GeoJSON, Google Earth KML)
+  // ---------------------------------------------------------------------------
+  const getExportCoordinates = async (source: 'waypoints' | 'history'): Promise<{ lat: number; lon: number; alt?: number; speed?: number; time?: string }[]> => {
+    if (source === 'waypoints') {
+      if (waypointsRef.current.length === 0) {
+        return [{ lat: telemetry.lat, lon: telemetry.lon, alt: 370, speed: telemetry.speed, time: new Date().toISOString() }];
+      }
+      return waypointsRef.current.map(w => ({ lat: w.lat, lon: w.lon, alt: 370, speed: 0, time: new Date().toISOString() }));
+    }
+    // Serverdan tarixni olish (?action=history)
+    try {
+      const res = await fetch('https://trackk-gl6l.onrender.com/api.php?action=history');
+      if (res.ok) {
+        const hist = await res.json();
+        if (Array.isArray(hist) && hist.length > 0) {
+          return hist.map((p: any) => ({
+            lat: parseFloat(p.lat),
+            lon: parseFloat(p.lng),
+            alt: parseFloat(p.alt) || 370,
+            speed: parseFloat(p.speed) || 0,
+            time: p.ts ? new Date(p.ts).toISOString() : new Date().toISOString()
+          }));
+        }
+      }
+    } catch (e) {
+      console.warn("Tarixni yuklashda xatolik:", e);
+    }
+    // Zaxira: joriy robot koordinatasi
+    return [{ lat: telemetry.lat, lon: telemetry.lon, alt: 370, speed: telemetry.speed, time: new Date().toISOString() }];
+  };
+
+  const handleExportCSV = async (source: 'waypoints' | 'history') => {
+    setIsExporting(true);
+    try {
+      const pts = await getExportCoordinates(source);
+      let csv = "Index,Vaqt,Kenglik (Lat),Uzunlik (Lon),Balandlik (m),Tezlik (km/h)\n";
+      pts.forEach((p, idx) => {
+        csv += `${idx + 1},"${p.time || ''}",${p.lat.toFixed(8)},${p.lon.toFixed(8)},${(p.alt || 0).toFixed(1)},${(p.speed || 0).toFixed(1)}\n`;
+      });
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `qalqon_${source}_${Date.now()}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleExportGPX = async (source: 'waypoints' | 'history') => {
+    setIsExporting(true);
+    try {
+      const pts = await getExportCoordinates(source);
+      let gpx = `<?xml version="1.0" encoding="UTF-8"?>\n`;
+      gpx += `<gpx version="1.1" creator="Qalqon-Trackk-Cloud" xmlns="http://www.topografix.com/GPX/1/1">\n`;
+      gpx += `  <metadata><name>Qalqon Robot - ${source}</name><time>${new Date().toISOString()}</time></metadata>\n`;
+      gpx += `  <trk>\n    <name>Qalqon RTK Patrol</name>\n    <trkseg>\n`;
+      pts.forEach(p => {
+        gpx += `      <trkpt lat="${p.lat.toFixed(8)}" lon="${p.lon.toFixed(8)}">\n`;
+        if (p.alt) gpx += `        <ele>${p.alt.toFixed(1)}</ele>\n`;
+        if (p.time) gpx += `        <time>${p.time}</time>\n`;
+        gpx += `      </trkpt>\n`;
+      });
+      gpx += `    </trkseg>\n  </trk>\n</gpx>`;
+      const blob = new Blob([gpx], { type: 'application/gpx+xml;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `qalqon_${source}_${Date.now()}.gpx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleExportGeoJSON = async (source: 'waypoints' | 'history') => {
+    setIsExporting(true);
+    try {
+      const pts = await getExportCoordinates(source);
+      const geojson = {
+        type: "FeatureCollection",
+        properties: {
+          generator: "Qalqon AMR Cloud Hub",
+          source,
+          exportedAt: new Date().toISOString()
+        },
+        features: [
+          {
+            type: "Feature",
+            geometry: {
+              type: "LineString",
+              coordinates: pts.map(p => [p.lon, p.lat, p.alt || 0])
+            },
+            properties: {
+              name: `Qalqon ${source === 'waypoints' ? 'Rejalashtirilgan Marshrut' : 'Bosib O‘tilgan Yo‘l'}`
+            }
+          },
+          ...pts.map((p, i) => ({
+            type: "Feature",
+            geometry: {
+              type: "Point",
+              coordinates: [p.lon, p.lat, p.alt || 0]
+            },
+            properties: {
+              index: i + 1,
+              speed: p.speed,
+              time: p.time
+            }
+          }))
+        ]
+      };
+      const blob = new Blob([JSON.stringify(geojson, null, 2)], { type: 'application/geo+json;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `qalqon_${source}_${Date.now()}.geojson`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleExportKML = () => {
+    const kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <NetworkLink>
+    <name>Qalqon Robot - Real-time Live 3D Tracking</name>
+    <visibility>1</visibility>
+    <open>1</open>
+    <description>Trackk Cloud Hub orqali real-vaqt rejimida yangilanuvchi 3D RTK GPS signali</description>
+    <Url>
+      <href>https://trackk-gl6l.onrender.com/api.php?action=robot</href>
+      <refreshMode>onInterval</refreshMode>
+      <refreshInterval>2</refreshInterval>
+    </Url>
+  </NetworkLink>
+</kml>`;
+    const blob = new Blob([kml], { type: 'application/vnd.google-earth.kml+xml;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `qalqon_google_earth_live.kml`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   const makeVertexMarker = (lat: number, lon: number, idx: number) =>
     L.circleMarker([lat, lon], {
@@ -699,15 +876,36 @@ export const GoogleMapsPatrolView: React.FC = () => {
             QALQON v1.0 — DIGITAL TWIN &amp; AVTONOM PATRUL
           </span>
           <div className="flex items-center gap-1.5 ml-2 pl-2 border-l border-tactical-700">
-            <span className={`w-2.5 h-2.5 rounded-full ${gps.isReal ? 'bg-emerald-400 shadow-[0_0_8px_#10b981]' : 'bg-amber-400 shadow-[0_0_8px_#f59e0b]'}`} />
+            <span className={`w-2.5 h-2.5 rounded-full ${rtkData.is_online ? 'bg-emerald-400 shadow-[0_0_8px_#10b981] animate-pulse' : gps.isReal ? 'bg-emerald-400 shadow-[0_0_8px_#10b981]' : 'bg-amber-400 shadow-[0_0_8px_#f59e0b]'}`} />
             <span className="text-[11px] font-mono font-bold text-slate-300">
-              {gps.isReal ? 'HAQIQIY GPS' : 'GPS QIDIRILMOQDA'}
+              {rtkData.is_online ? `☁️ CLOUD RTK: ${rtkData.fix_str}` : gps.isReal ? 'HAQIQIY GPS' : 'GPS QIDIRILMOQDA'}
             </span>
+            {rtkData.is_online && (
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-police-cyan/20 border border-police-cyan/50 text-police-cyan font-bold">
+                🛰️ {rtkData.sat} · {rtkData.latencyMs}ms
+              </span>
+            )}
           </div>
         </div>
 
-        {/* Quick Map Layer Toggles */}
+        {/* Quick Map Layer Toggles & Export */}
         <div className="pointer-events-auto flex items-center gap-1 bg-tactical-950/90 border border-tactical-700/80 backdrop-blur-md p-1 rounded-lg shadow-xl">
+          <button
+            onClick={() => setShowExportModal(true)}
+            className="px-2.5 py-1 text-[11px] font-mono rounded transition-all flex items-center gap-1 bg-emerald-950/80 border border-emerald-500/60 text-emerald-300 hover:text-white hover:bg-emerald-900"
+            title="Marshrut va koordinatalarni CSV, GPX, GeoJSON, KML formatida yuklab olish"
+          >
+            <Download className="w-3.5 h-3.5 text-emerald-400" />
+            <span>📤 Eksport</span>
+          </button>
+          <button
+            onClick={() => setShowApiModal(true)}
+            className="px-2.5 py-1 text-[11px] font-mono rounded transition-all flex items-center gap-1 bg-police-blue/30 border border-police-cyan/50 text-police-cyan hover:text-white hover:bg-police-blue/60"
+            title="Universal REST API va Webhook ma'lumotlari"
+          >
+            <Cloud className="w-3.5 h-3.5 text-police-cyan" />
+            <span>Simsiz API</span>
+          </button>
           <button
             onClick={() => switchMapLayer('hybrid')}
             className={`px-2.5 py-1 text-[11px] font-mono rounded transition-all flex items-center gap-1 ${
@@ -717,7 +915,7 @@ export const GoogleMapsPatrolView: React.FC = () => {
             }`}
           >
             <Layers className="w-3.5 h-3.5" />
-            Hybrid (Sun'iy yo'ldosh)
+            Hybrid
           </button>
           <button
             onClick={() => switchMapLayer('roadmap')}
@@ -728,7 +926,7 @@ export const GoogleMapsPatrolView: React.FC = () => {
             }`}
           >
             <Navigation className="w-3.5 h-3.5" />
-            Ko'cha (Roadmap)
+            Ko'cha
           </button>
           <button
             onClick={centerMap}
@@ -755,7 +953,7 @@ export const GoogleMapsPatrolView: React.FC = () => {
                 className="w-full py-1.5 px-2 bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-500/60 text-emerald-200 hover:text-white rounded font-mono text-[11px] flex items-center gap-1.5 transition-all text-left truncate"
               >
                 <Crosshair className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                <span>🎯 {isOperator ? `${watchedRobot || 'Robot'} joylashuvi` : 'Haqiqiy joylashuvim'} ({telemetry.lat.toFixed(4)}, {telemetry.lon.toFixed(4)})</span>
+                <span>🎯 {isOperator ? `${watchedRobot || 'Robot'} joylashuvi` : rtkData.is_online ? `Cloud RTK (${rtkData.fix_str})` : 'Haqiqiy joylashuvim'} ({telemetry.lat.toFixed(5)}, {telemetry.lon.toFixed(5)})</span>
               </button>
 
             {/* Operator marshrut chizishi */}
@@ -801,6 +999,26 @@ export const GoogleMapsPatrolView: React.FC = () => {
               >
                 <Crosshair className="w-3 h-3 text-police-cyan" />
                 Markazga
+              </button>
+            </div>
+
+            {/* Eksport & Simsiz REST API Tugmalari */}
+            <div className="flex gap-1.5 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowExportModal(true)}
+                className="flex-1 py-1.5 px-2 bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/60 hover:border-emerald-400 text-emerald-300 rounded font-mono text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow"
+              >
+                <Download className="w-3.5 h-3.5 text-emerald-400" />
+                <span>📤 Eksport</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowApiModal(true)}
+                className="flex-1 py-1.5 px-2 bg-police-blue/30 hover:bg-police-blue/50 border border-police-cyan/60 hover:border-police-cyan text-police-cyan rounded font-mono text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow"
+              >
+                <Cloud className="w-3.5 h-3.5 text-police-cyan" />
+                <span>☁️ Simsiz API</span>
               </button>
             </div>
             {/* OPERATOR: tanlangan robotni masofadan manzilga yuborish (avtopilot robot planshetida ishlaydi) */}
@@ -1084,6 +1302,273 @@ export const GoogleMapsPatrolView: React.FC = () => {
 
       {/* Planshet Giroskop va Kompasini Kalibrlash Modali */}
       {showGyroModal && <GyroCalibrationModal onClose={() => setShowGyroModal(false)} />}
+
+      {/* 📤 MARSHRUT VA KOORDINATALARNI EKSPORT QILISH MODALI */}
+      {showExportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm select-none">
+          <div className="bg-tactical-950 border border-emerald-500/70 rounded-2xl w-full max-w-lg shadow-[0_0_30px_rgba(16,185,129,0.3)] overflow-hidden flex flex-col">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-4 border-b border-tactical-800 bg-tactical-900/80">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
+                  <Download className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-100 font-mono tracking-wide">
+                    📤 KOORDINATALARNI EKSPORT QILISH
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Excel (CSV), GPX, GeoJSON va Google Earth formatlarida yuklab olish
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowExportModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-tactical-800 transition-all"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-4 flex flex-col gap-4">
+              {/* Manba tanlash (Tabs) */}
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider">
+                  Qaysi ma'lumotlarni yuklab olmoqchisiz?
+                </span>
+                <div className="grid grid-cols-2 gap-2 bg-tactical-900 p-1 rounded-xl border border-tactical-800">
+                  <button
+                    onClick={() => setExportSource('waypoints')}
+                    className={`py-2 px-3 rounded-lg font-mono text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                      exportSource === 'waypoints'
+                        ? 'bg-emerald-600 text-white shadow-[0_0_10px_rgba(16,185,129,0.5)]'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <span>📌 Chizilgan Marshrut ({waypoints.length} ta)</span>
+                  </button>
+                  <button
+                    onClick={() => setExportSource('history')}
+                    className={`py-2 px-3 rounded-lg font-mono text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                      exportSource === 'history'
+                        ? 'bg-emerald-600 text-white shadow-[0_0_10px_rgba(16,185,129,0.5)]'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <span>📜 Server Tarixi (240+ nuqta)</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Formatlar ro'yxati */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {/* 1. CSV */}
+                <button
+                  onClick={() => handleExportCSV(exportSource)}
+                  disabled={isExporting}
+                  className="flex flex-col items-start p-3 rounded-xl bg-tactical-900/90 hover:bg-emerald-950/40 border border-tactical-700 hover:border-emerald-500/70 transition-all text-left group"
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <FileText className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform" />
+                    <span className="font-mono text-xs font-bold text-slate-100">CSV Formati (Excel)</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 leading-tight">
+                    Excel va Google Sheets jadvallari, hisobot va ma'lumotlar bazasi uchun.
+                  </span>
+                </button>
+
+                {/* 2. GPX */}
+                <button
+                  onClick={() => handleExportGPX(exportSource)}
+                  disabled={isExporting}
+                  className="flex flex-col items-start p-3 rounded-xl bg-tactical-900/90 hover:bg-emerald-950/40 border border-tactical-700 hover:border-emerald-500/70 transition-all text-left group"
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <Navigation className="w-4 h-4 text-police-cyan group-hover:scale-110 transition-transform" />
+                    <span className="font-mono text-xs font-bold text-slate-100">GPX (Navigatsiya)</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 leading-tight">
+                    Garmin, OsmAnd, Geodeziya va standart GPS navigatorlar uchun trek fayli.
+                  </span>
+                </button>
+
+                {/* 3. GeoJSON */}
+                <button
+                  onClick={() => handleExportGeoJSON(exportSource)}
+                  disabled={isExporting}
+                  className="flex flex-col items-start p-3 rounded-xl bg-tactical-900/90 hover:bg-emerald-950/40 border border-tactical-700 hover:border-emerald-500/70 transition-all text-left group"
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <Globe className="w-4 h-4 text-amber-400 group-hover:scale-110 transition-transform" />
+                    <span className="font-mono text-xs font-bold text-slate-100">GeoJSON (QGIS/GIS)</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 leading-tight">
+                    QGIS, ArcGIS, Mapbox va geodezik axborot tizimlariga import qilish uchun.
+                  </span>
+                </button>
+
+                {/* 4. Google Earth KML */}
+                <button
+                  onClick={handleExportKML}
+                  className="flex flex-col items-start p-3 rounded-xl bg-tactical-900/90 hover:bg-emerald-950/40 border border-tactical-700 hover:border-emerald-500/70 transition-all text-left group"
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <Radio className="w-4 h-4 text-rose-400 group-hover:scale-110 transition-transform" />
+                    <span className="font-mono text-xs font-bold text-slate-100">Google Earth 3D (.KML)</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 leading-tight">
+                    Google Earth 3D da robotni jonli kuzatuvchi Network Link fayli.
+                  </span>
+                </button>
+              </div>
+
+              {isExporting && (
+                <div className="text-center text-xs font-mono text-emerald-400 animate-pulse">
+                  Fayl shakllantirilmoqda va yuklanmoqda...
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-3 border-t border-tactical-800 bg-tactical-900/60 flex justify-end">
+              <button
+                onClick={() => setShowExportModal(false)}
+                className="px-4 py-1.5 rounded-lg bg-tactical-800 hover:bg-tactical-700 text-slate-300 font-mono text-xs transition-all"
+              >
+                Yopish
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ☁️ UNIVERSAL REST API VA BULUTLI XIZMAT (CLOUD HUB) MODALI */}
+      {showApiModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm select-none">
+          <div className="bg-tactical-950 border border-police-cyan/70 rounded-2xl w-full max-w-xl shadow-[0_0_30px_rgba(0,229,255,0.25)] overflow-hidden flex flex-col max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-4 border-b border-tactical-800 bg-tactical-900/80">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-police-cyan/20 text-police-cyan border border-police-cyan/40">
+                  <Cloud className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-100 font-mono tracking-wide">
+                    ☁️ UNIVERSAL REST API (SIMSIZ CLOUD HUB)
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    USB kabellarsiz GPS integratsiyasi: Python, Flutter, React, Telegram Bot
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowApiModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-tactical-800 transition-all"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-4 flex flex-col gap-3 overflow-y-auto">
+              {/* Asosiy Endpoint */}
+              <div className="flex flex-col gap-1.5 p-3 rounded-xl bg-tactical-900 border border-police-cyan/40">
+                <span className="text-[10px] font-mono font-bold text-police-cyan uppercase tracking-wider">
+                  👉 Universal Markaziy Server Endpoint (GET):
+                </span>
+                <div className="flex items-center justify-between gap-2 bg-tactical-950 px-3 py-2 rounded-lg border border-tactical-700 font-mono text-xs text-emerald-300">
+                  <span className="truncate select-all">https://trackk-gl6l.onrender.com/api.php?action=robot</span>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText("https://trackk-gl6l.onrender.com/api.php?action=robot");
+                      setCopiedApi(true),
+                      setTimeout(() => setCopiedApi(false), 2000);
+                    }}
+                    className="p-1 rounded bg-tactical-800 hover:bg-tactical-700 text-slate-200 transition-all shrink-0 flex items-center gap-1 text-[11px]"
+                  >
+                    {copiedApi ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedApi ? 'Nusxalandi!' : 'Nusxa'}</span>
+                  </button>
+                </div>
+                <div className="flex items-center gap-3 text-[10px] font-mono text-slate-400 pt-1">
+                  <span>Holat: <strong className={rtkData.is_online ? 'text-emerald-400' : 'text-amber-400'}>{rtkData.is_online ? 'ONLAYN' : 'KUTILMOQDA'}</strong></span>
+                  <span>Fix: <strong className="text-police-cyan">{rtkData.fix_str}</strong></span>
+                  <span>Yo'ldoshlar: <strong className="text-slate-200">{rtkData.sat} ta</strong></span>
+                </div>
+              </div>
+
+              {/* Integratsiya Misollari */}
+              <div className="flex flex-col gap-2">
+                <span className="text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider">
+                  Dasturlash tillari bo'yicha tayyor kodlar:
+                </span>
+
+                {/* 1. JavaScript / React */}
+                <div className="p-2.5 rounded-lg bg-tactical-900 border border-tactical-800 flex flex-col gap-1">
+                  <div className="flex items-center justify-between text-[11px] font-mono font-bold text-amber-300">
+                    <span>1. Veb-saytlar va JavaScript / React:</span>
+                  </div>
+                  <pre className="text-[10px] font-mono bg-tactical-950 p-2 rounded text-slate-300 overflow-x-auto">
+{`fetch('https://trackk-gl6l.onrender.com/api.php?action=robot')
+  .then(res => res.json())
+  .then(gps => console.log('Lat:', gps.lat, 'Lng:', gps.lng, 'Fix:', gps.fix_str));`}
+                  </pre>
+                </div>
+
+                {/* 2. Python / Telegram Bot */}
+                <div className="p-2.5 rounded-lg bg-tactical-900 border border-tactical-800 flex flex-col gap-1">
+                  <div className="flex items-center justify-between text-[11px] font-mono font-bold text-emerald-300">
+                    <span>2. Python (Telegram Bot / Avtomatlashtirish):</span>
+                  </div>
+                  <pre className="text-[10px] font-mono bg-tactical-950 p-2 rounded text-slate-300 overflow-x-auto">
+{`import urllib.request, json
+
+resp = urllib.request.urlopen('https://trackk-gl6l.onrender.com/api.php?action=robot')
+data = json.loads(resp.read().decode())
+print(f"Robot: Lat {data['lat']}, Lng {data['lng']} | Aniqlik: {data['fix_str']}")`}
+                  </pre>
+                </div>
+
+                {/* 3. Flutter / Android */}
+                <div className="p-2.5 rounded-lg bg-tactical-900 border border-tactical-800 flex flex-col gap-1">
+                  <div className="flex items-center justify-between text-[11px] font-mono font-bold text-sky-300">
+                    <span>3. Mobil Ilovalar (Flutter / Dart):</span>
+                  </div>
+                  <pre className="text-[10px] font-mono bg-tactical-950 p-2 rounded text-slate-300 overflow-x-auto">
+{`var response = await http.get(Uri.parse('https://trackk-gl6l.onrender.com/api.php?action=robot'));
+var data = jsonDecode(response.body);
+print('Robot: lat=\${data['lat']}, lng=\${data['lng']}');`}
+                  </pre>
+                </div>
+
+                {/* 4. Google Earth 3D */}
+                <div className="p-2.5 rounded-lg bg-tactical-900 border border-tactical-800 flex flex-col gap-1">
+                  <div className="flex items-center justify-between text-[11px] font-mono font-bold text-rose-300">
+                    <span>4. Google Earth (Jonli 3D Kuzatuv):</span>
+                  </div>
+                  <p className="text-[10px] text-slate-400">
+                    Google Earth dasturini oching ➔ <strong>Add ➔ Network Link</strong> ➔ Link maydoniga <code className="text-police-cyan">https://trackk-gl6l.onrender.com/api.php?action=robot</code> kiriting. Har 2 soniyada robot harakati 3D sun'iy yo'ldosh xaritasida yangilanadi!
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-3 border-t border-tactical-800 bg-tactical-900/60 flex justify-between items-center">
+              <span className="text-[10px] font-mono text-slate-400">
+                ESP32 faqat bitta joyga yuboradi, server esa uni hamma tizimlarga simsiz tarqatadi.
+              </span>
+              <button
+                onClick={() => setShowApiModal(false)}
+                className="px-4 py-1.5 rounded-lg bg-tactical-800 hover:bg-tactical-700 text-slate-300 font-mono text-xs transition-all"
+              >
+                Yopish
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -23,6 +23,8 @@
 #include <WebServer.h>
 #include <Wire.h>
 #include <math.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 
 // ==============================================================================
 // 0. MPU-6050 6-O'QLI DATCHIK (GIROSKOP + AKSELEROMETR) SOZLAMALARI
@@ -196,6 +198,128 @@ void yangilashMPU6050() {
     pitch = 0.96f * (pitch + gy * dt) + 0.04f * accelPitch;
     roll  = 0.96f * (roll + gx * dt) + 0.04f * accelRoll;
   }
+}
+
+// ==============================================================================
+// 0.1 WAVESHARE LG290P GNSS RTK DATCHIGI VA TRACKK CLOUD HUB
+// ==============================================================================
+// Agar LG290P datchigi ESP32 ga 4 ta jumper sim bilan ulangan bo'lsa:
+// VCC -> 5V (yoki VIN), GND -> GND, TXD -> GPIO 16 (RX2), RXD -> GPIO 17 (TX2)
+// Bu holda robotga hech qanday USB kabel ulanishi shart emas!
+#define ENABLE_HARDWARE_GPS 1
+#define GPS_RX_PIN 16
+#define GPS_TX_PIN 17
+#define GPS_BAUD 115200
+
+const char* TRACKK_POST_API = "https://trackk-gl6l.onrender.com/api.php";
+
+double gpsLat = 0.0;
+double gpsLng = 0.0;
+float  gpsAlt = 0.0f;
+float  gpsSpeed = 0.0f;
+float  gpsHdop = 99.0f;
+int    gpsFix = 0;
+int    gpsSat = 0;
+String gpsFixStr = "Kutilmoqda";
+bool   gpsOnline = false;
+unsigned long lastGpsPushTime = 0;
+unsigned long lastGpsReadTime = 0;
+String nmeaBuffer = "";
+
+double parseNmeaCoord(String val, String hemi) {
+  if (val.length() < 4) return 0.0;
+  int dot = val.indexOf('.');
+  if (dot < 2) return 0.0;
+  double raw = val.toDouble();
+  int deg = (int)(raw / 100);
+  double min = raw - (deg * 100);
+  double res = deg + (min / 60.0);
+  if (hemi == "S" || hemi == "W") res = -res;
+  return res;
+}
+
+void parseNmeaSentence(String sentence) {
+  sentence.trim();
+  if (sentence.startsWith("$GNGGA") || sentence.startsWith("$GPGGA")) {
+    int idx = 0;
+    String tokens[15];
+    int start = 0;
+    for (int i = 0; i < sentence.length() && idx < 15; i++) {
+      if (sentence.charAt(i) == ',') {
+        tokens[idx++] = sentence.substring(start, i);
+        start = i + 1;
+      }
+    }
+    if (idx < 15) tokens[idx++] = sentence.substring(start);
+
+    if (idx >= 10 && tokens[2].length() > 0 && tokens[4].length() > 0) {
+      gpsLat = parseNmeaCoord(tokens[2], tokens[3]);
+      gpsLng = parseNmeaCoord(tokens[4], tokens[5]);
+      gpsFix = tokens[6].toInt();
+      gpsSat = tokens[7].toInt();
+      gpsHdop = tokens[8].toFloat();
+      gpsAlt = tokens[9].toFloat();
+      gpsFixStr = (gpsFix == 4) ? "RTK FIXED (2 sm)" : (gpsFix == 5) ? "RTK FLOAT (20 sm)" : (gpsFix == 1) ? "GPS 3D" : (gpsFix == 2) ? "DGPS" : "NO FIX";
+      gpsOnline = true;
+      lastGpsReadTime = millis();
+    }
+  } else if (sentence.startsWith("$GNRMC") || sentence.startsWith("$GPRMC")) {
+    int idx = 0;
+    String tokens[12];
+    int start = 0;
+    for (int i = 0; i < sentence.length() && idx < 12; i++) {
+      if (sentence.charAt(i) == ',') {
+        tokens[idx++] = sentence.substring(start, i);
+        start = i + 1;
+      }
+    }
+    if (idx < 12) tokens[idx++] = sentence.substring(start);
+
+    if (idx >= 8 && tokens[7].length() > 0) {
+      gpsSpeed = tokens[7].toFloat() * 1.852f; // Knots -> km/h
+    }
+  }
+}
+
+void yangilashGpsHardware() {
+#if ENABLE_HARDWARE_GPS
+  while (Serial2.available() > 0) {
+    char c = (char)Serial2.read();
+    if (c == '\n' || c == '\r') {
+      if (nmeaBuffer.length() > 5) {
+        parseNmeaSentence(nmeaBuffer);
+      }
+      nmeaBuffer = "";
+    } else {
+      if (nmeaBuffer.length() < 120) {
+        nmeaBuffer += c;
+      }
+    }
+  }
+
+  // Har 400 ms da Trackk Cloud Hub serveriga uzatish (agar Wi-Fi ulangan va koordinata olingan bo'lsa)
+  unsigned long now = millis();
+  if (gpsOnline && (now - lastGpsPushTime >= 400) && (WiFi.status() == WL_CONNECTED)) {
+    lastGpsPushTime = now;
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
+    if (http.begin(client, TRACKK_POST_API)) {
+      http.setTimeout(1200);
+      http.addHeader("Content-Type", "application/json");
+      http.addHeader("User-Agent", "QalqonESP32-LG290P");
+
+      char payload[256];
+      snprintf(payload, sizeof(payload),
+        "{\"lat\":%.8f,\"lng\":%.8f,\"fix\":%d,\"fix_str\":\"%s\",\"sat\":%d,\"hdop\":%.2f,\"alt\":%.1f,\"speed\":%.1f}",
+        gpsLat, gpsLng, gpsFix, gpsFixStr.c_str(), gpsSat, gpsHdop, gpsAlt, gpsSpeed
+      );
+
+      http.POST(payload);
+      http.end();
+    }
+  }
+#endif
 }
 
 // ==============================================================================
@@ -935,6 +1059,17 @@ void handleImuCalibrate() {
   server.send(200, "application/json", "{\"status\":\"ok\",\"message\":\"MPU6050 kalibrlandi\"}");
 }
 
+// RTK GNSS ma'lumotlarini JSON qilib berish: /gps
+void handleGps() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  char buf[300];
+  snprintf(buf, sizeof(buf),
+    "{\"status\":\"ok\",\"is_online\":%s,\"lat\":%.8f,\"lng\":%.8f,\"fix\":%d,\"fix_str\":\"%s\",\"sat\":%d,\"hdop\":%.2f,\"alt\":%.1f,\"speed\":%.1f}",
+    gpsOnline ? "true" : "false", gpsLat, gpsLng, gpsFix, gpsFixStr.c_str(), gpsSat, gpsHdop, gpsAlt, gpsSpeed
+  );
+  server.send(200, "application/json", buf);
+}
+
 // Topilmagan sahifa (404)
 void handleNotFound() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
@@ -1048,6 +1183,12 @@ void setup() {
   // 0. MPU-6050 datchigini ishga tushirish
   mpuMavjud = initMPU6050();
 
+#if ENABLE_HARDWARE_GPS
+  // 0.1 LG290P GNSS RTK datchigini Serial2 da ishga tushirish (RX=16, TX=17)
+  Serial2.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
+  Serial.println("[GPS] Waveshare LG290P GNSS RTK (Serial2 RX=16, TX=17, 115200) faol!");
+#endif
+
   // Wi-Fi Station (STA) rejimini yoqish
   // ESP32 o'zi tarmoq tarqatmaydi, balki planshetning Hotspotiga ulanadi!
   WiFi.mode(WIFI_STA);
@@ -1083,6 +1224,7 @@ void setup() {
   server.on("/imu", HTTP_GET, handleImu);
   server.on("/imu/zero", HTTP_GET, handleImuZero);
   server.on("/imu/calibrate", HTTP_GET, handleImuCalibrate);
+  server.on("/gps", HTTP_GET, handleGps);
   server.onNotFound(handleNotFound);
 
   // Serverni ishga tushirish
@@ -1099,6 +1241,9 @@ void loop() {
   // 1. MPU-6050 giroskop va akselerometrni uzluksiz o'qib borish
   yangilashMPU6050();
 
+  // 1.1 LG290P GNSS RTK datchigini o'qish va Trackk Cloud Hub'ga uzatish
+  yangilashGpsHardware();
+
   // 2. HTTP so'rovlarni qabul qilish
   server.handleClient();
 
@@ -1114,9 +1259,24 @@ void loop() {
       if (millis() - oxirgiTelemetryVaqti >= telemetryInterval) {
         oxirgiTelemetryVaqti = millis();
 
-        char teleJson[240];
+        char teleJson[280];
         snprintf(teleJson, sizeof(teleJson),
-          "{\"status\":\"online\",\"moving\":%s,\"speed\":%d,\"yaw\":%.1f,\"pitch\":%.1f,\"roll\":%.1f,\"rate\":%.1f,\"temp\":%.1f}",
+          "{\"status\":\"online\",\"moving\":%s,\"speed\":%d,\"yaw\":%.1f,\"pitch\":%.1f,\"roll\":%.1f,\"rate\":%.1f,\"lat\":%.7f,\"lng\":%.7f,\"fix\":%d}",
+          harakatda ? "true" : "false",
+          tezlik,
+          yaw,
+          pitch,
+          roll,
+          gyroRateZ,
+          gpsLat,
+          gpsLng,
+          gpsFix
+        );
+        mqttClient.publish(mqttTelemetryTopic, teleJson);
+      }
+    }
+  }
+#endif
           harakatda ? "true" : "false",
           tezlik,
           yaw,

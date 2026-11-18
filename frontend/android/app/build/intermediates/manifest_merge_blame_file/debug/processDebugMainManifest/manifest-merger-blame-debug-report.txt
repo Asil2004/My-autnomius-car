@@ -1,0 +1,190 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="uz.iiv.qalqon"
+4    android:versionCode="1"
+5    android:versionName="1.0" >
+6
+7    <uses-sdk
+8        android:minSdkVersion="24"
+9        android:targetSdkVersion="36" />
+10
+11    <!-- Permissions -->
+12    <uses-permission android:name="android.permission.INTERNET" />
+12-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:40:5-67
+12-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:40:22-64
+13    <uses-permission android:name="android.permission.CAMERA" />
+13-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:41:5-65
+13-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:41:22-62
+14    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+14-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:42:5-71
+14-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:42:22-68
+15    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+15-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:43:5-80
+15-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:43:22-77
+16    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+16-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:44:5-79
+16-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:44:22-76
+17    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+17-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:45:5-81
+17-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:45:22-78
+18
+19    <uses-feature
+19-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:46:5-85
+20        android:name="android.hardware.camera"
+20-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:46:19-57
+21        android:required="false" />
+21-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:46:58-82
+22    <uses-feature
+22-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:47:5-91
+23        android:name="android.hardware.camera.front"
+23-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:47:19-63
+24        android:required="false" />
+24-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:47:64-88
+25    <uses-feature
+25-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:48:5-91
+26        android:name="android.hardware.location.gps"
+26-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:48:19-63
+27        android:required="false" />
+27-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:48:64-88
+28
+29    <permission
+29-->[androidx.core:core:1.17.0] C:\Users\user\.gradle\caches\8.14.3\transforms\11094a199bb7945826b161d8a9c17beb\transformed\core-1.17.0\AndroidManifest.xml:22:5-24:47
+30        android:name="uz.iiv.qalqon.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+30-->[androidx.core:core:1.17.0] C:\Users\user\.gradle\caches\8.14.3\transforms\11094a199bb7945826b161d8a9c17beb\transformed\core-1.17.0\AndroidManifest.xml:23:9-81
+31        android:protectionLevel="signature" />
+31-->[androidx.core:core:1.17.0] C:\Users\user\.gradle\caches\8.14.3\transforms\11094a199bb7945826b161d8a9c17beb\transformed\core-1.17.0\AndroidManifest.xml:24:9-44
+32
+33    <uses-permission android:name="uz.iiv.qalqon.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+33-->[androidx.core:core:1.17.0] C:\Users\user\.gradle\caches\8.14.3\transforms\11094a199bb7945826b161d8a9c17beb\transformed\core-1.17.0\AndroidManifest.xml:26:5-97
+33-->[androidx.core:core:1.17.0] C:\Users\user\.gradle\caches\8.14.3\transforms\11094a199bb7945826b161d8a9c17beb\transformed\core-1.17.0\AndroidManifest.xml:26:22-94
+34
+35    <application
+35-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:4:5-37:19
+36        android:allowBackup="true"
+36-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:5:9-35
+37        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
+37-->[androidx.core:core:1.17.0] C:\Users\user\.gradle\caches\8.14.3\transforms\11094a199bb7945826b161d8a9c17beb\transformed\core-1.17.0\AndroidManifest.xml:28:18-86
+38        android:debuggable="true"
+39        android:extractNativeLibs="false"
+40        android:icon="@mipmap/ic_launcher"
+40-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:6:9-43
+41        android:label="@string/app_name"
+41-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:7:9-41
+42        android:roundIcon="@mipmap/ic_launcher_round"
+42-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:8:9-54
+43        android:supportsRtl="true"
+43-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:9:9-35
+44        android:theme="@style/AppTheme" >
+44-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:10:9-40
+45        <activity
+45-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:12:9-26:20
+46            android:name="uz.iiv.qalqon.MainActivity"
+46-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:14:13-41
+47            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
+47-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:13:13-148
+48            android:exported="true"
+48-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:19:13-36
+49            android:label="@string/title_activity_main"
+49-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:15:13-56
+50            android:launchMode="singleTask"
+50-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:17:13-44
+51            android:screenOrientation="sensorLandscape"
+51-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:18:13-56
+52            android:theme="@style/AppTheme.NoActionBarLaunch" >
+52-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:16:13-62
+53            <intent-filter>
+53-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:21:13-24:29
+54                <action android:name="android.intent.action.MAIN" />
+54-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:22:17-69
+54-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:22:25-66
+55
+56                <category android:name="android.intent.category.LAUNCHER" />
+56-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:23:17-77
+56-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:23:27-74
+57            </intent-filter>
+58        </activity>
+59
+60        <provider
+61            android:name="androidx.core.content.FileProvider"
+61-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:29:13-62
+62            android:authorities="uz.iiv.qalqon.fileprovider"
+62-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:30:13-64
+63            android:exported="false"
+63-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:31:13-37
+64            android:grantUriPermissions="true" >
+64-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:32:13-47
+65            <meta-data
+65-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:33:13-35:64
+66                android:name="android.support.FILE_PROVIDER_PATHS"
+66-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:34:17-67
+67                android:resource="@xml/file_paths" />
+67-->D:\Dastavka robot\repo_autnomius_car\frontend\android\app\src\main\AndroidManifest.xml:35:17-51
+68        </provider>
+69        <provider
+69-->[androidx.emoji2:emoji2:1.3.0] C:\Users\user\.gradle\caches\8.14.3\transforms\353d69426d62513a7e19e841051a3a44\transformed\emoji2-1.3.0\AndroidManifest.xml:24:9-32:20
+70            android:name="androidx.startup.InitializationProvider"
+70-->[androidx.emoji2:emoji2:1.3.0] C:\Users\user\.gradle\caches\8.14.3\transforms\353d69426d62513a7e19e841051a3a44\transformed\emoji2-1.3.0\AndroidManifest.xml:25:13-67
+71            android:authorities="uz.iiv.qalqon.androidx-startup"
+71-->[androidx.emoji2:emoji2:1.3.0] C:\Users\user\.gradle\caches\8.14.3\transforms\353d69426d62513a7e19e841051a3a44\transformed\emoji2-1.3.0\AndroidManifest.xml:26:13-68
+72            android:exported="false" >
+72-->[androidx.emoji2:emoji2:1.3.0] C:\Users\user\.gradle\caches\8.14.3\transforms\353d69426d62513a7e19e841051a3a44\transformed\emoji2-1.3.0\AndroidManifest.xml:27:13-37
+73            <meta-data
+73-->[androidx.emoji2:emoji2:1.3.0] C:\Users\user\.gradle\caches\8.14.3\transforms\353d69426d62513a7e19e841051a3a44\transformed\emoji2-1.3.0\AndroidManifest.xml:29:13-31:52
+74                android:name="androidx.emoji2.text.EmojiCompatInitializer"
+74-->[androidx.emoji2:emoji2:1.3.0] C:\Users\user\.gradle\caches\8.14.3\transforms\353d69426d62513a7e19e841051a3a44\transformed\emoji2-1.3.0\AndroidManifest.xml:30:17-75
+75                android:value="androidx.startup" />
+75-->[androidx.emoji2:emoji2:1.3.0] C:\Users\user\.gradle\caches\8.14.3\transforms\353d69426d62513a7e19e841051a3a44\transformed\emoji2-1.3.0\AndroidManifest.xml:31:17-49
+76            <meta-data
+76-->[androidx.lifecycle:lifecycle-process:2.6.2] C:\Users\user\.gradle\caches\8.14.3\transforms\14a3b51da1167f75215e7e32d2231e74\transformed\lifecycle-process-2.6.2\AndroidManifest.xml:29:13-31:52
+77                android:name="androidx.lifecycle.ProcessLifecycleInitializer"
+77-->[androidx.lifecycle:lifecycle-process:2.6.2] C:\Users\user\.gradle\caches\8.14.3\transforms\14a3b51da1167f75215e7e32d2231e74\transformed\lifecycle-process-2.6.2\AndroidManifest.xml:30:17-78
+78                android:value="androidx.startup" />
+78-->[androidx.lifecycle:lifecycle-process:2.6.2] C:\Users\user\.gradle\caches\8.14.3\transforms\14a3b51da1167f75215e7e32d2231e74\transformed\lifecycle-process-2.6.2\AndroidManifest.xml:31:17-49
+79            <meta-data
+79-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\user\.gradle\caches\8.14.3\transforms\f95ab50c54d3211c648684c462933e30\transformed\profileinstaller-1.4.0\AndroidManifest.xml:29:13-31:52
+80                android:name="androidx.profileinstaller.ProfileInstallerInitializer"
+80-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\user\.gradle\caches\8.14.3\transforms\f95ab50c54d3211c648684c462933e30\transformed\profileinstaller-1.4.0\AndroidManifest.xml:30:17-85
+81                android:value="androidx.startup" />
+81-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\user\.gradle\caches\8.14.3\transforms\f95ab50c54d3211c648684c462933e30\transformed\profileinstaller-1.4.0\AndroidManifest.xml:31:17-49
+82        </provider>
+83
+84        <receiver
+84-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\user\.gradle\caches\8.14.3\transforms\f95ab50c54d3211c648684c462933e30\transformed\profileinstaller-1.4.0\AndroidManifest.xml:34:9-52:20
+85            android:name="androidx.profileinstaller.ProfileInstallReceiver"
+85-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\user\.gradle\caches\8.14.3\transforms\f95ab50c54d3211c648684c462933e30\transformed\profileinstaller-1.4.0\AndroidManifest.xml:35:13-76
+86            android:directBootAware="false"
+86-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\user\.gradle\caches\8.14.3\transforms\f95ab50c54d3211c648684c462933e30\transformed\profileinstaller-1.4.0\AndroidManifest.xml:36:13-44
+87            android:enabled="true"
+87-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\user\.gradle\caches\8.14.3\transforms\f95ab50c54d3211c648684c462933e30\transformed\profileinstaller-1.4.0\AndroidManifest.xml:37:13-35
+88            android:exported="true"
+88-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\user\.gradle\caches\8.14.3\transforms\f95ab50c54d3211c648684c462933e30\transformed\profileinstaller-1.4.0\AndroidManifest.xml:38:13-36
+89            android:permission="android.permission.DUMP" >
+89-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\user\.gradle\caches\8.14.3\transforms\f95ab50c54d3211c648684c462933e30\transformed\profileinstaller-1.4.0\AndroidManifest.xml:39:13-57
+90            <intent-filter>
+90-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\user\.gradle\caches\8.14.3\transforms\f95ab50c54d3211c648684c462933e30\transformed\profileinstaller-1.4.0\AndroidManifest.xml:40:13-42:29
+91                <action android:name="androidx.profileinstaller.action.INSTALL_PROFILE" />
+91-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\user\.gradle\caches\8.14.3\transforms\f95ab50c54d3211c648684c462933e30\transformed\profileinstaller-1.4.0\AndroidManifest.xml:41:17-91
+91-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\user\.gradle\caches\8.14.3\transforms\f95ab50c54d3211c648684c462933e30\transformed\profileinstaller-1.4.0\AndroidManifest.xml:41:25-88
+92            </intent-filter>
+93            <intent-filter>
+93-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\user\.gradle\caches\8.14.3\transforms\f95ab50c54d3211c648684c462933e30\transformed\profileinstaller-1.4.0\AndroidManifest.xml:43:13-45:29
+94                <action android:name="androidx.profileinstaller.action.SKIP_FILE" />
+94-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\user\.gradle\caches\8.14.3\transforms\f95ab50c54d3211c648684c462933e30\transformed\profileinstaller-1.4.0\AndroidManifest.xml:44:17-85
+94-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\user\.gradle\caches\8.14.3\transforms\f95ab50c54d3211c648684c462933e30\transformed\profileinstaller-1.4.0\AndroidManifest.xml:44:25-82
+95            </intent-filter>
+96            <intent-filter>
+96-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\user\.gradle\caches\8.14.3\transforms\f95ab50c54d3211c648684c462933e30\transformed\profileinstaller-1.4.0\AndroidManifest.xml:46:13-48:29
+97                <action android:name="androidx.profileinstaller.action.SAVE_PROFILE" />
+97-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\user\.gradle\caches\8.14.3\transforms\f95ab50c54d3211c648684c462933e30\transformed\profileinstaller-1.4.0\AndroidManifest.xml:47:17-88
+97-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\user\.gradle\caches\8.14.3\transforms\f95ab50c54d3211c648684c462933e30\transformed\profileinstaller-1.4.0\AndroidManifest.xml:47:25-85
+98            </intent-filter>
+99            <intent-filter>
+99-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\user\.gradle\caches\8.14.3\transforms\f95ab50c54d3211c648684c462933e30\transformed\profileinstaller-1.4.0\AndroidManifest.xml:49:13-51:29
+100                <action android:name="androidx.profileinstaller.action.BENCHMARK_OPERATION" />
+100-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\user\.gradle\caches\8.14.3\transforms\f95ab50c54d3211c648684c462933e30\transformed\profileinstaller-1.4.0\AndroidManifest.xml:50:17-95
+100-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\user\.gradle\caches\8.14.3\transforms\f95ab50c54d3211c648684c462933e30\transformed\profileinstaller-1.4.0\AndroidManifest.xml:50:25-92
+101            </intent-filter>
+102        </receiver>
+103    </application>
+104
+105</manifest>
