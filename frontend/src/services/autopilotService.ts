@@ -229,12 +229,18 @@ class AutopilotService {
     const nav: NavState = navigationService.getState();
     const obs = this.obstacles?.();
 
-    // 1) Xavfsizlik talabi (Failsafe): agar RTK GPS aloqasi uzilgan (is_online=false) yoki age_sec > 5s bo'lsa -> to'xtash
-    const rtk = rtkGpsService.getData();
-    if (rtk && rtk.status !== 'waiting' && (!rtk.is_online || rtk.age_sec > 5.0)) {
-      this.drive('S');
-      this.enter('waiting-gps', `⚠️ [FAILSAFE] GPS to‘xtadi (${rtk.age_sec.toFixed(1)}s oldin kelgan). Motor to‘xtatildi.`);
-      return;
+    // 1) Xavfsizlik talabi (Failsafe): agar foydalanuvchi Trackk Cloud RTK rejimida bo'lsa va aloqa uzilsa -> to'xtash
+    const curSource = typeof window !== 'undefined'
+      ? (localStorage.getItem('qalqon.gps_source.v1') || 'device')
+      : 'device';
+
+    if (curSource === 'trackk') {
+      const rtk = rtkGpsService.getData();
+      if (rtk && rtk.status !== 'waiting' && (!rtk.is_online || rtk.age_sec > 5.0)) {
+        this.drive('S');
+        this.enter('waiting-gps', `⚠️ [FAILSAFE] Trackk RTK uzildi (${rtk.age_sec.toFixed(1)}s). Motor to‘xtatildi.`);
+        return;
+      }
     }
 
     // 2) Joylashuv ishonchli emas -> turib kutadi

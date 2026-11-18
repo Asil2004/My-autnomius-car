@@ -107,9 +107,13 @@ class HeadingService {
       const savedInverted = localStorage.getItem(INVERT_KEY);
       if (savedInverted !== null) {
         this.inverted = savedInverted === 'true';
+      } else {
+        // Standart holatda: MPU-6050 gorizontal o'rnatilganda (Z-o'qi tepaga qaragan),
+        // robot o'ngga burilganda giroskop z-burchagi manfiy chiqadi. Shuning uchun standart true (Inverted) bo'ladi.
+        this.inverted = true;
       }
     } catch {
-      /* standart: false */
+      this.inverted = true;
     }
 
     try {

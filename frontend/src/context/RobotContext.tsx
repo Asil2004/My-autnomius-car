@@ -40,6 +40,9 @@ export interface LogMessage {
   text: string;
 }
 
+export type GpsSourceMode = 'device' | 'trackk' | 'auto';
+export const STORAGE_KEY_GPS_SOURCE = 'qalqon.gps_source.v1';
+
 interface RobotContextType {
   activeTab: 'hud' | 'ai' | 'telemetry' | 'maps' | 'settings';
   setActiveTab: (tab: 'hud' | 'ai' | 'telemetry' | 'maps' | 'settings') => void;
@@ -115,6 +118,8 @@ interface RobotContextType {
   // Qurilmaning haqiqiy GPS i
   gps: GPSState;
   startRealGPS: () => void;
+  gpsSource: GpsSourceMode;
+  setGpsSource: (mode: GpsSourceMode) => void;
 
   // ESP32 Direct MQTT & Local HTTP Control
   esp32Status: string;
@@ -134,6 +139,15 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [remote] = useState<RemoteStatus | null>(null);
   const [speedLevel, setSpeedLevelState] = useState<SpeedLevel>(2);
   const [isMoving, setIsMoving] = useState<boolean>(false);
+
+  // GPS Manbasi: 'device' (Noutbuk / Planshet) | 'trackk' (RTK Bulut) | 'auto'
+  const [gpsSource, setGpsSourceState] = useState<GpsSourceMode>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem(STORAGE_KEY_GPS_SOURCE) as GpsSourceMode;
+      if (saved === 'device' || saved === 'trackk' || saved === 'auto') return saved;
+    }
+    return 'device'; // STANDART: Noutbuk / Planshet GPS'i
+  });
   // Navigatsiya: faqat buyruq O'ZGARGANDA xabar beriladi ("to'xta" -> dead reckoning siljimaydi, tezlik 0).
   // Boshlang'ich 'S' hisobga olinmaydi: robot avtonom yurayotgan bo'lishi mumkin
   const prevCmdRef = useRef<MecanumCommand>('S');
@@ -470,10 +484,13 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     watchIdRef.current = navigator.geolocation.watchPosition(
       (pos) => {
-        // Agar Trackk Cloud RTK serveri faol bo'lsa, brauzerning past aniqlikdagi GPS'i uni bosib ketmasligi kerak
-        const rtk = rtkGpsService.getData();
-        if (rtk && rtk.is_online && rtk.status === 'ok') {
-          return;
+        // Faqat foydalanuvchi qat'iy 'trackk' rejimini tanlagan bo'lsa va Trackk faol bo'lsa, brauzer GPS'i to'xtatiladi
+        const curMode = (localStorage.getItem(STORAGE_KEY_GPS_SOURCE) as GpsSourceMode) || 'device';
+        if (curMode === 'trackk') {
+          const rtk = rtkGpsService.getData();
+          if (rtk && rtk.is_online && rtk.status === 'ok') {
+            return;
+          }
         }
 
         const speedKmH = pos.coords.speed !== null && pos.coords.speed !== undefined
@@ -524,13 +541,27 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     );
   }, [addLog]);
 
+  const setGpsSource = useCallback((mode: GpsSourceMode) => {
+    setGpsSourceState(mode);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(STORAGE_KEY_GPS_SOURCE, mode);
+    }
+    if (mode === 'device' || mode === 'auto') {
+      startRealGPS();
+    }
+  }, [startRealGPS]);
+
   // Sayt ochilganda avtomatik haqiqiy GPS va Trackk RTK xizmatini ishga tushirish
   useEffect(() => {
     startRealGPS();
     rtkGpsService.start();
 
     const unsubRtk = rtkGpsService.subscribe((data) => {
-      if (data.status === 'ok' && data.is_online) {
+      const curMode = (localStorage.getItem(STORAGE_KEY_GPS_SOURCE) as GpsSourceMode) || 'device';
+      // Faqat 'trackk' tanlangan bo'lsa yoki 'auto' rejimida haqiqiy RTK FIXED (fix=4) bo'lsa setGps yangilanadi
+      const applyCloud = (curMode === 'trackk') || (curMode === 'auto' && data.fix === 4);
+
+      if (applyCloud && data.status === 'ok' && data.is_online) {
         const speedKmH = data.speed || 0;
         setGps({
           latitude: data.lat,
@@ -935,6 +966,8 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         toggleMute,
         gps,
         startRealGPS,
+        gpsSource,
+        setGpsSource,
         esp32Status,
         esp32Connected,
         hornActive,

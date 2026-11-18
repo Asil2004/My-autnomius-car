@@ -7,7 +7,8 @@ import {
   Sliders,
   Check,
   AlertTriangle,
-  Activity
+  Activity,
+  Sparkles
 } from 'lucide-react';
 import { headingService, type HeadingState } from '../services/headingService';
 import { esp32Service } from '../services/esp32Service';
@@ -129,7 +130,25 @@ export const GyroCalibrationModal: React.FC<GyroCalibrationModalProps> = ({ onCl
     handleOffsetChange(manualOffset + delta);
   };
 
-  // 10. Zavod holatiga qaytarish
+  // 10. Rasmdagi haqiqiy montajga 1-klik bilan moslash
+  const handleApplyPhotoPreset = useCallback(() => {
+    headingService.setMountingAngle(0);
+    setMountingAngleState(0);
+
+    headingService.setInverted(true);
+    setInvertedState(true);
+
+    headingService.zeroLevel();
+    setInvertPitchState(headingService.getInvertPitch());
+    setInvertRollState(headingService.getInvertRoll());
+
+    const off = headingService.zeroCurrentHeading();
+    setManualOffset(off);
+
+    showBanner("✨ Rasmdagi montajga moslandi: 0° Montaj, Yaw Invert ON (O'ngga to'g'ri burilish), Gorizont tekislandi!");
+  }, []);
+
+  // 11. Zavod holatiga qaytarish
   const handleReset = useCallback(() => {
     headingService.resetCalibration();
     setManualOffset(0);
@@ -223,6 +242,31 @@ export const GyroCalibrationModal: React.FC<GyroCalibrationModalProps> = ({ onCl
             mountingAngle={mountingAngle}
             inverted={inverted}
           />
+
+          {/* TEZKOR PRESET: RASMDAGI MONTAJ (TAVSIYA ETILADI) */}
+          <div className="p-3 bg-gradient-to-r from-amber-950/70 via-tactical-900 to-indigo-950/70 rounded-xl border-2 border-amber-500/70 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-lg">
+            <div className="space-y-1 text-left w-full sm:w-auto">
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded bg-amber-500 text-black text-[10px] font-black uppercase tracking-wider">
+                  Tavsiya etiladi
+                </span>
+                <span className="font-bold text-slate-100 text-xs font-mono">
+                  📸 Rasmdagi Montajga 1-Klik Bilan Moslash
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-300 font-sans leading-tight">
+                MPU-6050 shassiga gorizontal yopishtirilgan (Pinlar orqada, chip oldinda). Ushbu tugma <b>0° Montaj</b>, <b>Yaw Invert (O'ngga to'g'ri burilish)</b> va <b>Gorizont tekislash</b>ni bir vaqtda to'g'rilaydi:
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleApplyPhotoPreset}
+              className="w-full sm:w-auto shrink-0 px-4 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 active:scale-95 text-black font-mono font-black text-xs flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(245,158,11,0.5)] transition-all"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>RASMGA MOSLASH</span>
+            </button>
+          </div>
 
           {/* TELEMETRIYA TAHLILI */}
           <div className="grid grid-cols-4 gap-2 text-center">

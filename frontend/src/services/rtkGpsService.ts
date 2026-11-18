@@ -162,22 +162,30 @@ class RtkGpsService {
           latencyMs: latency
         };
 
-        if (isFresh) {
-          // 1. Aloqa bor va ma'lumot yangi (< 5s): Markaziy navigatsiyaga uzatish
-          navigationService.pushGps({
-            lat,
-            lon: lng,
-            accuracyM,
-            speedKmh: speed,
-            courseDeg: null
-          });
+        const curMode = typeof window !== 'undefined'
+          ? (localStorage.getItem('qalqon.gps_source.v1') || 'device')
+          : 'device';
 
-          if (speed > 1.0) {
-            headingService.pushGps(null, speed);
+        if (isFresh) {
+          // Faqat Trackk tanlangan bo'lsa yoki Auto rejimida haqiqiy RTK FIXED (2 sm) bo'lsa navigatsiyani yangilash
+          if (curMode === 'trackk' || (curMode === 'auto' && fix === 4)) {
+            navigationService.pushGps({
+              lat,
+              lon: lng,
+              accuracyM,
+              speedKmh: speed,
+              courseDeg: null
+            });
+
+            if (speed > 1.0) {
+              headingService.pushGps(null, speed);
+            }
           }
         } else {
           // Failsafe: Ma'lumot eskirgan yoki aloqa yo'q
-          console.warn(`[QALQON OGOHLANTIRISH] Robotdan ma'lumot to'xtadi! (${ageSec}s oldin kelgan, is_online=${isOnline})`);
+          if (curMode === 'trackk') {
+            console.warn(`[QALQON OGOHLANTIRISH] Robotdan ma'lumot to'xtadi! (${ageSec}s oldin kelgan, is_online=${isOnline})`);
+          }
         }
       } else {
         // Kutish yoki signal yo'q

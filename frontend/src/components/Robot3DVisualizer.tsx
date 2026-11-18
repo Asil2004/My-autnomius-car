@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Sparkles, Compass } from 'lucide-react';
+import { Sparkles, Compass, Camera } from 'lucide-react';
 
 interface Robot3DVisualizerProps {
   heading: number;
@@ -20,7 +20,7 @@ export const Robot3DVisualizer: React.FC<Robot3DVisualizerProps> = ({
   mountingAngle = 0,
   inverted = false
 }) => {
-  const [viewMode, setViewMode] = useState<'3d' | 'top'>('3d');
+  const [viewMode, setViewMode] = useState<'3d' | 'top' | 'photo'>('3d');
 
   // Xavfsiz burchak qiymatlari
   const safeHeading = isFinite(heading) ? heading : 0;
@@ -31,8 +31,8 @@ export const Robot3DVisualizer: React.FC<Robot3DVisualizerProps> = ({
   // 3D ko'rinish uchun burchaklar
   // rotateX: 55° boshlang'ich qiyalik + pitch egilishi
   // rotateY: roll yonboshlanishi
-  // rotateZ: heading (yoki nisbiy burilish)
-  const transform3D = `rotateX(${55 - safePitch}deg) rotateY(${safeRoll}deg) rotateZ(${-safeHeading}deg)`;
+  // rotateZ: heading (soat yo'nalishida o'ngga burilish)
+  const transform3D = `rotateX(${55 - safePitch}deg) rotateY(${safeRoll}deg) rotateZ(${safeHeading}deg)`;
 
   return (
     <div className="w-full bg-tactical-950/90 rounded-2xl border border-tactical-800 p-4 flex flex-col items-center relative overflow-hidden shadow-2xl">
@@ -74,6 +74,18 @@ export const Robot3DVisualizer: React.FC<Robot3DVisualizerProps> = ({
             }`}
           >
             2D Yuqoridan
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('photo')}
+            className={`px-2.5 py-1 rounded-md transition-all font-bold flex items-center gap-1 ${
+              viewMode === 'photo'
+                ? 'bg-amber-500 text-black shadow'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Camera className="w-3 h-3" />
+            <span>📷 Real Montaj</span>
           </button>
         </div>
       </div>
@@ -212,7 +224,7 @@ export const Robot3DVisualizer: React.FC<Robot3DVisualizerProps> = ({
               </div>
             </div>
           </div>
-        ) : (
+        ) : viewMode === 'top' ? (
           /* ========================================================================= */
           /* 2. 2D KOMPAS VA YUQORIDAN KO'RINISH (360° AZIMUT HALQASI)                  */
           /* ========================================================================= */
@@ -262,6 +274,47 @@ export const Robot3DVisualizer: React.FC<Robot3DVisualizerProps> = ({
               <div className="absolute -right-3 top-2 w-3 h-8 bg-neutral-800 rounded border border-neutral-600" />
               <div className="absolute -left-3 bottom-2 w-3 h-8 bg-neutral-800 rounded border border-neutral-600" />
               <div className="absolute -right-3 bottom-2 w-3 h-8 bg-neutral-800 rounded border border-neutral-600" />
+            </div>
+          </div>
+        ) : (
+          /* ========================================================================= */
+          /* 3. 📷 HAQIQIY FOTOLAR: SHASSI VA MPU-6050 MONTAJI                          */
+          /* ========================================================================= */
+          <div className="w-full h-full p-2 flex items-center justify-center gap-3 overflow-hidden">
+            {/* 1-Rasm: Shassi Top Ko'rinishi */}
+            <div className="relative h-full flex-1 max-w-[240px] rounded-lg overflow-hidden border border-tactical-700 bg-black flex flex-col group">
+              <img
+                src="./images/chassis_top.jpg"
+                alt="Robot Shassisi"
+                className="w-full h-full object-cover"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/60 pointer-events-none" />
+              <div className="absolute top-1.5 left-2 px-1.5 py-0.5 rounded bg-amber-500/90 text-black text-[9px] font-bold">
+                ▲ OLD: Kronshteyn
+              </div>
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 px-1.5 py-0.5 rounded bg-blue-600/90 text-white text-[9px] font-bold border border-blue-400 shadow">
+                🎯 MPU-6050
+              </div>
+              <div className="absolute bottom-1.5 left-2 px-1.5 py-0.5 rounded bg-slate-900/90 text-slate-200 text-[9px] font-bold border border-slate-700">
+                ▼ ORQA: 12V AKB / Drayver
+              </div>
+            </div>
+
+            {/* 2-Rasm: MPU-6050 Datchik Makrosi */}
+            <div className="relative h-full flex-1 max-w-[240px] rounded-lg overflow-hidden border border-tactical-700 bg-black flex flex-col group">
+              <img
+                src="./images/mpu6050_mounting.jpg"
+                alt="MPU-6050 O'rnatilishi"
+                className="w-full h-full object-cover"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/60 pointer-events-none" />
+              <div className="absolute top-1.5 left-2 px-1.5 py-0.5 rounded bg-cyan-500/90 text-black text-[9px] font-bold">
+                Chip Oldinga (0° Montaj)
+              </div>
+              <div className="absolute bottom-1.5 left-2 right-2 px-1.5 py-1 rounded bg-black/85 border border-amber-500/60 text-amber-300 text-[9px] leading-tight">
+                ⚡ Pinlar orqaga qaragan. Z-o'qi tepaga.
+                <span className="block text-emerald-400 font-bold mt-0.5">Tavsiya: Yaw Invert = YOQILGAN</span>
+              </div>
             </div>
           </div>
         )}

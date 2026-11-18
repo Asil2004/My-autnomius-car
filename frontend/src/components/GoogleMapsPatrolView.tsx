@@ -23,7 +23,8 @@ import {
   Cloud,
   Copy,
   CheckCircle2,
-  X
+  X,
+  Laptop
 } from 'lucide-react';
 import { GyroCalibrationModal } from './GyroCalibrationModal';
 import { useRobot } from '../context/RobotContext';
@@ -80,7 +81,7 @@ interface Waypoint {
 }
 
 export const GoogleMapsPatrolView: React.FC = () => {
-  const { gps, startRealGPS } = useRobot();
+  const { gps, startRealGPS, gpsSource, setGpsSource } = useRobot();
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -130,14 +131,18 @@ export const GoogleMapsPatrolView: React.FC = () => {
   const [rtkData, setRtkData] = useState<RtkGpsData>(() => rtkGpsService.getData());
   useEffect(() => rtkGpsService.subscribe(setRtkData), []);
 
-  // Xarita birinchi marta yuklanganda RTK koordinatasiga avtomatik markazlashtirish
+  // Xarita birinchi marta yuklanganda tanlangan GPS koordinatasiga avtomatik markazlashtirish
   const hasAutoCenteredRef = useRef(false);
   useEffect(() => {
-    if (rtkData.is_online && rtkData.lat && rtkData.lng && !hasAutoCenteredRef.current && mapRef.current) {
+    if (hasAutoCenteredRef.current || !mapRef.current) return;
+    if (gpsSource === 'device' && gps.isReal && gps.latitude && gps.longitude) {
+      hasAutoCenteredRef.current = true;
+      mapRef.current.setView([gps.latitude, gps.longitude], 19);
+    } else if (gpsSource === 'trackk' && rtkData.is_online && rtkData.lat && rtkData.lng) {
       hasAutoCenteredRef.current = true;
       mapRef.current.setView([rtkData.lat, rtkData.lng], 19);
     }
-  }, [rtkData.is_online, rtkData.lat, rtkData.lng]);
+  }, [gpsSource, gps.isReal, gps.latitude, gps.longitude, rtkData.is_online, rtkData.lat, rtkData.lng]);
   const changeHeadingMode = useCallback(async (m: HeadingMode) => {
     if (m === 'device' || m === 'auto') await headingService.requestDevicePermission();
     headingService.setMode(m);
@@ -674,11 +679,24 @@ export const GoogleMapsPatrolView: React.FC = () => {
   // "Haqiqiy joylashuvim": robot belgisi turgan joyga teleport (operatorda tanlangan robot, robotda o'zi)
   const goToRealGPS = useCallback(() => {
     if (!isOperator) startRealGPS();
-    const p = robotMarkerRef.current?.getLatLng();
-    const lat = p ? p.lat : gps.latitude;
-    const lon = p ? p.lng : gps.longitude;
+    let lat = gps.latitude;
+    let lon = gps.longitude;
+
+    if (gpsSource === 'trackk' && rtkData.is_online && rtkData.lat && rtkData.lng) {
+      lat = rtkData.lat;
+      lon = rtkData.lng;
+    } else if (gps.isReal && gps.latitude && gps.longitude) {
+      lat = gps.latitude;
+      lon = gps.longitude;
+    } else {
+      const p = robotMarkerRef.current?.getLatLng();
+      if (p && isFinite(p.lat) && isFinite(p.lng) && p.lat !== NAVOI_CENTER[0]) {
+        lat = p.lat;
+        lon = p.lng;
+      }
+    }
     teleport(lat, lon, { label: isOperator ? watchedRobot || undefined : undefined });
-  }, [gps.latitude, gps.longitude, isOperator, startRealGPS, teleport, watchedRobot]);
+  }, [gps.latitude, gps.longitude, gps.isReal, isOperator, startRealGPS, teleport, watchedRobot, gpsSource, rtkData]);
 
   // 1. DEMO / VIZUAL PATRUL: chizilgan chiziq bo'yicha robot markerini borib-qaytarish
   const startPatrol = useCallback(() => {
@@ -876,11 +894,47 @@ export const GoogleMapsPatrolView: React.FC = () => {
             QALQON v1.0 — DIGITAL TWIN &amp; AVTONOM PATRUL
           </span>
           <div className="flex items-center gap-1.5 ml-2 pl-2 border-l border-tactical-700">
-            <span className={`w-2.5 h-2.5 rounded-full ${rtkData.is_online ? 'bg-emerald-400 shadow-[0_0_8px_#10b981] animate-pulse' : gps.isReal ? 'bg-emerald-400 shadow-[0_0_8px_#10b981]' : 'bg-amber-400 shadow-[0_0_8px_#f59e0b]'}`} />
+            {/* GPS Manba Tanlash Tugmalari */}
+            <div className="flex items-center bg-tactical-900 rounded p-0.5 border border-tactical-800 text-[10px] font-mono">
+              <button
+                type="button"
+                onClick={() => setGpsSource('device')}
+                className={`px-2 py-0.5 rounded flex items-center gap-1 font-bold transition-all ${
+                  gpsSource === 'device'
+                    ? 'bg-emerald-600 text-white shadow-[0_0_8px_rgba(16,185,129,0.4)]'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title="Noutbuk / Planshet brauzer GPSi (Xonada va ko'chada aniq va barqaror)"
+              >
+                <Laptop className="w-3 h-3" />
+                <span>Noutbuk GPS</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setGpsSource('trackk')}
+                className={`px-2 py-0.5 rounded flex items-center gap-1 font-bold transition-all ${
+                  gpsSource === 'trackk'
+                    ? 'bg-police-blue text-white shadow-[0_0_8px_rgba(29,99,255,0.4)]'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title="Trackk Cloud Hub RTK GNSS ma'lumotlari"
+              >
+                <Cloud className="w-3 h-3" />
+                <span>Trackk RTK</span>
+              </button>
+            </div>
+
+            <span className={`w-2.5 h-2.5 rounded-full ${
+              gpsSource === 'device'
+                ? (gps.isReal ? 'bg-emerald-400 shadow-[0_0_8px_#10b981]' : 'bg-amber-400')
+                : (rtkData.is_online ? 'bg-police-cyan shadow-[0_0_8px_#00e5ff] animate-pulse' : 'bg-rose-500')
+            }`} />
             <span className="text-[11px] font-mono font-bold text-slate-300">
-              {rtkData.is_online ? `☁️ CLOUD RTK: ${rtkData.fix_str}` : gps.isReal ? 'HAQIQIY GPS' : 'GPS QIDIRILMOQDA'}
+              {gpsSource === 'device'
+                ? (gps.isReal ? `💻 NOUTBUK GPS: ±${Math.round(gps.accuracy || 10)}m` : '💻 NOUTBUK: Qidirilmoqda...')
+                : (rtkData.is_online ? `☁️ CLOUD RTK: ${rtkData.fix_str}` : '☁️ CLOUD RTK: OFFLAYN')}
             </span>
-            {rtkData.is_online && (
+            {gpsSource === 'trackk' && rtkData.is_online && (
               <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-police-cyan/20 border border-police-cyan/50 text-police-cyan font-bold">
                 🛰️ {rtkData.sat} · {rtkData.latencyMs}ms
               </span>
