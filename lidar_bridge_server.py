@@ -270,8 +270,76 @@ class LidarHardwareReader:
             "is_front_blocked": is_front_blocked
         }
 
-# Global Reader
+# ---------------------------------------------------------------------------
+# Trackk RTK GPS Integratsiyasi (https://trackk-gl6l.onrender.com/api.php)
+# ---------------------------------------------------------------------------
+TRACKK_API_URL = os.environ.get("TRACKK_API_URL", "https://trackk-gl6l.onrender.com/api.php")
+
+class TrackkGpsBridge:
+    def __init__(self, api_url: str = TRACKK_API_URL):
+        self.api_url = api_url.rstrip("/")
+        self.running = True
+        self.lock = threading.Lock()
+        self.latest_data: Dict[str, Any] = {
+            "status": "waiting",
+            "is_online": False,
+            "lat": 0.0,
+            "lng": 0.0,
+            "fix": 0,
+            "fix_str": "Kutilmoqda...",
+            "sat": 0,
+            "hdop": 99.9,
+            "alt": 0.0,
+            "speed": 0.0,
+            "server_time": "",
+            "last_updated": 0.0
+        }
+        threading.Thread(target=self._poll_loop, daemon=True).start()
+
+    def get_gps(self) -> Dict[str, Any]:
+        with self.lock:
+            return dict(self.latest_data)
+
+    def _poll_loop(self):
+        import urllib.request
+        while self.running:
+            try:
+                sep = "&" if "?" in self.api_url else "?"
+                req_url = f"{self.api_url}{sep}action=robot&_={int(time.time() * 1000)}"
+                req = urllib.request.Request(req_url, headers={"User-Agent": "QalqonPi5-AMR/1.0"})
+                with urllib.request.urlopen(req, timeout=4.0) as resp:
+                    if resp.status == 200:
+                        raw = resp.read().decode("utf-8")
+                        data = json.loads(raw)
+                        if data.get("status") == "ok" and "lat" in data and "lng" in data:
+                            with self.lock:
+                                self.latest_data = {
+                                    "status": "ok",
+                                    "is_online": bool(data.get("is_online", True)),
+                                    "lat": float(data["lat"]),
+                                    "lng": float(data["lng"]),
+                                    "fix": int(data.get("fix", 0)),
+                                    "fix_str": str(data.get("fix_str", "GPS FIX")),
+                                    "sat": int(data.get("sat", 0)),
+                                    "hdop": float(data.get("hdop", 1.0)),
+                                    "alt": float(data.get("alt", 0.0)),
+                                    "speed": float(data.get("speed", 0.0)),
+                                    "server_time": str(data.get("server_time", "")),
+                                    "last_updated": time.time()
+                                }
+                        elif data.get("status") == "waiting":
+                            with self.lock:
+                                self.latest_data["status"] = "waiting"
+                                self.latest_data["is_online"] = False
+            except Exception as e:
+                with self.lock:
+                    self.latest_data["is_online"] = False
+                    self.latest_data["error"] = str(e)
+            time.sleep(0.8)
+
+# Global Reader & GPS Bridge
 lidar_reader = LidarHardwareReader()
+trackk_gps = TrackkGpsBridge()
 
 # ---------------------------------------------------------------------------
 # FastAPI & WebSocket Server
@@ -295,8 +363,9 @@ async def websocket_endpoint(websocket: WebSocket):
     print(f"[WebSocket] Yangi mijoz ulandi. Jami faol: {len(connected_clients)}")
     try:
         while True:
-            # Har 100 ms (10 Hz) da to'liq LiDAR telemetriyasini uzatish
+            # Har 100 ms (10 Hz) da to'liq LiDAR va GPS telemetriyasini uzatish
             payload = lidar_reader.get_telemetry_payload()
+            payload["gps"] = trackk_gps.get_gps()
             await websocket.send_text(json.dumps(payload))
             await asyncio.sleep(0.1)
     except WebSocketDisconnect:
@@ -310,6 +379,10 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.get("/api/lidar")
 def get_lidar_telemetry():
     return lidar_reader.get_telemetry_payload()
+
+@app.get("/api/gps")
+def get_gps_telemetry():
+    return trackk_gps.get_gps()
 
 @app.get("/api/status")
 def get_status():

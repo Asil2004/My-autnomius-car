@@ -9,6 +9,7 @@
  */
 
 import type { LidarPoint } from '../types/robot';
+import { navigationService } from './navigationService';
 
 export interface LidarFrameData {
   points: LidarPoint[];
@@ -245,6 +246,20 @@ class LidarSerialService {
               if (data.rpm) this.lastSpeedRpm = data.rpm;
               if (data.packets_count) this.packetsCount = data.packets_count;
               this.emitFrame('websocket');
+            }
+
+            // Agar WebSocket orqali Pi 5 dan GPS ma'lumoti kelsa
+            if (data.gps && data.gps.status === 'ok' && isFinite(data.gps.lat) && isFinite(data.gps.lng)) {
+              const fix = parseInt(data.gps.fix) || 0;
+              const hdop = parseFloat(data.gps.hdop) || 1.0;
+              const acc = fix === 4 ? 0.02 : fix === 5 ? 0.25 : (hdop * 2.0);
+              navigationService.pushGps({
+                lat: parseFloat(data.gps.lat),
+                lon: parseFloat(data.gps.lng),
+                accuracyM: acc,
+                speedKmh: parseFloat(data.gps.speed) || 0,
+                courseDeg: null
+              });
             }
           } catch (_) {}
         };

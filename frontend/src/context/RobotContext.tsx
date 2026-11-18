@@ -30,6 +30,7 @@ import { navigationService } from '../services/navigationService';
 import { autopilotService } from '../services/autopilotService';
 import { esp32Service } from '../services/esp32Service';
 import { lidarSerialService } from '../services/lidarSerialService';
+import { rtkGpsService } from '../services/rtkGpsService';
 
 export interface LogMessage {
   id: string;
@@ -517,10 +518,32 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     );
   }, [addLog]);
 
-  // Sayt ochilganda avtomatik haqiqiy GPS ni ishga tushirish
+  // Sayt ochilganda avtomatik haqiqiy GPS va Trackk RTK xizmatini ishga tushirish
   useEffect(() => {
     startRealGPS();
+    rtkGpsService.start();
+
+    const unsubRtk = rtkGpsService.subscribe((data) => {
+      if (data.status === 'ok' && data.is_online) {
+        const speedKmH = data.speed || 0;
+        setGps({
+          latitude: data.lat,
+          longitude: data.lng,
+          altitude: data.alt || 340,
+          accuracy: data.fix === 4 ? 0.02 : data.fix === 5 ? 0.25 : (data.hdop || 2.5),
+          speed: speedKmH,
+          heading: 0,
+          timestamp: data.lastFetchedAt,
+          isReal: true,
+          status: 'ONLINE',
+          error: undefined
+        });
+      }
+    });
+
     return () => {
+      unsubRtk();
+      rtkGpsService.stop();
       if (watchIdRef.current !== null) {
         navigator.geolocation.clearWatch(watchIdRef.current);
       }
