@@ -19,16 +19,167 @@ import sys
 import os
 
 class LaneDetector:
-    def __init__(self, color_mode='blue'):
+    def __init__(self, color_mode='tactile_yellow', yellowness_min=20):
         """
-        color_mode: 
-          'blue'   - Ko'k rangli lenta (DeepPiCar standarti)
-          'white'  - Oq chiziqlar (standart yo'l)
-          'yellow' - Sariq chiziqlar
-          'black'  - Oq polda qora chiziq
+        color_mode:
+          'tactile_yellow' - Ko'zi ojizlar sariq taktil yo'lagi (QULAY MAKON, default)
+          'yellow'         - Sariq chiziqlar / taktil yo'lak
+          'blue'           - Ko'k rangli lenta (DeepPiCar standarti)
+          'white'          - Oq chiziqlar (standart yo'l)
+          'black'          - Oq polda qora chiziq
         """
         self.color_mode = color_mode
+        self.yellowness_min = int(yellowness_min)
         self.curr_steering_angle = 90  # 90 gradus = to'g'riga
+
+    def detect_tactile_mask(self, small_bgr):
+        """(R+G)/2 - B farqiga asoslangan taktil sariq yo'lak maskasi (0/255)."""
+        b = small_bgr[:, :, 0].astype(np.int16)
+        g = small_bgr[:, :, 1].astype(np.int16)
+        r = small_bgr[:, :, 2].astype(np.int16)
+        ymin = self.yellowness_min
+        min_ch = max(12, ymin - 2)
+        mask = (
+            ((((r + g) >> 1) - b) >= ymin)
+            & ((r - b) >= min_ch)
+            & ((g - b) >= min_ch)
+            & (np.abs(r - g) <= 52)
+            & ((r + g) >= 110)
+        )
+        return (mask.astype(np.uint8)) * 255
+
+    def track_tactile_strip(self, frame):
+        """
+        Ko'zi ojizlar sariq taktil yo'lagini qatlam-qatlam (pastdan yuqoriga) kuzatadi.
+        Chetdagi oq kabellar va T-chorraha yon shoxlarini filtrlaydi.
+        Qaytaradi: dict(detected, confidence, offset_norm, angle_deg, raw_steer, t_junction, command, bands, mask_u8)
+        """
+        small = cv2.resize(frame, (160, 120), interpolation=cv2.INTER_AREA)
+        h, w, _ = small.shape
+        mask_u8 = self.detect_tactile_mask(small)
+        mask = mask_u8 > 0
+
+        y_start = int(h * 0.22)
+        y_end = int(h * 0.96)
+        n_bands = 14
+        edges = np.linspace(y_start, y_end, n_bands + 1, dtype=int)
+        min_run = max(3, int(round(w * 0.04)))
+
+        bands = []
+        prev_c = None
+        prev_w = None
+        t_junc = False
+
+        for i in range(n_bands - 1, -1, -1):
+            y0, y1 = int(edges[i]), max(int(edges[i]) + 1, int(edges[i + 1]))
+            hits = mask[y0:y1, :].mean(axis=0) > 0.35
+            runs = []
+            in_r = False
+            s = 0
+            for x in range(w):
+                if hits[x] and not in_r:
+                    in_r, s = True, x
+                elif not hits[x] and in_r:
+                    in_r = False
+                    if x - s >= min_run:
+                        runs.append((s, x - 1))
+            if in_r and w - s >= min_run:
+                runs.append((s, w - 1))
+            if not runs:
+                continue
+
+            merged = [runs[0]]
+            for rs, re in runs[1:]:
+                if rs - merged[-1][1] <= 3:
+                    merged[-1] = (merged[-1][0], re)
+                else:
+                    merged.append((rs, re))
+
+            if prev_c is None:
+                best = max(
+                    merged,
+                    key=lambda r_: (r_[1] - r_[0] + 1) * (1.0 - 0.3 * abs(((r_[0] + r_[1]) / 2.0 - w / 2.0) / (w / 2.0))),
+                )
+            else:
+                best = min(merged, key=lambda r_: abs((r_[0] + r_[1]) / 2.0 - prev_c))
+                if abs((best[0] + best[1]) / 2.0 - prev_c) > w * 0.35 and (best[1] - best[0] + 1) < w * 0.4:
+                    continue
+
+            x0, x1 = best
+            bw = x1 - x0 + 1
+            cx = (x0 + x1) / 2.0
+            clamped = False
+
+            if prev_w is not None and bw > w * 0.45 and bw > prev_w * 1.45:
+                t_junc = True
+                clamped = True
+                lo = x0 + prev_w / 2.0
+                hi = x1 - prev_w / 2.0
+                cx = float(np.clip(prev_c, lo, hi)) if lo <= hi else prev_c
+                x0 = max(x0, int(round(cx - prev_w / 2.0)))
+                x1 = min(x1, int(round(cx + prev_w / 2.0)))
+                bw = prev_w
+
+            prev_c = cx
+            prev_w = bw if prev_w is None else 0.7 * prev_w + 0.3 * bw
+            bands.append({
+                "y": (y0 + y1) / 2.0 / h,
+                "x0": x0 / w,
+                "x1": x1 / w,
+                "cx": cx / w,
+                "clamped": clamped,
+            })
+
+        bands.reverse()
+        confidence = len(bands) / float(n_bands)
+        detected = len(bands) >= 3 and confidence >= 0.21
+
+        if not detected:
+            return {
+                "detected": False,
+                "confidence": confidence,
+                "offset_norm": 0.0,
+                "angle_deg": 0.0,
+                "raw_steer": 0.0,
+                "t_junction": t_junc,
+                "command": "S",
+                "bands": bands,
+                "mask_u8": mask_u8,
+            }
+
+        near = bands[-min(5, len(bands)):]
+        near_x = float(np.mean([b_["cx"] for b_ in near]))
+        near_y = float(np.mean([b_["y"] for b_ in near]))
+        offset_norm = float(np.clip((near_x - 0.5) * 2.0, -1.0, 1.0))
+
+        far = bands[:min(4, len(bands))]
+        far_x = float(np.mean([b_["cx"] for b_ in far]))
+        far_y = float(np.mean([b_["y"] for b_ in far]))
+        dx = far_x - near_x
+        dy = max(0.05, near_y - far_y)
+        angle_deg = float(np.clip(math.degrees(math.atan2(dx, dy)), -60.0, 60.0))
+        heading_norm = float(np.clip(dx * 2.4, -1.0, 1.0))
+        raw_steer = float(np.clip(0.85 * offset_norm + 0.45 * heading_norm, -1.0, 1.0))
+
+        abs_s = abs(raw_steer)
+        if abs_s >= 0.52:
+            cmd = "L" if raw_steer < 0 else "R"
+        elif abs_s >= 0.14:
+            cmd = "G" if raw_steer < 0 else "I"
+        else:
+            cmd = "F"
+
+        return {
+            "detected": True,
+            "confidence": confidence,
+            "offset_norm": offset_norm,
+            "angle_deg": angle_deg,
+            "raw_steer": raw_steer,
+            "t_junction": t_junc,
+            "command": cmd,
+            "bands": bands,
+            "mask_u8": mask_u8,
+        }
         
     def detect_edges(self, frame):
         """Kadrni HSV ga o'girish va yo'l chiziqlarining chegarasini (Canny) topish"""
@@ -39,9 +190,9 @@ class LaneDetector:
             lower = np.array([60, 40, 40])
             upper = np.array([150, 255, 255])
             mask = cv2.inRange(hsv, lower, upper)
-        elif self.color_mode == 'yellow':
-            # Sariq rang diapazoni
-            lower = np.array([18, 60, 100])
+        elif self.color_mode in ('yellow', 'tactile_yellow'):
+            # Sariq / taktil yo'lak rang diapazoni
+            lower = np.array([18, 45, 95])
             upper = np.array([35, 255, 255])
             mask = cv2.inRange(hsv, lower, upper)
         elif self.color_mode == 'white':
@@ -177,8 +328,52 @@ class LaneDetector:
         self.curr_steering_angle = stabilized
         return stabilized
 
+    def _process_tactile_yellow(self, frame):
+        """Sariq taktil yo'lak rejimida vizualizatsiya va rul burchagi hisoblash."""
+        res = self.track_tactile_strip(frame)
+        raw_angle = int(round(90 + res["raw_steer"] * 45)) if res["detected"] else 90
+        raw_angle = max(45, min(135, raw_angle))
+        steering_angle = self.stabilize_steering_angle(raw_angle, max_step=8)
+
+        vis_frame = frame.copy()
+        h, w, _ = vis_frame.shape
+        bands = res["bands"]
+        if len(bands) >= 2:
+            left_pts = [(int(b["x0"] * w), int(b["y"] * h)) for b in bands]
+            right_pts = [(int(b["x1"] * w), int(b["y"] * h)) for b in reversed(bands)]
+            poly = np.array(left_pts + right_pts, dtype=np.int32)
+            overlay = vis_frame.copy()
+            cv2.fillPoly(overlay, [poly], (168, 85, 247) if res["t_junction"] else (34, 197, 94))
+            cv2.addWeighted(overlay, 0.25, vis_frame, 0.75, 0, vis_frame)
+            cv2.polylines(vis_frame, [poly], True, (34, 197, 94), 2)
+
+            mid_pts = np.array([(int(b["cx"] * w), int(b["y"] * h)) for b in bands], dtype=np.int32)
+            cv2.polylines(vis_frame, [mid_pts], False, (0, 220, 255), 3)
+            for b in bands:
+                color = (255, 100, 220) if b["clamped"] else (0, 220, 255)
+                cv2.circle(vis_frame, (int(b["cx"] * w), int(b["y"] * h)), 4, color, -1)
+
+        rad = math.radians(steering_angle - 90)
+        x_start = int(w / 2)
+        y_start = int(h * 0.94)
+        x_end = int(x_start + (h * 0.35) * math.sin(rad))
+        y_end = int(y_start - (h * 0.35) * math.cos(rad))
+        cv2.line(vis_frame, (x_start, y_start), (x_end, y_end), (0, 200, 255) if res["detected"] else (0, 0, 255), 4)
+
+        cmd = res["command"]
+        label = f"CMD:{cmd} CONF:{int(res['confidence']*100)}% ({steering_angle} deg)"
+        if res["t_junction"]:
+            label += " [T-FILTER]"
+        cv2.putText(vis_frame, label, (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0) if res["detected"] else (0, 0, 255), 2)
+        cv2.putText(vis_frame, f"Rang: {self.color_mode.upper()} | MIN={self.yellowness_min}", (12, 54), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        mask_full = cv2.resize(res["mask_u8"], (w, h), interpolation=cv2.INTER_NEAREST)
+        return vis_frame, steering_angle, mask_full
+
     def process_frame(self, frame):
         """Kadrni qabul qilib, tahlil qiladi va chizilgan vizual kadr va burchakni qaytaradi"""
+        if self.color_mode in ('tactile_yellow', 'yellow'):
+            return self._process_tactile_yellow(frame)
+
         edges = self.detect_edges(frame)
         cropped_edges = self.region_of_interest(edges)
         line_segments = self.detect_line_segments(cropped_edges)
@@ -276,6 +471,30 @@ def run_on_video():
     cv2.destroyAllWindows()
 
 
+def run_on_custom_photos(photo_paths, no_gui=False):
+    """Ko'zi ojizlar sariq taktil yo'lagi rasmlari bo'yicha tezkor tahlil va tekshiruv."""
+    detector = LaneDetector(color_mode='tactile_yellow', yellowness_min=20)
+    print(f"[TEST] {len(photo_paths)} ta rasm taktil yo'lak algoritmida tekshirilmoqda...")
+    for path in photo_paths:
+        frame = cv2.imread(path)
+        if frame is None:
+            print(f"[XATO] O'qib bo'lmadi: {path}")
+            continue
+        res = detector.track_tactile_strip(frame)
+        vis, angle, _ = detector.process_frame(frame)
+        print(
+            f"{os.path.basename(path)}: detected={res['detected']} conf={res['confidence']:.2f} "
+            f"offset={res['offset_norm']:+.3f} steer={res['raw_steer']:+.3f} cmd={res['command']} "
+            f"angle={angle}deg t_junc={res['t_junction']} bands={len(res['bands'])}"
+        )
+        if not no_gui:
+            cv2.imshow(f"Taktil Yo'lak - {os.path.basename(path)}", vis)
+    if not no_gui:
+        print("Rasmlarni yopish uchun istalgan tugmani bosing...")
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
+
 def run_webcam():
     """Jonli USB Webcam orqali ishga tushirish"""
     print("=" * 60)
@@ -291,8 +510,8 @@ def run_webcam():
         print("  python lane_detector_webcam.py video")
         return
         
-    detector = LaneDetector(color_mode='blue')
-    print("[OK] Kamera faol! Chiqish uchun 'q', rang almashtirish: 'b'=ko'k, 'w'=oq, 'y'=sariq")
+    detector = LaneDetector(color_mode='tactile_yellow', yellowness_min=20)
+    print("[OK] Kamera faol! Chiqish: 'q', rejim: 'y'=taktil sariq, 'b'=ko'k, 'w'=oq, 'k'=qora")
     
     while True:
         ret, frame = cap.read()
@@ -300,7 +519,7 @@ def run_webcam():
             break
         vis, angle, edges = detector.process_frame(frame)
         cv2.imshow("Avtonom Yo'l Kamerasi", vis)
-        cv2.imshow("Canny Qirralar", edges)
+        cv2.imshow("Taktil Yo'lak Maskasi / Qirralar", edges)
         
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q'):
@@ -309,8 +528,8 @@ def run_webcam():
             detector.color_mode = 'blue'
         elif key == ord('w'):
             detector.color_mode = 'white'
-        elif key == ord('y'):
-            detector.color_mode = 'yellow'
+        elif key in (ord('y'), ord('t')):
+            detector.color_mode = 'tactile_yellow'
         elif key == ord('k'):
             detector.color_mode = 'black'
             
@@ -323,5 +542,9 @@ if __name__ == "__main__":
         run_on_video()
     elif len(sys.argv) > 1 and sys.argv[1].lower() == "image":
         run_on_sample_images()
+    elif len(sys.argv) > 1 and sys.argv[1].lower() == "test":
+        no_gui_flag = "--no-gui" in sys.argv
+        files = [a for a in sys.argv[2:] if not a.startswith("--")]
+        run_on_custom_photos(files, no_gui=no_gui_flag)
     else:
         run_webcam()

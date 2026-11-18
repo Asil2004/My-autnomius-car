@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useRobot } from '../context/RobotContext';
-import type { DetectedObject } from '../types/robot';
+import type { DetectedObject, MecanumCommand } from '../types/robot';
 import { faceRecognitionService, type KnownPerson } from '../services/faceRecognitionService';
 import { distanceEstimator } from '../services/distanceService';
 import type * as cocoSsd from '@tensorflow-models/coco-ssd';
@@ -12,6 +12,18 @@ import { PtzLensView } from './PtzLensView';
 import { PanoramaLensView } from './PanoramaLensView';
 import { remoteLens } from '../services/ptzRelay';
 import { ptzCameraService, LENS, CAMERA_ROTATED_180, type PtzLens } from '../services/ptzCameraService';
+import { lensHub } from '../services/lensHub';
+import { lidarSerialService } from '../services/lidarSerialService';
+import {
+  analyzeLineFrame,
+  drawLineFollowerOverlay,
+  LineFollowerController,
+  loadLineFollowerConfig,
+  saveLineFollowerConfig,
+  type LineColorPreset,
+  type LineControlStep,
+  type LineFollowerConfig
+} from '../services/lineFollowerService';
 import { faceCameraSettings } from '../services/faceCameraSettings';
 import { camLinkSettings } from '../services/camLinkSettings';
 import {
@@ -647,6 +659,42 @@ export const HUDView: React.FC = () => {
   const [aiModelLoaded, setAiModelLoaded] = useState(false);
   const [aiModelLoading, setAiModelLoading] = useState(false);
   const [aiEnabled, setAiEnabled] = useState(false);
+
+  // Taktil sariq yo'lak (ko'zi ojizlar yo'lagi) bo'ylab chiziqli yurish holatlari
+  const [lineFollowEnabled, setLineFollowEnabled] = useState(false);
+  const [lineFollowDrive, setLineFollowDrive] = useState(true);
+  const [lineConfig, setLineConfig] = useState<LineFollowerConfig>(() => loadLineFollowerConfig());
+  const [lineStep, setLineStep] = useState<LineControlStep | null>(null);
+  const [linePhotoUrl, setLinePhotoUrl] = useState<string | null>(null);
+  const lineOverlayFaceRef = useRef<HTMLCanvasElement | null>(null);
+  const lineOverlayPtzRef = useRef<HTMLCanvasElement | null>(null);
+  const lineOffscreenRef = useRef<HTMLCanvasElement | null>(null);
+  const lineControllerRef = useRef<LineFollowerController>(new LineFollowerController());
+  const linePhotoImgRef = useRef<HTMLImageElement | null>(null);
+  const linePhotoInputRef = useRef<HTMLInputElement | null>(null);
+  const lastLineCmdRef = useRef<MecanumCommand | null>(null);
+  const lastLineSentAtRef = useRef(0);
+  const lastLineUiAtRef = useRef(0);
+  const lineFollowRef = useRef({
+    enabled: false,
+    drive: true,
+    config: lineConfig,
+    isBlocked: false,
+    mirror: false,
+    activeCam: 'face' as CamId,
+    isViewer: false,
+    hasPhoto: false
+  });
+  lineFollowRef.current = {
+    enabled: lineFollowEnabled,
+    drive: lineFollowDrive,
+    config: lineConfig,
+    isBlocked: isFrontBlocked,
+    mirror: mirrorVideo,
+    activeCam,
+    isViewer,
+    hasPhoto: Boolean(linePhotoUrl)
+  };
 
   // NVR yozuviga odam ramkalari ham tushishi uchun: kompozitor har kadrda shu ref'dan o'qiydi
   const overlayStateRef = useRef({ objects: detectedObjects, ai: aiEnabled, mirror: mirrorVideo });
@@ -1329,6 +1377,253 @@ export const HUDView: React.FC = () => {
     };
   }, [cameraSource, aiEnabled, detectFrame, isViewer]);
 
+  // =========================================================================
+  // 3B. SARIQ TAKTIL YO'LAK (KO'ZI OJIZLAR YO'LAGI) BO'YLAB CHIZIQLI YURISH (10 Hz)
+  // =========================================================================
+  const updateLineConfig = useCallback((patch: Partial<LineFollowerConfig>) => {
+    setLineConfig((prev) => {
+      const next = { ...prev, ...patch };
+      saveLineFollowerConfig(next);
+      return next;
+    });
+  }, []);
+
+  const clearLinePhoto = useCallback(() => {
+    setLinePhotoUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+  }, []);
+
+  const handleSelectLinePhoto = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    setLinePhotoUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return url;
+    });
+    setActiveCam('face');
+    setLineFollowEnabled(true);
+    lineFollowRef.current.enabled = true;
+    lineControllerRef.current.reset();
+    addLog('AI', 'info', `Yo'lak rasmi test uchun yuklandi (${file.name}). Motorlar o'chirilgan (xavfsiz sinov).`);
+  }, [addLog]);
+
+  const stopLineFollow = useCallback((sendStop = true, reason?: string) => {
+    if (!lineFollowRef.current.enabled) return;
+    lineFollowRef.current.enabled = false;
+    setLineFollowEnabled(false);
+    if (sendStop) {
+      sendMecanumCommand('S');
+    }
+    lastLineCmdRef.current = null;
+    lineControllerRef.current.reset();
+    setLineStep(null);
+    addLog('AI', 'info', reason ?? "Taktil chiziq avtopiloti to'xtatildi.");
+  }, [sendMecanumCommand, addLog]);
+
+  const toggleLineFollow = useCallback(() => {
+    if (lineFollowRef.current.enabled) {
+      stopLineFollow(true);
+      return;
+    }
+    lineControllerRef.current.reset();
+    lastLineCmdRef.current = null;
+    lastLineSentAtRef.current = 0;
+    lineFollowRef.current.enabled = true;
+    setLineFollowEnabled(true);
+    addLog(
+      'AI',
+      'success',
+      `Taktil chiziq kuzatish yoqildi (${lineFollowRef.current.drive && !lineFollowRef.current.hasPhoto ? 'AVTO YURISH' : 'FAQAT TEST'}).`
+    );
+  }, [stopLineFollow, addLog]);
+
+  // Sahifadan chiqqanda yoki Space bosilganda chiziq avtopiloti darhol to'xtatiladi
+  useEffect(() => {
+    return () => {
+      if (lineFollowRef.current.enabled) {
+        sendMecanumCommand('S');
+      }
+    };
+  }, [sendMecanumCommand]);
+
+  useEffect(() => {
+    if (!lineFollowEnabled) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code !== 'Space') return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
+      e.preventDefault();
+      stopLineFollow(true, "Space tugmasi — chiziqli yurish to'xtatildi.");
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lineFollowEnabled, stopLineFollow]);
+
+  useEffect(() => {
+    const clearOverlays = () => {
+      for (const cv of [lineOverlayFaceRef.current, lineOverlayPtzRef.current]) {
+        if (!cv) continue;
+        const c = cv.getContext('2d');
+        c?.clearRect(0, 0, cv.width, cv.height);
+      }
+    };
+
+    if (!lineFollowEnabled && !linePhotoUrl) {
+      clearOverlays();
+      return;
+    }
+
+    const ANALYSIS_W = 160;
+    const ANALYSIS_H = 120;
+
+    const tick = () => {
+      const cur = lineFollowRef.current;
+      if (!cur.enabled && !cur.hasPhoto) return;
+
+      if (!lineOffscreenRef.current) {
+        const off = document.createElement('canvas');
+        off.width = ANALYSIS_W;
+        off.height = ANALYSIS_H;
+        lineOffscreenRef.current = off;
+      }
+      const off = lineOffscreenRef.current;
+      const offCtx = off.getContext('2d', { willReadFrequently: true });
+      if (!offCtx) return;
+
+      let sourceReady = false;
+      let targetCanvas: HTMLCanvasElement | null = null;
+      let mirrorDisplay = false;
+      let drawRect: { x: number; y: number; w: number; h: number } | null = null;
+
+      if (cur.hasPhoto && linePhotoImgRef.current?.complete && linePhotoImgRef.current.naturalWidth > 0) {
+        const img = linePhotoImgRef.current;
+        offCtx.clearRect(0, 0, ANALYSIS_W, ANALYSIS_H);
+        offCtx.drawImage(img, 0, 0, ANALYSIS_W, ANALYSIS_H);
+        sourceReady = true;
+        targetCanvas = lineOverlayFaceRef.current;
+        mirrorDisplay = false;
+        if (targetCanvas) {
+          const cw = Math.max(1, targetCanvas.clientWidth);
+          const ch = Math.max(1, targetCanvas.clientHeight);
+          if (targetCanvas.width !== cw || targetCanvas.height !== ch) {
+            targetCanvas.width = cw;
+            targetCanvas.height = ch;
+          }
+          const scale = Math.min(cw / img.naturalWidth, ch / img.naturalHeight);
+          const dw = img.naturalWidth * scale;
+          const dh = img.naturalHeight * scale;
+          drawRect = { x: (cw - dw) / 2, y: (ch - dh) / 2, w: dw, h: dh };
+        }
+      } else if (cur.activeCam === 'face') {
+        const v = videoRef.current;
+        if (v && v.readyState >= 2 && v.videoWidth > 0 && v.videoHeight > 0) {
+          offCtx.clearRect(0, 0, ANALYSIS_W, ANALYSIS_H);
+          offCtx.drawImage(v, 0, 0, ANALYSIS_W, ANALYSIS_H);
+          sourceReady = true;
+          targetCanvas = lineOverlayFaceRef.current;
+          mirrorDisplay = cur.mirror;
+          if (targetCanvas) {
+            const cw = Math.max(1, targetCanvas.clientWidth);
+            const ch = Math.max(1, targetCanvas.clientHeight);
+            if (targetCanvas.width !== cw || targetCanvas.height !== ch) {
+              targetCanvas.width = cw;
+              targetCanvas.height = ch;
+            }
+            drawRect = { x: 0, y: 0, w: cw, h: ch };
+          }
+        }
+      } else if (MODULE_LENS[cur.activeCam] !== undefined) {
+        const lens = MODULE_LENS[cur.activeCam]!;
+        const frame = (cur.isViewer ? remoteLens : lensHub).current();
+        if (frame && frame.width > 0 && frame.height > 0) {
+          const lenses = Math.max(1, Math.round((frame.height * 16) / (frame.width * 9)));
+          if (lens < lenses) {
+            const sw = frame.width;
+            const sh = frame.height / lenses;
+            const sy = sh * lens;
+            offCtx.save();
+            offCtx.clearRect(0, 0, ANALYSIS_W, ANALYSIS_H);
+            if (CAMERA_ROTATED_180) {
+              offCtx.translate(ANALYSIS_W, ANALYSIS_H);
+              offCtx.rotate(Math.PI);
+            }
+            try {
+              offCtx.drawImage(frame.src, 0, sy, sw, sh, 0, 0, ANALYSIS_W, ANALYSIS_H);
+              sourceReady = true;
+            } catch {
+              sourceReady = false;
+            }
+            offCtx.restore();
+
+            targetCanvas = lineOverlayPtzRef.current;
+            mirrorDisplay = false;
+            if (targetCanvas && sourceReady) {
+              const cw = Math.max(1, targetCanvas.clientWidth);
+              const ch = Math.max(1, targetCanvas.clientHeight);
+              if (targetCanvas.width !== cw || targetCanvas.height !== ch) {
+                targetCanvas.width = cw;
+                targetCanvas.height = ch;
+              }
+              const scale = Math.min(cw / sw, ch / sh);
+              const dw = sw * scale;
+              const dh = sh * scale;
+              drawRect = { x: (cw - dw) / 2, y: (ch - dh) / 2, w: dw, h: dh };
+            }
+          }
+        }
+      }
+
+      if (!sourceReady) {
+        clearOverlays();
+        return;
+      }
+
+      const imgData = offCtx.getImageData(0, 0, ANALYSIS_W, ANALYSIS_H);
+      const analysis = analyzeLineFrame(imgData.data, ANALYSIS_W, ANALYSIS_H, cur.config);
+      const now = Date.now();
+      const lidarInfo = lidarSerialService.getObstacleInfo();
+      const blocked = cur.isBlocked || lidarInfo.isBlocked;
+      const step = lineControllerRef.current.step(analysis, cur.config, now, blocked);
+
+      if (targetCanvas && drawRect) {
+        const ctx = targetCanvas.getContext('2d');
+        if (ctx) {
+          ctx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
+          ctx.save();
+          ctx.translate(drawRect.x, drawRect.y);
+          drawLineFollowerOverlay(ctx, drawRect.w, drawRect.h, step, mirrorDisplay, blocked);
+          ctx.restore();
+        }
+      }
+
+      const cmdChanged = step.command !== lastLineCmdRef.current;
+      if (now - lastLineUiAtRef.current >= 120 || cmdChanged) {
+        lastLineUiAtRef.current = now;
+        setLineStep(step);
+      }
+
+      // Motor buyruqlari faqat Avto Yurish yoniq va statik sinov rasmi yuklanmaganida yuboriladi
+      if (cur.enabled && cur.drive && !cur.hasPhoto) {
+        if (cmdChanged || now - lastLineSentAtRef.current >= 200) {
+          lastLineCmdRef.current = step.command;
+          lastLineSentAtRef.current = now;
+          sendMecanumCommand(step.command);
+        }
+      }
+    };
+
+    tick();
+    const timer = window.setInterval(tick, 90);
+    return () => {
+      clearInterval(timer);
+      clearOverlays();
+    };
+  }, [lineFollowEnabled, linePhotoUrl, sendMecanumCommand]);
+
   // Yangi shaxsni bazaga qo'shish (yuz tekshiruvi, xatolik xabari va aksessuar variantlari jarayoni bilan)
   const handleAddNewPerson = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1528,6 +1823,7 @@ export const HUDView: React.FC = () => {
   };
 
   const handleDriveDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    stopLineFollow(false, "Qo'lda joystik boshqaruvi olindi.");
     e.currentTarget.setPointerCapture(e.pointerId);
     setIsDriving(true);
     updateDrive(e);
@@ -1541,6 +1837,13 @@ export const HUDView: React.FC = () => {
     setDriveKnob({ x: 0, y: 0 });
     sendJoystickCoordinates(0, 0);
     sendMecanumCommand('S');
+  };
+
+  const sendManualMecanum = (cmd: MecanumCommand) => {
+    if (lineFollowRef.current.enabled) {
+      stopLineFollow(false, "Qo'lda tugma boshqaruvi olindi.");
+    }
+    sendMecanumCommand(cmd);
   };
 
   // 2. PTZ Kamera Joystigi (faqat PTZ kamera kattalashtirilganda chiqadi)
@@ -1666,6 +1969,24 @@ export const HUDView: React.FC = () => {
           Face ID
           <span className={`text-[10px] ${faceStatus === 'ready' ? 'text-police-green' : faceStatus === 'error' ? 'text-police-red' : faceStatus === 'idle' ? 'text-slate-400' : 'text-police-amber'}`}>
             {faceStatus === 'ready' ? 'tayyor' : faceStatus === 'error' ? 'xato' : faceStatus === 'idle' ? "o'chiq" : 'yuklanmoqda'}
+          </span>
+        </button>
+
+        {/* Taktil sariq yo'lak (ko'zi ojizlar yo'lagi) bo'ylab chiziqli avtoyurish */}
+        <button
+          onClick={toggleLineFollow}
+          aria-pressed={lineFollowEnabled}
+          title="Ko'zi ojizlar sariq taktil yo'lagi bo'ylab chiziqli yurishni yoqish/o'chirish"
+          className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition-colors ${
+            lineFollowEnabled
+              ? 'bg-amber-500/20 border-amber-400 text-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.25)]'
+              : 'bg-tactical-850 border-tactical-700 text-slate-200 hover:bg-tactical-800'
+          }`}
+        >
+          <span className={`w-2 h-2 rounded-full ${lineFollowEnabled ? 'bg-amber-400 animate-pulse' : 'bg-amber-500/60'}`} />
+          <span>Taktil Chiziq</span>
+          <span className={`text-[10px] font-mono ${lineFollowEnabled ? 'text-police-green' : 'text-slate-400'}`}>
+            {lineFollowEnabled ? (lineFollowDrive && !linePhotoUrl ? 'AVTO' : 'TEST') : "o'chiq"}
           </span>
         </button>
 
@@ -1935,6 +2256,18 @@ export const HUDView: React.FC = () => {
                       muted
                       className={`w-full h-full object-contain transition-transform ${mirrorVideo ? 'scale-x-[-1]' : ''}`}
                     />
+                    {linePhotoUrl && (
+                      <img
+                        ref={linePhotoImgRef}
+                        src={linePhotoUrl}
+                        alt="Taktil yo'lak test rasmi"
+                        className="absolute inset-0 w-full h-full object-contain bg-black z-20"
+                      />
+                    )}
+                    <canvas
+                      ref={lineOverlayFaceRef}
+                      className="absolute inset-0 w-full h-full pointer-events-none z-[25]"
+                    />
 
                     {cameraLoading && !isViewer && (
                       <div className="absolute inset-0 bg-tactical-950/80 flex flex-col items-center justify-center space-y-2 z-10">
@@ -2039,6 +2372,10 @@ export const HUDView: React.FC = () => {
                       lens={MODULE_LENS[activeCam]!}
                       variant="main"
                       label={ALL_CAMERAS.find((c) => c.id === activeCam)?.long ?? 'Kamera'}
+                    />
+                    <canvas
+                      ref={lineOverlayPtzRef}
+                      className="absolute inset-0 w-full h-full pointer-events-none z-20"
                     />
                     {activeCam === 'ptz' && (
                       <div className="absolute inset-4 flex items-center justify-center pointer-events-none">
@@ -2380,6 +2717,53 @@ export const HUDView: React.FC = () => {
               </div>
             )}
           </div>
+
+          {/* TAKTIL CHIZIQ AVTOPILOTINING DOIMIY KOMPAKT HOLAT PANELI */}
+          {(lineFollowEnabled || linePhotoUrl) && (
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="absolute bottom-3 left-1/2 -translate-x-1/2 z-40 flex flex-wrap items-center justify-center gap-2 px-3 py-1.5 rounded-xl bg-tactical-950/90 border border-amber-400/60 shadow-[0_0_20px_rgba(251,191,36,0.2)] backdrop-blur-md text-xs font-mono pointer-events-auto max-w-[95%]"
+            >
+              <span className="flex items-center gap-1.5 font-bold text-amber-300">
+                <span className={`w-2 h-2 rounded-full ${lineStep?.detected ? 'bg-police-green animate-pulse' : 'bg-police-red animate-ping'}`} />
+                TAKTIL YO&apos;LAK
+              </span>
+              <span className="px-1.5 py-0.5 rounded bg-tactical-850 border border-tactical-700 text-slate-200">
+                {lineStep ? lineStep.statusLabel : 'Kadr kutilmoqda...'}
+              </span>
+              {lineStep && (
+                <span className="text-[11px] text-slate-300">
+                  Ishonch: <strong className={lineStep.confidence >= 0.5 ? 'text-police-green' : 'text-police-amber'}>{Math.round(lineStep.confidence * 100)}%</strong>
+                  {lineStep.bands.length > 0 && ` | Og'ish: ${lineStep.offsetNorm >= 0 ? '+' : ''}${Math.round(lineStep.offsetNorm * 100)}%`}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => openOnly('ai')}
+                title="Chiziq sezgirligi va sozlamalari"
+                className="px-2 py-0.5 rounded border border-tactical-600 bg-tactical-850 hover:bg-tactical-800 text-police-cyan text-[11px] flex items-center gap-1"
+              >
+                <SlidersHorizontal className="w-3 h-3" /> Sozlash
+              </button>
+              {linePhotoUrl ? (
+                <button
+                  type="button"
+                  onClick={clearLinePhoto}
+                  className="px-2 py-0.5 rounded bg-police-amber/20 border border-amber-400/50 text-amber-200 hover:bg-amber-500/30 text-[11px] font-bold"
+                >
+                  Rasmdan chiqish
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => stopLineFollow(true, "Foydalanuvchi STOP tugmasini bosdi.")}
+                  className="px-2.5 py-0.5 rounded bg-police-red/25 border border-police-red text-police-red hover:bg-police-red hover:text-white text-[11px] font-extrabold flex items-center gap-1"
+                >
+                  <Square className="w-3 h-3 fill-current" /> STOP
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {/* ========================================================================= */}
@@ -2509,7 +2893,7 @@ export const HUDView: React.FC = () => {
             <div className="grid grid-cols-3 gap-1">
               <button
                 type="button"
-                onPointerDown={(e) => { e.preventDefault(); sendMecanumCommand('G'); }}
+                onPointerDown={(e) => { e.preventDefault(); sendManualMecanum('G'); }}
                 onPointerUp={(e) => { e.preventDefault(); sendMecanumCommand('S'); }}
                 onPointerLeave={() => sendMecanumCommand('S')}
                 onPointerCancel={() => sendMecanumCommand('S')}
@@ -2520,7 +2904,7 @@ export const HUDView: React.FC = () => {
               </button>
               <button
                 type="button"
-                onPointerDown={(e) => { e.preventDefault(); sendMecanumCommand('F'); }}
+                onPointerDown={(e) => { e.preventDefault(); sendManualMecanum('F'); }}
                 onPointerUp={(e) => { e.preventDefault(); sendMecanumCommand('S'); }}
                 onPointerLeave={() => sendMecanumCommand('S')}
                 onPointerCancel={() => sendMecanumCommand('S')}
@@ -2531,7 +2915,7 @@ export const HUDView: React.FC = () => {
               </button>
               <button
                 type="button"
-                onPointerDown={(e) => { e.preventDefault(); sendMecanumCommand('I'); }}
+                onPointerDown={(e) => { e.preventDefault(); sendManualMecanum('I'); }}
                 onPointerUp={(e) => { e.preventDefault(); sendMecanumCommand('S'); }}
                 onPointerLeave={() => sendMecanumCommand('S')}
                 onPointerCancel={() => sendMecanumCommand('S')}
@@ -2545,7 +2929,7 @@ export const HUDView: React.FC = () => {
             <div className="grid grid-cols-3 gap-1">
               <button
                 type="button"
-                onPointerDown={(e) => { e.preventDefault(); sendMecanumCommand('L'); }}
+                onPointerDown={(e) => { e.preventDefault(); sendManualMecanum('L'); }}
                 onPointerUp={(e) => { e.preventDefault(); sendMecanumCommand('S'); }}
                 onPointerLeave={() => sendMecanumCommand('S')}
                 onPointerCancel={() => sendMecanumCommand('S')}
@@ -2556,7 +2940,7 @@ export const HUDView: React.FC = () => {
               </button>
               <button
                 type="button"
-                onClick={() => sendMecanumCommand('S')}
+                onClick={() => sendManualMecanum('S')}
                 title="Favqulodda to'xtash (STOP)"
                 className="py-1.5 px-1 rounded-lg border border-police-red bg-police-red/20 hover:bg-police-red/35 active:bg-police-red text-police-red hover:text-white font-extrabold text-xs flex items-center justify-center gap-1 select-none shadow-[0_0_12px_rgba(255,23,68,0.3)] transition-all"
               >
@@ -2564,7 +2948,7 @@ export const HUDView: React.FC = () => {
               </button>
               <button
                 type="button"
-                onPointerDown={(e) => { e.preventDefault(); sendMecanumCommand('R'); }}
+                onPointerDown={(e) => { e.preventDefault(); sendManualMecanum('R'); }}
                 onPointerUp={(e) => { e.preventDefault(); sendMecanumCommand('S'); }}
                 onPointerLeave={() => sendMecanumCommand('S')}
                 onPointerCancel={() => sendMecanumCommand('S')}
@@ -2578,7 +2962,7 @@ export const HUDView: React.FC = () => {
             <div className="grid grid-cols-3 gap-1">
               <button
                 type="button"
-                onPointerDown={(e) => { e.preventDefault(); sendMecanumCommand('H'); }}
+                onPointerDown={(e) => { e.preventDefault(); sendManualMecanum('H'); }}
                 onPointerUp={(e) => { e.preventDefault(); sendMecanumCommand('S'); }}
                 onPointerLeave={() => sendMecanumCommand('S')}
                 onPointerCancel={() => sendMecanumCommand('S')}
@@ -2589,7 +2973,7 @@ export const HUDView: React.FC = () => {
               </button>
               <button
                 type="button"
-                onPointerDown={(e) => { e.preventDefault(); sendMecanumCommand('B'); }}
+                onPointerDown={(e) => { e.preventDefault(); sendManualMecanum('B'); }}
                 onPointerUp={(e) => { e.preventDefault(); sendMecanumCommand('S'); }}
                 onPointerLeave={() => sendMecanumCommand('S')}
                 onPointerCancel={() => sendMecanumCommand('S')}
@@ -2600,7 +2984,7 @@ export const HUDView: React.FC = () => {
               </button>
               <button
                 type="button"
-                onPointerDown={(e) => { e.preventDefault(); sendMecanumCommand('J'); }}
+                onPointerDown={(e) => { e.preventDefault(); sendManualMecanum('J'); }}
                 onPointerUp={(e) => { e.preventDefault(); sendMecanumCommand('S'); }}
                 onPointerLeave={() => sendMecanumCommand('S')}
                 onPointerCancel={() => sendMecanumCommand('S')}
@@ -2830,6 +3214,109 @@ export const HUDView: React.FC = () => {
                   <Ruler className="w-3.5 h-3.5" />
                   {calibrated ? 'Kalibrovka tayyor' : 'Kalibrovka'}
                 </button>
+              </div>
+
+              {/* TAKTIL SARIQ YO'LAK (KO'ZI OJIZLAR YO'LAGI) AVTOPILOT SOZLAMALARI */}
+              <div className="pt-2.5 mt-1 border-t border-tactical-700/80 flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-amber-300 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-amber-400" />
+                    Taktil Chiziq (Ko&apos;zi ojizlar yo&apos;lagi)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={toggleLineFollow}
+                    className={`px-2 py-0.5 rounded font-bold text-[11px] border ${
+                      lineFollowEnabled
+                        ? 'bg-police-red/20 border-police-red text-police-red hover:bg-police-red hover:text-white'
+                        : 'bg-amber-500/20 border-amber-400 text-amber-300 hover:bg-amber-500/30'
+                    }`}
+                  >
+                    {lineFollowEnabled ? "To'xtatish" : 'Boshlash'}
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setLineFollowDrive((v) => !v)}
+                    className={`px-2 py-1 rounded border text-[11px] font-semibold ${
+                      lineFollowDrive
+                        ? 'bg-police-green/15 border-police-green/60 text-police-green'
+                        : 'bg-tactical-850 border-tactical-700 text-slate-300'
+                    }`}
+                  >
+                    {lineFollowDrive ? 'Motor: AVTO YURISH' : 'Motor: FAQAT SINOV'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateLineConfig({ invertSteering: !lineConfig.invertSteering })}
+                    className={`px-2 py-1 rounded border text-[11px] font-medium ${
+                      lineConfig.invertSteering
+                        ? 'bg-police-blue/25 border-police-cyan/60 text-police-cyan'
+                        : 'bg-tactical-850 border-tactical-700 text-slate-300'
+                    }`}
+                  >
+                    Rul: {lineConfig.invertSteering ? 'Teskari' : 'Normal'}
+                  </button>
+                </div>
+
+                <label className="flex items-center justify-between gap-2 text-[11px]">
+                  <span className="text-slate-400">Yo&apos;lak turi</span>
+                  <select
+                    value={lineConfig.colorPreset}
+                    onChange={(e) => updateLineConfig({ colorPreset: e.target.value as LineColorPreset })}
+                    className="px-2 py-1 rounded bg-tactical-850 border border-tactical-700 text-slate-100 text-[11px]"
+                  >
+                    <option value="tactile_yellow">Sariq taktil yo&apos;lak (Qulay Makon)</option>
+                    <option value="bright_yellow">Yorqin sariq lenta</option>
+                    <option value="blue">Ko&apos;k lenta</option>
+                    <option value="white">Oq chiziq</option>
+                    <option value="black">Qora chiziq</option>
+                  </select>
+                </label>
+
+                <label className="flex flex-col gap-1 text-[11px]">
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Sariqlik chegarasi (yellowness)</span>
+                    <span className="font-mono text-amber-300">{lineConfig.yellownessMin}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={10}
+                    max={40}
+                    step={1}
+                    value={lineConfig.yellownessMin}
+                    onChange={(e) => updateLineConfig({ yellownessMin: Number(e.target.value) })}
+                    className="w-full accent-amber-400"
+                  />
+                </label>
+
+                <div className="flex items-center gap-1.5">
+                  <input
+                    ref={linePhotoInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleSelectLinePhoto}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => linePhotoInputRef.current?.click()}
+                    className="flex-1 px-2 py-1 rounded border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 text-slate-200 text-[11px] font-medium"
+                  >
+                    Rasmda sinab ko&apos;rish
+                  </button>
+                  {linePhotoUrl && (
+                    <button
+                      type="button"
+                      onClick={clearLinePhoto}
+                      className="px-2 py-1 rounded border border-amber-500/50 bg-amber-500/15 text-amber-200 text-[11px]"
+                    >
+                      Tozalash
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </FloatingPanel>
