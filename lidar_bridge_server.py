@@ -236,7 +236,7 @@ class LidarHardwareReader:
                     if d < min_left: min_left = d
 
         front_cm = int(round(min_front * 100)) if min_front < 900 else 250
-        is_front_blocked = front_cm <= 40
+        is_front_blocked = front_cm <= 50
 
         return {
             "source": "LIDAR",
@@ -271,80 +271,55 @@ class LidarHardwareReader:
         }
 
 # ---------------------------------------------------------------------------
-# Trackk RTK GPS Integratsiyasi (https://trackk-gl6l.onrender.com/api.php)
+# Ixtiyoriy MQTT Bulut Ko'prigi (HTTPS veb-saytdan Mixed Content siz ulanish uchun)
 # ---------------------------------------------------------------------------
-TRACKK_API_URL = os.environ.get("TRACKK_API_URL", "https://trackk-gl6l.onrender.com/api.php")
-
-class TrackkGpsBridge:
-    def __init__(self, api_url: str = TRACKK_API_URL):
-        self.api_url = api_url.rstrip("/")
+class MqttLidarBridge:
+    def __init__(self, reader: LidarHardwareReader):
+        self.reader = reader
         self.running = True
-        self.lock = threading.Lock()
-        self.latest_data: Dict[str, Any] = {
-            "status": "waiting",
-            "is_online": False,
-            "lat": 0.0,
-            "lng": 0.0,
-            "fix": 0,
-            "fix_str": "Kutilmoqda...",
-            "sat": 0,
-            "hdop": 99.9,
-            "alt": 0.0,
-            "speed": 0.0,
-            "server_time": "",
-            "last_updated": 0.0
-        }
-        threading.Thread(target=self._poll_loop, daemon=True).start()
+        self.topic = os.environ.get("QALQON_LIDAR_MQTT_TOPIC", "qalqon/robot/lidar")
+        if os.environ.get("ENABLE_LIDAR_MQTT", "1") == "1":
+            threading.Thread(target=self._loop, daemon=True).start()
 
-    def get_gps(self) -> Dict[str, Any]:
-        with self.lock:
-            return dict(self.latest_data)
-
-    def _poll_loop(self):
-        import urllib.request
+    def _loop(self):
+        try:
+            import paho.mqtt.client as mqtt
+        except ImportError:
+            return
+        client = mqtt.Client()
+        connected = False
         while self.running:
             try:
-                sep = "&" if "?" in self.api_url else "?"
-                req_url = f"{self.api_url}{sep}action=robot&_={int(time.time() * 1000)}"
-                req = urllib.request.Request(req_url, headers={"User-Agent": "QalqonPi5-AMR/1.0"})
-                with urllib.request.urlopen(req, timeout=4.0) as resp:
-                    if resp.status == 200:
-                        raw = resp.read().decode("utf-8")
-                        data = json.loads(raw)
-                        if data.get("status") == "ok" and "lat" in data and "lng" in data:
-                            with self.lock:
-                                self.latest_data = {
-                                    "status": "ok",
-                                    "is_online": bool(data.get("is_online", True)),
-                                    "lat": float(data["lat"]),
-                                    "lng": float(data["lng"]),
-                                    "fix": int(data.get("fix", 0)),
-                                    "fix_str": str(data.get("fix_str", "GPS FIX")),
-                                    "sat": int(data.get("sat", 0)),
-                                    "hdop": float(data.get("hdop", 1.0)),
-                                    "alt": float(data.get("alt", 0.0)),
-                                    "speed": float(data.get("speed", 0.0)),
-                                    "server_time": str(data.get("server_time", "")),
-                                    "last_updated": time.time()
-                                }
-                        elif data.get("status") == "waiting":
-                            with self.lock:
-                                self.latest_data["status"] = "waiting"
-                                self.latest_data["is_online"] = False
-            except Exception as e:
-                with self.lock:
-                    self.latest_data["is_online"] = False
-                    self.latest_data["error"] = str(e)
-            time.sleep(0.8)
+                if not connected:
+                    client.connect("broker.hivemq.com", 1883, 60)
+                    client.loop_start()
+                    connected = True
+                    print(f"[MQTT] LiDAR bulut ko'prigi faol -> {self.topic}")
+                if self.reader.is_connected:
+                    payload = self.reader.get_telemetry_payload()
+                    # Har 2-graduslik ixcham nuqtalar (paket hajmini kamaytirish uchun)
+                    pts = payload["lidar"]["points"]
+                    compact_pts = [p for p in pts if p["angle"] % 2 == 0]
+                    msg = json.dumps({
+                        "rate_hz": payload["rate_hz"],
+                        "rpm": payload["rpm"],
+                        "packets_count": payload["packets_count"],
+                        "crc_errors": payload["crc_errors"],
+                        "lidar": {"points": compact_pts}
+                    })
+                    client.publish(self.topic, msg)
+            except Exception:
+                connected = False
+            time.sleep(0.15)
 
-# Global Reader & GPS Bridge
+# Global Reader & MQTT Bridge
 lidar_reader = LidarHardwareReader()
-trackk_gps = TrackkGpsBridge()
+mqtt_lidar_bridge = MqttLidarBridge(lidar_reader)
 
 # ---------------------------------------------------------------------------
 # FastAPI & WebSocket Server
 # ---------------------------------------------------------------------------
-app = FastAPI(title="QALQON STL-19P LiDAR Server", version="2.0")
+app = FastAPI(title="QALQON STL-19P LiDAR Server", version="2.1")
 
 app.add_middleware(
     CORSMiddleware,
@@ -363,9 +338,8 @@ async def websocket_endpoint(websocket: WebSocket):
     print(f"[WebSocket] Yangi mijoz ulandi. Jami faol: {len(connected_clients)}")
     try:
         while True:
-            # Har 100 ms (10 Hz) da to'liq LiDAR va GPS telemetriyasini uzatish
+            # Har 100 ms (10 Hz) da to'liq LiDAR telemetriyasini uzatish
             payload = lidar_reader.get_telemetry_payload()
-            payload["gps"] = trackk_gps.get_gps()
             await websocket.send_text(json.dumps(payload))
             await asyncio.sleep(0.1)
     except WebSocketDisconnect:
@@ -380,10 +354,6 @@ async def websocket_endpoint(websocket: WebSocket):
 def get_lidar_telemetry():
     return lidar_reader.get_telemetry_payload()
 
-@app.get("/api/gps")
-def get_gps_telemetry():
-    return trackk_gps.get_gps()
-
 @app.get("/api/status")
 def get_status():
     return {
@@ -396,7 +366,12 @@ def get_status():
 
 # Statik veb fayllarni ulash (Frontend)
 static_dir = os.path.dirname(os.path.abspath(__file__))
-app.mount("/assets", StaticFiles(directory=os.path.join(static_dir, "assets")), name="assets")
+assets_dir = os.path.join(static_dir, "assets")
+images_dir = os.path.join(static_dir, "images")
+if os.path.isdir(assets_dir):
+    app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+if os.path.isdir(images_dir):
+    app.mount("/images", StaticFiles(directory=images_dir), name="images")
 
 @app.get("/")
 def serve_index():

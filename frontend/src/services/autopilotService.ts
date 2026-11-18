@@ -12,7 +12,7 @@
  */
 import type { MecanumCommand } from '../types/robot';
 import { navigationService, type NavState } from './navigationService';
-import { rtkGpsService } from './rtkGpsService';
+import { lidarSerialService } from './lidarSerialService';
 
 export interface AutopilotWaypoint {
   lat: number;
@@ -47,33 +47,38 @@ export interface AutopilotState {
   message: string;
   targetIndex: number;
   total: number;
+  routeDir: 1 | -1;
   distanceToTargetM: number;
   distanceToEndM: number;
   bearingErrorDeg: number;
+  crossTrackM: number;
+  carrot: AutopilotWaypoint | null;
   command: MecanumCommand;
   bypassAttempts: number;
 }
 
 export const AUTOPILOT_CONFIG = {
   tickMs: 200,
-  /** Nuqtaga yetdi deb hisoblash radiusi, m (GPS aniqligi yomon bo'lsa biroz kattalashadi) */
-  arriveMinM: 3.0,
-  arriveMaxM: 8.0,
-  /** Joylashuv aniqligi shundan yomon bo'lsa yurmaydi, m */
-  maxAccuracyM: 30,
+  /** Nuqtaga yetdi deb hisoblash radiusi, m */
+  arriveMinM: 2.5,
+  arriveMaxM: 7.0,
+  /** Joylashuv aniqligi shundan yomon bo'lsa yurmaydi, m (planshet/noutbuk GPS uchun moslashuvchan) */
+  maxAccuracyM: 100,
   /** Yo'nalish xatosi: shundan katta -> joyida burilish */
-  spinDeg: 40,
+  spinDeg: 35,
   /** shundan katta -> egri yurish */
-  curveDeg: 12,
-  /** Avtopilotda to'siqqa ruxsat etilgan eng yaqin masofa, sm (LiDAR/Sonar) */
+  curveDeg: 10,
+  /** Avtopilotda to'siqqa ruxsat etilgan standart masofa, sm (LiDAR/Sonar) */
   stopCm: 50,
+  /** Chizilgan chiziq bo'yicha oldinga qarash (Lookahead / Carrot) masofasi, m */
+  lookaheadM: 3.5,
   /** To'siq oldida to'xtab kutish (o'tib ketuvchi odam/mashina uchun) */
   obstacleWaitMs: 2000,
   /** Chetlab o'tishda: yo'l ochilgandan keyin yana shuncha burilish (robot kengligi uchun zaxira) */
-  extraTurnMs: 600,
+  extraTurnMs: 550,
   maxTurnMs: 4000,
   /** Chetlab o'tish oldinga bo'lagi */
-  bypassForwardMs: 3000,
+  bypassForwardMs: 2400,
   maxBypassAttempts: 4
 };
 
@@ -99,6 +104,52 @@ export function bearingDeg(aLat: number, aLon: number, bLat: number, bLon: numbe
 
 const wrap180 = (d: number) => ((((d + 180) % 360) + 360) % 360) - 180;
 
+/**
+ * Chizilgan A -> B chiziq kesmasi bo'ylab robot uchun "Carrot" (oldindagi maqsad nuqta)
+ * va chiziqdan chetga chiqish (cross-track) masofasini hisoblash
+ */
+function computeLineLookahead(
+  robotLat: number,
+  robotLon: number,
+  a: AutopilotWaypoint,
+  b: AutopilotWaypoint,
+  lookaheadM: number
+): { carrot: AutopilotWaypoint; crossTrackM: number } {
+  const cosLat = Math.cos(toRad(a.lat)) || 1;
+  const toX = (lon: number) => toRad(lon - a.lon) * R_EARTH * cosLat;
+  const toY = (lat: number) => toRad(lat - a.lat) * R_EARTH;
+
+  const bx = toX(b.lon);
+  const by = toY(b.lat);
+  const segLen = Math.hypot(bx, by);
+  if (segLen < 0.2) {
+    return { carrot: b, crossTrackM: distanceM(robotLat, robotLon, b.lat, b.lon) };
+  }
+
+  const rx = toX(robotLon);
+  const ry = toY(robotLat);
+  const ux = bx / segLen;
+  const uy = by / segLen;
+
+  // Chiziq bo'ylab proyeksiya va perpendikulyar chetga chiqish
+  const proj = Math.max(0, Math.min(segLen, rx * ux + ry * uy));
+  const cx = proj * ux;
+  const cy = proj * uy;
+  const crossTrackM = Math.hypot(rx - cx, ry - cy);
+
+  const carrotDist = Math.min(segLen, proj + lookaheadM);
+  const kx = carrotDist * ux;
+  const ky = carrotDist * uy;
+
+  return {
+    carrot: {
+      lat: a.lat + (ky / R_EARTH) * (180 / Math.PI),
+      lon: a.lon + (kx / (R_EARTH * cosLat)) * (180 / Math.PI)
+    },
+    crossTrackM: +crossTrackM.toFixed(1)
+  };
+}
+
 class AutopilotService {
   private driver: Driver | null = null;
   private obstacles: ObstacleProvider | null = null;
@@ -120,19 +171,26 @@ class AutopilotService {
     message: 'Avtopilot o‘chiq',
     targetIndex: 0,
     total: 0,
+    routeDir: 1,
     distanceToTargetM: 0,
     distanceToEndM: 0,
     bearingErrorDeg: 0,
+    crossTrackM: 0,
+    carrot: null,
     command: 'S',
     bypassAttempts: 0
   };
+
+  getStopCm(): number {
+    return lidarSerialService.getStopCm() || AUTOPILOT_CONFIG.stopCm;
+  }
 
   /** RobotContext: haqiqiy ESP32 buyrug'ini yuboruvchi funksiya */
   setDriver(d: Driver | null) {
     this.driver = d;
   }
 
-  /** RobotContext: kamera + sonar to'siq ma'lumoti */
+  /** RobotContext: LiDAR + sonar + kamera to'siq ma'lumoti */
   setObstacleProvider(p: ObstacleProvider | null) {
     this.obstacles = p;
   }
@@ -170,14 +228,17 @@ class AutopilotService {
     this.roundTrip = roundTrip;
     this.route = route.map((p) => ({ ...p }));
     this.routeDir = 1;
-    // Robotga eng yaqin nuqtadan emas, birinchi (yashil) nuqtadan boshlanadi; agar robot allaqachon unda bo'lsa keyingisiga
+    this.clearSince = 0;
     this.set({
       active: true,
       targetIndex: 0,
       total: this.route.length,
+      routeDir: 1,
+      crossTrackM: 0,
+      carrot: this.route[0],
       bypassAttempts: 0,
       phase: 'driving',
-      message: roundTrip ? 'Avtopilot yoqildi (Borib-qaytish faol)' : 'Avtopilot yoqildi'
+      message: roundTrip ? 'Avtopilot yoqildi (Chiziq bo‘ylab borib-qaytish)' : 'Avtopilot yoqildi (Chiziq bo‘ylab)'
     });
     this.phaseSince = Date.now();
     this.lastSent = 'S';
@@ -192,7 +253,7 @@ class AutopilotService {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     const wasActive = this.state.active;
-    this.set({ active: false, phase: this.state.phase === 'arrived' ? 'arrived' : 'idle', message: reason });
+    this.set({ active: false, carrot: null, phase: this.state.phase === 'arrived' ? 'arrived' : 'idle', message: reason });
     if (wasActive) this.drive('S', true);
   }
 
@@ -203,8 +264,8 @@ class AutopilotService {
 
   private drive(cmd: MecanumCommand, force = false) {
     const now = Date.now();
-    // Bir xil buyruq qayta yuborilmaydi (RobotContext o'zi har 250 ms keep-alive yuboradi); faqat 3 s da bir marta tasdiq
-    if (!force && cmd === this.lastSent && now - this.lastSentAt < 3000) return;
+    // Bir xil buyruq qayta yuborilmaydi (RobotContext o'zi har 250 ms keep-alive yuboradi); faqat 2 s da bir marta tasdiq
+    if (!force && cmd === this.lastSent && now - this.lastSentAt < 2000) return;
     this.lastSent = cmd;
     this.lastSentAt = now;
     this.set({ command: cmd });
@@ -229,30 +290,16 @@ class AutopilotService {
     const nav: NavState = navigationService.getState();
     const obs = this.obstacles?.();
 
-    // 1) Xavfsizlik talabi (Failsafe): agar foydalanuvchi Trackk Cloud RTK rejimida bo'lsa va aloqa uzilsa -> to'xtash
-    const curSource = typeof window !== 'undefined'
-      ? (localStorage.getItem('qalqon.gps_source.v1') || 'device')
-      : 'device';
-
-    if (curSource === 'trackk') {
-      const rtk = rtkGpsService.getData();
-      if (rtk && rtk.status !== 'waiting' && (!rtk.is_online || rtk.age_sec > 5.0)) {
-        this.drive('S');
-        this.enter('waiting-gps', `⚠️ [FAILSAFE] Trackk RTK uzildi (${rtk.age_sec.toFixed(1)}s). Motor to‘xtatildi.`);
-        return;
-      }
-    }
-
-    // 2) Joylashuv ishonchli emas -> turib kutadi
+    // 1) Planshet/qurilma GPS tayyor emas -> turib kutadi
     if (!nav.initialized || nav.positionSource === 'stale' || nav.positionSource === 'none' || nav.accuracy > cfg.maxAccuracyM) {
       this.drive('S');
       this.enter('waiting-gps', `GPS kutilmoqda (aniqlik ${Number.isFinite(nav.accuracy) ? Math.round(nav.accuracy) : '—'} m)`);
       return;
     }
 
-    // 2) Marshrut hisobi va borib-qaytish mantiqi
+    // 2) Chizilgan marshrut hisobi va borib-qaytish mantiqi
     let idx = this.state.targetIndex;
-    const arriveR = Math.min(cfg.arriveMaxM, Math.max(cfg.arriveMinM, nav.accuracy * 0.8));
+    const arriveR = Math.min(cfg.arriveMaxM, Math.max(cfg.arriveMinM, Math.min(nav.accuracy, 20) * 0.4));
     let target = this.route[idx];
     let dist = distanceM(nav.lat, nav.lon, target.lat, target.lon);
 
@@ -260,16 +307,15 @@ class AutopilotService {
       if (this.routeDir === 1 && idx >= this.route.length - 1) {
         // Oxirgi nuqtaga yetdi
         if (this.roundTrip && this.route.length > 1) {
-          // Orqaga qaytishni boshlash!
           this.routeDir = -1;
           idx = this.route.length - 2;
           target = this.route[idx];
           dist = distanceM(nav.lat, nav.lon, target.lat, target.lon);
-          this.enter('driving', 'Oxirgi manzilga yetdi! Boshlang‘ich nuqtaga qaytmoqda...');
+          this.set({ routeDir: -1 });
           break;
         } else {
           this.drive('S', true);
-          this.set({ distanceToTargetM: dist, distanceToEndM: dist });
+          this.set({ distanceToTargetM: dist, distanceToEndM: dist, carrot: null });
           if (this.timer) clearInterval(this.timer);
           this.timer = null;
           this.set({ active: false, phase: 'arrived', message: '✅ Manzilga yetib keldi' });
@@ -278,7 +324,7 @@ class AutopilotService {
       } else if (this.routeDir === -1 && idx <= 0) {
         // Boshlang'ich nuqtaga qaytib keldi
         this.drive('S', true);
-        this.set({ distanceToTargetM: dist, distanceToEndM: dist });
+        this.set({ distanceToTargetM: dist, distanceToEndM: dist, carrot: null });
         if (this.timer) clearInterval(this.timer);
         this.timer = null;
         this.set({ active: false, phase: 'arrived', message: '✅ Boshlang‘ich nuqtaga to‘liq qaytib keldi' });
@@ -307,11 +353,28 @@ class AutopilotService {
       }
     }
 
-    const err = wrap180(bearingDeg(nav.lat, nav.lon, target.lat, target.lon) - nav.heading);
-    this.set({ targetIndex: idx, distanceToTargetM: dist, distanceToEndM: rest, bearingErrorDeg: Math.round(err) });
+    // Chizilgan chiziq kesmasi bo'ylab Lookahead ("Carrot") nuqtasini topish
+    const prevIdx = idx - this.routeDir;
+    let aimPoint: AutopilotWaypoint = target;
+    let crossTrackM = 0;
+    if (prevIdx >= 0 && prevIdx < this.route.length) {
+      const la = computeLineLookahead(nav.lat, nav.lon, this.route[prevIdx], target, cfg.lookaheadM);
+      aimPoint = la.carrot;
+      crossTrackM = la.crossTrackM;
+    }
 
-    // 3) To'siq tekshiruvi (LiDAR va Sonar orqali)
-    // Kamera talabi olib tashlandi: faqat LiDAR yoki Sonar oldinda to'siq ko'rsagina to'xtaydi/chetlaydi
+    const err = wrap180(bearingDeg(nav.lat, nav.lon, aimPoint.lat, aimPoint.lon) - nav.heading);
+    this.set({
+      targetIndex: idx,
+      routeDir: this.routeDir,
+      distanceToTargetM: dist,
+      distanceToEndM: rest,
+      bearingErrorDeg: Math.round(err),
+      crossTrackM,
+      carrot: aimPoint
+    });
+
+    // 3) To'siq tekshiruvi (LiDAR va Sonar orqali, gisterezis bilan)
     let frontCm = Infinity;
     if (obs) {
       if (Number.isFinite(obs.lidarFrontCm) && obs.lidarFrontCm! > 0) {
@@ -324,8 +387,10 @@ class AutopilotService {
         frontCm = obs.distanceCm;
       }
     }
-    const blocked = Number.isFinite(frontCm) && frontCm <= cfg.stopCm;
-    if (!blocked) this.clearSince = this.clearSince || now;
+    const stopCm = this.getStopCm();
+    const blocked = Number.isFinite(frontCm) && frontCm <= stopCm;
+    const clearMargin = !Number.isFinite(frontCm) || frontCm > stopCm + 15;
+    if (clearMargin) this.clearSince = this.clearSince || now;
     else this.clearSince = 0;
 
     const phase = this.state.phase;
@@ -333,59 +398,65 @@ class AutopilotService {
 
     // 4) To'siqni chetlab o'tish holat mashinasi
     if (phase === 'obstacle-stop') {
-      this.drive('S');
-      if (!blocked && now - this.clearSince > 800) {
-        this.enter('driving', 'Yo‘l ochildi, davom etmoqda');
+      if (!blocked && clearMargin && now - this.clearSince > 700) {
+        this.enter('driving', 'Yo‘l ochildi, chiziq bo‘ylab davom etmoqda');
       } else if (inPhase > cfg.obstacleWaitMs) {
         if (this.state.bypassAttempts >= cfg.maxBypassAttempts) {
-          this.stop(`⚠️ To‘siqni chetlab o‘tib bo‘lmadi (${obs!.label}). Operator aralashuvi kerak`);
+          this.stop(`⚠️ To‘siqni chetlab o‘tib bo‘lmadi (${obs?.label ?? 'to‘siq'}). Operator aralashuvi kerak`);
           this.set({ phase: 'failed' });
           return;
         }
-        // Bo'sh tomon: kamera tavsiyasi, bo'lmasa marshrut tomoni; har urinishda tomon almashadi
         const attempt = this.state.bypassAttempts;
-        let dir: 'L' | 'R' = obs!.evasion === 'RIGHT' ? 'R' : obs!.evasion === 'LEFT' ? 'L' : err >= 0 ? 'R' : 'L';
+        let dir: 'L' | 'R' = obs?.evasion === 'RIGHT' ? 'R' : obs?.evasion === 'LEFT' ? 'L' : err >= 0 ? 'R' : 'L';
         if (attempt % 2 === 1) dir = dir === 'L' ? 'R' : 'L';
         this.turnDir = dir;
         this.set({ bypassAttempts: attempt + 1 });
-        this.enter('bypass-turn', `To‘siqni chetlab o‘tish: ${dir === 'L' ? 'chapga' : 'o‘ngga'} burilmoqda`);
+        this.drive(obs?.evasion === 'REVERSE' ? 'B' : dir, true);
+        this.enter('bypass-turn', `🛑 To‘siqni aylanib o‘tish: ${dir === 'L' ? 'chapga' : 'o‘ngga'} burilmoqda`);
+      } else {
+        this.drive('S');
       }
       return;
     }
 
     if (phase === 'bypass-turn') {
-      if (obs!.evasion === 'REVERSE' && inPhase < 1000) {
+      if (obs?.evasion === 'REVERSE' && inPhase < 900) {
         this.drive('B');
         return;
       }
-      this.drive(this.turnDir);
       const clearFor = this.clearSince ? now - this.clearSince : 0;
       if (clearFor > cfg.extraTurnMs) {
-        this.enter('bypass-forward', 'Chetlab o‘tish: oldinga');
+        this.drive('F', true);
+        this.enter('bypass-forward', 'To‘siq yonidan o‘tmoqda (oldinga)');
       } else if (inPhase > cfg.maxTurnMs) {
+        this.drive('S', true);
         this.enter('obstacle-stop', 'Bu tomonda ham to‘siq, boshqa tomon sinanadi');
+      } else {
+        this.drive(this.turnDir);
       }
       return;
     }
 
     if (blocked) {
       this.drive('S', true);
-      this.enter('obstacle-stop', `🛑 To‘siq: ${obs!.label}, ${Math.round(frontCm)} sm. Kutilmoqda`);
+      this.enter('obstacle-stop', `🛑 To‘siq: ${obs?.label ?? 'Aniqlangan'}, ${Math.round(frontCm)} sm. Kutilmoqda`);
       return;
     }
 
     if (phase === 'bypass-forward') {
-      this.drive('F');
-      if (inPhase > cfg.bypassForwardMs) this.enter('driving', 'Marshrutga qaytmoqda');
+      if (inPhase > cfg.bypassForwardMs) {
+        this.enter('driving', 'Chizilgan chiziqqa qaytmoqda');
+      } else {
+        this.drive('F');
+      }
       return;
     }
 
-    // 5) Oddiy yurish: yo'nalish xatosiga qarab
+    // 5) Chizilgan chiziq bo'yicha silliq yurish
     let cmd: MecanumCommand;
     if (Math.abs(err) > cfg.spinDeg) cmd = err > 0 ? 'R' : 'L';
     else if (Math.abs(err) > cfg.curveDeg) cmd = err > 0 ? 'I' : 'G';
     else cmd = 'F';
-    // To'siqsiz uzoq yurilsa chetlab o'tish hisobi nolga qaytadi
     if (this.state.bypassAttempts && phase === 'driving' && inPhase > 10_000) this.set({ bypassAttempts: 0 });
     this.drive(cmd);
     const dirText = this.routeDir === 1 ? 'Borish' : 'Qaytish';

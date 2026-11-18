@@ -58,7 +58,17 @@ export const LidarRadarView: React.FC = () => {
   const [liveRateHz, setLiveRateHz] = useState<number>(10.0);
   const [liveSpeedRpm, setLiveSpeedRpm] = useState<number>(600);
   const [livePackets, setLivePackets] = useState<number>(0);
+  const [liveCrcErrors, setLiveCrcErrors] = useState<number>(0);
+  const [stopCm, setStopCmState] = useState<number>(() => lidarSerialService.getStopCm());
+  const stopCmRef = useRef(stopCm);
+  stopCmRef.current = stopCm;
   const [hardwareSectors, setHardwareSectors] = useState<{ front: number; right: number; rear: number; left: number } | null>(null);
+  const [evasionDir, setEvasionDir] = useState<'CLEAR' | 'LEFT' | 'RIGHT' | 'REVERSE'>('CLEAR');
+
+  const handleStopCmChange = (nextCm: number) => {
+    setStopCmState(nextCm);
+    lidarSerialService.setStopCm(nextCm);
+  };
 
 
   // Aniqlangan portlarni qayta skanerlash
@@ -75,12 +85,14 @@ export const LidarRadarView: React.FC = () => {
 
   // Kadrlar kelganda qabul qilish listeneri
   useEffect(() => {
-    lidarSerialService.onFrame((data: LidarFrameData) => {
+    const unsubFrame = lidarSerialService.subscribeFrame((data: LidarFrameData) => {
       pointsRef.current = data.points;
       setHardwareSectors(data.sectors);
       setLiveRateHz(data.rateHz);
       setLiveSpeedRpm(data.speedRpm);
       setLivePackets(data.packetsReceived);
+      setLiveCrcErrors(data.crcErrors);
+      setEvasionDir(lidarSerialService.getObstacleInfo().evasion);
       setIsPortOpen(true);
       setPortName(lidarSerialService.getPortName());
     });
@@ -111,6 +123,7 @@ export const LidarRadarView: React.FC = () => {
     }
 
     return () => {
+      unsubFrame();
       if (nav?.serial?.removeEventListener) {
         nav.serial.removeEventListener('connect', onDeviceChange);
         nav.serial.removeEventListener('disconnect', onDeviceChange);
@@ -323,9 +336,10 @@ export const LidarRadarView: React.FC = () => {
         const px = cx + Math.cos(rad) * (distRatio * maxRadius);
         const py = cy + Math.sin(rad) * (distRatio * maxRadius);
 
+        const stopM = stopCmRef.current / 100;
         ctx.beginPath();
-        if (pt.distance < 0.45) {
-          ctx.fillStyle = '#ff2238'; // Xavfli to'siq (< 0.45m)
+        if (pt.distance <= stopM) {
+          ctx.fillStyle = '#ff2238'; // Xavfli to'siq (<= stopCm)
           ctx.arc(px, py, 4, 0, 2 * Math.PI);
           ctx.fill();
         } else if (pt.distance < 1.2) {
@@ -338,6 +352,16 @@ export const LidarRadarView: React.FC = () => {
           ctx.fill();
         }
       }
+
+      // Xavfsizlik tormoz doirasi (Stop Radius)
+      const safetyR = (Math.min(stopCmRef.current / 100, 5.0) / 5.0) * maxRadius;
+      ctx.beginPath();
+      ctx.arc(cx, cy, safetyR, 0, 2 * Math.PI);
+      ctx.strokeStyle = 'rgba(255, 34, 56, 0.45)';
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      ctx.setLineDash([]);
 
       // Markaziy robot korpusi
       ctx.fillStyle = '#1d63ff';
@@ -359,7 +383,8 @@ export const LidarRadarView: React.FC = () => {
   }, []);
 
   const activeSectors = isPortOpen ? hardwareSectors : null;
-  const isDangerBlocked = !!activeSectors && activeSectors.front <= 0.45;
+  const stopM = stopCm / 100;
+  const isDangerBlocked = !!activeSectors && activeSectors.front <= stopM;
   const fmtM = (v: number | undefined) => (v === undefined ? '—' : `${v.toFixed(2)} m`);
 
   return (
@@ -429,9 +454,11 @@ export const LidarRadarView: React.FC = () => {
           />
 
           {isDangerBlocked && (
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-rose-950/90 text-rose-300 border border-rose-600 px-3 py-1 rounded-full font-mono text-[10px] font-bold flex items-center gap-1.5 shadow-lg animate-pulse">
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-rose-950/90 text-rose-300 border border-rose-600 px-3 py-1 rounded-full font-mono text-[10px] font-bold flex items-center gap-1.5 shadow-lg animate-pulse whitespace-nowrap">
               <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
-              <span>XAVF: OLD TO'SIQ &lt; 0.45m (AVTOTORMOZ)</span>
+              <span>
+                XAVF: OLD TO'SIQ ≤ {stopCm} sm · {evasionDir === 'LEFT' ? '⬅️ CHAP OCHIQ' : evasionDir === 'RIGHT' ? '➡️ O‘NG OCHIQ' : '⬇️ ORQAGA'}
+              </span>
             </div>
           )}
         </div>
@@ -512,8 +539,27 @@ export const LidarRadarView: React.FC = () => {
             </div>
 
             <div className="flex justify-between p-2 rounded bg-tactical-950 border border-tactical-800">
-              <span className="text-slate-400">Qabul qilingan paketlar:</span>
-              <span className="text-white font-bold">{livePackets} ta paket</span>
+              <span className="text-slate-400">Paketlar / CRC xato:</span>
+              <span className="text-white font-bold">
+                {livePackets} ta {liveCrcErrors > 0 ? <span className="text-amber-400">({liveCrcErrors} CRC)</span> : ''}
+              </span>
+            </div>
+
+            {/* Avtotormoz chegarasi (Stop Radius) */}
+            <div className="p-2 rounded bg-tactical-950 border border-tactical-800 space-y-1">
+              <div className="flex justify-between text-[11px]">
+                <span className="text-slate-400">Avtotormoz masofasi:</span>
+                <span className="text-rose-400 font-bold">{stopCm} sm</span>
+              </div>
+              <input
+                type="range"
+                min={25}
+                max={120}
+                step={5}
+                value={stopCm}
+                onChange={(e) => handleStopCmChange(Number(e.target.value))}
+                className="w-full accent-rose-500 cursor-pointer"
+              />
             </div>
           </div>
 

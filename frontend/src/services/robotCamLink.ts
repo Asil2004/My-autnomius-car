@@ -73,7 +73,7 @@ export interface RobotTelemetry {
 
 /** Operator -> robot: avtopilot buyrug'i (T/ap mavzusi, shifrlangan) */
 export type AutopilotRemoteCmd =
-  | { op: 'start'; route: AutopilotWaypoint[]; by: string; t: number }
+  | { op: 'start'; route: AutopilotWaypoint[]; roundTrip?: boolean; by: string; t: number }
   | { op: 'stop'; by: string; t: number };
 
 /** Robot planshetida masofadan avtopilot yoqilganda (ilova HUD ga o'tishi uchun: kamera to'siq tahlili kerak) */
@@ -231,7 +231,10 @@ class RobotCamBroadcaster {
       const route = c.route.filter((p) => isFinite(p.lat) && isFinite(p.lon) && Math.abs(p.lat) <= 90 && Math.abs(p.lon) <= 180);
       if (!route.length) return;
       window.dispatchEvent(new CustomEvent(AUTOPILOT_REMOTE_EVENT, { detail: { by: c.by } }));
-      autopilotService.start(route.map((p) => ({ lat: p.lat, lon: p.lon })));
+      autopilotService.start(
+        route.map((p) => ({ lat: p.lat, lon: p.lon })),
+        c.roundTrip ?? true
+      );
     }
     this.publishTelemetry();
   }
@@ -446,7 +449,7 @@ class FleetWatcher {
   }
 
   /** Operator: robotga avtopilot buyrug'i (marshrut bilan yurish yoki to'xtatish) */
-  async sendAutopilot(robotId: string, cmd: { op: 'start'; route: AutopilotWaypoint[] } | { op: 'stop' }): Promise<boolean> {
+  async sendAutopilot(robotId: string, cmd: { op: 'start'; route: AutopilotWaypoint[]; roundTrip?: boolean } | { op: 'stop' }): Promise<boolean> {
     const ch = this.channel;
     const client = this.client;
     if (!ch || !client?.connected || !ID_RE.test(robotId)) return false;

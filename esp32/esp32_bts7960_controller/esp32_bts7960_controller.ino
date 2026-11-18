@@ -206,7 +206,7 @@ void yangilashMPU6050() {
 // Agar LG290P datchigi ESP32 ga 4 ta jumper sim bilan ulangan bo'lsa:
 // VCC -> 5V (yoki VIN), GND -> GND, TXD -> GPIO 16 (RX2), RXD -> GPIO 17 (TX2)
 // Bu holda robotga hech qanday USB kabel ulanishi shart emas!
-#define ENABLE_HARDWARE_GPS 1
+#define ENABLE_HARDWARE_GPS 0
 #define GPS_RX_PIN 16
 #define GPS_TX_PIN 17
 #define GPS_BAUD 115200
@@ -1259,24 +1259,9 @@ void loop() {
       if (millis() - oxirgiTelemetryVaqti >= telemetryInterval) {
         oxirgiTelemetryVaqti = millis();
 
-        char teleJson[280];
+        char teleJson[256];
         snprintf(teleJson, sizeof(teleJson),
-          "{\"status\":\"online\",\"moving\":%s,\"speed\":%d,\"yaw\":%.1f,\"pitch\":%.1f,\"roll\":%.1f,\"rate\":%.1f,\"lat\":%.7f,\"lng\":%.7f,\"fix\":%d}",
-          harakatda ? "true" : "false",
-          tezlik,
-          yaw,
-          pitch,
-          roll,
-          gyroRateZ,
-          gpsLat,
-          gpsLng,
-          gpsFix
-        );
-        mqttClient.publish(mqttTelemetryTopic, teleJson);
-      }
-    }
-  }
-#endif
+          "{\"status\":\"online\",\"moving\":%s,\"speed\":%d,\"yaw\":%.1f,\"pitch\":%.1f,\"roll\":%.1f,\"rate\":%.1f,\"temp\":%.1f}",
           harakatda ? "true" : "false",
           tezlik,
           yaw,

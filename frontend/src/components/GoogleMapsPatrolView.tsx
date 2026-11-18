@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { autopilotService, type AutopilotState } from '../services/autopilotService';
+import { autopilotService, distanceM, bearingDeg, type AutopilotState } from '../services/autopilotService';
 import { mapFocus } from '../services/mapFocus';
 import {
   Layers,
@@ -20,11 +20,9 @@ import {
   Download,
   FileText,
   Globe,
-  Cloud,
-  Copy,
-  CheckCircle2,
   X,
-  Laptop
+  Radar,
+  AlertTriangle
 } from 'lucide-react';
 import { GyroCalibrationModal } from './GyroCalibrationModal';
 import { useRobot } from '../context/RobotContext';
@@ -32,10 +30,11 @@ import { headingService, SmoothAngle, type HeadingMode, type HeadingSource } fro
 import { navigationService, type NavState } from '../services/navigationService';
 import { camLinkSettings } from '../services/camLinkSettings';
 import { fleetWatcher, selectedRobotStore, type FleetState } from '../services/robotCamLink';
-import { rtkGpsService, type RtkGpsData } from '../services/rtkGpsService';
+import { lidarSerialService, type LidarObstacleInfo } from '../services/lidarSerialService';
 
 // Default center: Navoiy street (Opposite Qizilqum 13 & Navoiy City)
 const NAVOI_CENTER: [number, number] = [40.09985, 65.36835];
+const ROUTE_STORAGE_KEY = 'qalqon.patrol_route.v1';
 
 // High-fidelity SVG Digital Twin Robot
 const ROBOT_SVG_CONTENT = `
@@ -81,13 +80,15 @@ interface Waypoint {
 }
 
 export const GoogleMapsPatrolView: React.FC = () => {
-  const { gps, startRealGPS, gpsSource, setGpsSource } = useRobot();
+  const { gps, startRealGPS, setActiveTab } = useRobot();
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const robotMarkerRef = useRef<L.Marker | null>(null);
   const polylineRef = useRef<L.Polyline | null>(null);
   const waypointMarkersRef = useRef<L.CircleMarker[]>([]);
+  const carrotMarkerRef = useRef<L.CircleMarker | null>(null);
+  const carrotLineRef = useRef<L.Polyline | null>(null);
 
   const [mapLayerType, setMapLayerType] = useState<'hybrid' | 'roadmap'>('hybrid');
   const [routingStatus, setRoutingStatus] = useState<string>("Nuqtalar qo'yilmagan");
@@ -110,7 +111,7 @@ export const GoogleMapsPatrolView: React.FC = () => {
 
   // ---------------------------------------------------------------------------
   // ROBOT MARKERI: joylashuv darhol, burilish esa giroskop (IMU / planshet sensori) bo'yicha silliq.
-  // setRobotVisual dagi heading faqat zaxira (giroskop ma'lumoti bo'lmasa: GPS yo'nalishi).
+  // setRobotVisual dagi heading faqat zaxira (giroskop ma'lumoti bo'lmasa: GPS yo'nalishi yoki vizual patrul).
   // ---------------------------------------------------------------------------
   const fallbackHeadingRef = useRef(135);
   const headingVectorRef = useRef<L.Polyline | null>(null);
@@ -122,27 +123,36 @@ export const GoogleMapsPatrolView: React.FC = () => {
   const [headingMode, setHeadingModeState] = useState<HeadingMode>(() => headingService.getMode());
   const [showGyroModal, setShowGyroModal] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
-  const [showApiModal, setShowApiModal] = useState(false);
-  const [exportSource, setExportSource] = useState<'waypoints' | 'history'>('waypoints');
   const [isExporting, setIsExporting] = useState(false);
-  const [copiedApi, setCopiedApi] = useState(false);
 
-  // Trackk Cloud RTK real-vaqt ma'lumotlari
-  const [rtkData, setRtkData] = useState<RtkGpsData>(() => rtkGpsService.getData());
-  useEffect(() => rtkGpsService.subscribe(setRtkData), []);
+  // Jonli LiDAR to'siq ma'lumotlari (xarita ustida ko'rsatish uchun)
+  const [lidarInfo, setLidarInfo] = useState<LidarObstacleInfo>(() => lidarSerialService.getObstacleInfo());
+  const [lidarConnected, setLidarConnected] = useState<boolean>(() => lidarSerialService.isOpen());
+  const lidarInfoRef = useRef<LidarObstacleInfo>(lidarInfo);
+  lidarInfoRef.current = lidarInfo;
+  useEffect(() => {
+    const syncLidar = () => {
+      const info = lidarSerialService.getObstacleInfo();
+      setLidarInfo({ ...info });
+      setLidarConnected(lidarSerialService.isOpen() || (Date.now() - info.lastUpdated < 2500));
+    };
+    const unsub = lidarSerialService.subscribeFrame(syncLidar);
+    const t = window.setInterval(syncLidar, 500);
+    return () => {
+      unsub();
+      clearInterval(t);
+    };
+  }, []);
 
-  // Xarita birinchi marta yuklanganda tanlangan GPS koordinatasiga avtomatik markazlashtirish
+  // Xarita birinchi marta yuklanganda planshet/qurilma GPS koordinatasiga avtomatik markazlashtirish
   const hasAutoCenteredRef = useRef(false);
   useEffect(() => {
     if (hasAutoCenteredRef.current || !mapRef.current) return;
-    if (gpsSource === 'device' && gps.isReal && gps.latitude && gps.longitude) {
+    if (gps.isReal && gps.latitude && gps.longitude) {
       hasAutoCenteredRef.current = true;
       mapRef.current.setView([gps.latitude, gps.longitude], 19);
-    } else if (gpsSource === 'trackk' && rtkData.is_online && rtkData.lat && rtkData.lng) {
-      hasAutoCenteredRef.current = true;
-      mapRef.current.setView([rtkData.lat, rtkData.lng], 19);
     }
-  }, [gpsSource, gps.isReal, gps.latitude, gps.longitude, rtkData.is_online, rtkData.lat, rtkData.lng]);
+  }, [gps.isReal, gps.latitude, gps.longitude]);
   const changeHeadingMode = useCallback(async (m: HeadingMode) => {
     if (m === 'device' || m === 'auto') await headingService.requestDevicePermission();
     headingService.setMode(m);
@@ -166,8 +176,8 @@ export const GoogleMapsPatrolView: React.FC = () => {
     const frame = (now: number) => {
       const dt = now - last;
       last = now;
-      // Operatorda yo'nalish robot telemetriyasidan keladi (operator telefoni/planshetining sensori emas)
-      const gyro = remoteHeadingRef.current ? null : headingService.getState();
+      // Operatorda yoki xarita simulyatsiya patrulida yo'nalish chiziq/telemetriyadan olinadi
+      const gyro = (remoteHeadingRef.current || isPatrollingRef.current) ? null : headingService.getState();
       const target = gyro ? gyro.heading : fallbackHeadingRef.current;
       const shown = smooth.step(target, dt);
 
@@ -273,6 +283,10 @@ export const GoogleMapsPatrolView: React.FC = () => {
   const syncRoute = useCallback(() => {
     const pts = waypointsRef.current;
     setWaypoints([...pts]);
+    try {
+      if (pts.length > 0) localStorage.setItem(ROUTE_STORAGE_KEY, JSON.stringify(pts));
+      else localStorage.removeItem(ROUTE_STORAGE_KEY);
+    } catch {}
     detailedNodesRef.current = pts.map(p => [p.lat, p.lon]);
     currentPathIndexRef.current = 0;
     patrolDirRef.current = 1;
@@ -286,41 +300,19 @@ export const GoogleMapsPatrolView: React.FC = () => {
   }, [renderPolyline, routeLengthM]);
 
   // ---------------------------------------------------------------------------
-  // EKSPORT FUNKSIYALARI (CSV, GPX, GeoJSON, Google Earth KML)
+  // EKSPORT FUNKSIYALARI (CSV, GPX, GeoJSON)
   // ---------------------------------------------------------------------------
-  const getExportCoordinates = async (source: 'waypoints' | 'history'): Promise<{ lat: number; lon: number; alt?: number; speed?: number; time?: string }[]> => {
-    if (source === 'waypoints') {
-      if (waypointsRef.current.length === 0) {
-        return [{ lat: telemetry.lat, lon: telemetry.lon, alt: 370, speed: telemetry.speed, time: new Date().toISOString() }];
-      }
-      return waypointsRef.current.map(w => ({ lat: w.lat, lon: w.lon, alt: 370, speed: 0, time: new Date().toISOString() }));
+  const getExportCoordinates = (): { lat: number; lon: number; alt?: number; speed?: number; time?: string }[] => {
+    if (waypointsRef.current.length === 0) {
+      return [{ lat: telemetry.lat, lon: telemetry.lon, alt: 370, speed: telemetry.speed, time: new Date().toISOString() }];
     }
-    // Serverdan tarixni olish (?action=history)
-    try {
-      const res = await fetch('https://trackk-gl6l.onrender.com/api.php?action=history');
-      if (res.ok) {
-        const hist = await res.json();
-        if (Array.isArray(hist) && hist.length > 0) {
-          return hist.map((p: any) => ({
-            lat: parseFloat(p.lat),
-            lon: parseFloat(p.lng),
-            alt: parseFloat(p.alt) || 370,
-            speed: parseFloat(p.speed) || 0,
-            time: p.ts ? new Date(p.ts).toISOString() : new Date().toISOString()
-          }));
-        }
-      }
-    } catch (e) {
-      console.warn("Tarixni yuklashda xatolik:", e);
-    }
-    // Zaxira: joriy robot koordinatasi
-    return [{ lat: telemetry.lat, lon: telemetry.lon, alt: 370, speed: telemetry.speed, time: new Date().toISOString() }];
+    return waypointsRef.current.map(w => ({ lat: w.lat, lon: w.lon, alt: 370, speed: 0, time: new Date().toISOString() }));
   };
 
-  const handleExportCSV = async (source: 'waypoints' | 'history') => {
+  const handleExportCSV = () => {
     setIsExporting(true);
     try {
-      const pts = await getExportCoordinates(source);
+      const pts = getExportCoordinates();
       let csv = "Index,Vaqt,Kenglik (Lat),Uzunlik (Lon),Balandlik (m),Tezlik (km/h)\n";
       pts.forEach((p, idx) => {
         csv += `${idx + 1},"${p.time || ''}",${p.lat.toFixed(8)},${p.lon.toFixed(8)},${(p.alt || 0).toFixed(1)},${(p.speed || 0).toFixed(1)}\n`;
@@ -329,7 +321,7 @@ export const GoogleMapsPatrolView: React.FC = () => {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `qalqon_${source}_${Date.now()}.csv`;
+      a.download = `qalqon_route_${Date.now()}.csv`;
       a.click();
       URL.revokeObjectURL(url);
     } finally {
@@ -337,14 +329,14 @@ export const GoogleMapsPatrolView: React.FC = () => {
     }
   };
 
-  const handleExportGPX = async (source: 'waypoints' | 'history') => {
+  const handleExportGPX = () => {
     setIsExporting(true);
     try {
-      const pts = await getExportCoordinates(source);
+      const pts = getExportCoordinates();
       let gpx = `<?xml version="1.0" encoding="UTF-8"?>\n`;
-      gpx += `<gpx version="1.1" creator="Qalqon-Trackk-Cloud" xmlns="http://www.topografix.com/GPX/1/1">\n`;
-      gpx += `  <metadata><name>Qalqon Robot - ${source}</name><time>${new Date().toISOString()}</time></metadata>\n`;
-      gpx += `  <trk>\n    <name>Qalqon RTK Patrol</name>\n    <trkseg>\n`;
+      gpx += `<gpx version="1.1" creator="Qalqon-Robot" xmlns="http://www.topografix.com/GPX/1/1">\n`;
+      gpx += `  <metadata><name>Qalqon Robot Marshruti</name><time>${new Date().toISOString()}</time></metadata>\n`;
+      gpx += `  <trk>\n    <name>Qalqon Patrul Chizig'i</name>\n    <trkseg>\n`;
       pts.forEach(p => {
         gpx += `      <trkpt lat="${p.lat.toFixed(8)}" lon="${p.lon.toFixed(8)}">\n`;
         if (p.alt) gpx += `        <ele>${p.alt.toFixed(1)}</ele>\n`;
@@ -356,7 +348,7 @@ export const GoogleMapsPatrolView: React.FC = () => {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `qalqon_${source}_${Date.now()}.gpx`;
+      a.download = `qalqon_route_${Date.now()}.gpx`;
       a.click();
       URL.revokeObjectURL(url);
     } finally {
@@ -364,15 +356,14 @@ export const GoogleMapsPatrolView: React.FC = () => {
     }
   };
 
-  const handleExportGeoJSON = async (source: 'waypoints' | 'history') => {
+  const handleExportGeoJSON = () => {
     setIsExporting(true);
     try {
-      const pts = await getExportCoordinates(source);
+      const pts = getExportCoordinates();
       const geojson = {
         type: "FeatureCollection",
         properties: {
-          generator: "Qalqon AMR Cloud Hub",
-          source,
+          generator: "Qalqon AMR",
           exportedAt: new Date().toISOString()
         },
         features: [
@@ -383,7 +374,7 @@ export const GoogleMapsPatrolView: React.FC = () => {
               coordinates: pts.map(p => [p.lon, p.lat, p.alt || 0])
             },
             properties: {
-              name: `Qalqon ${source === 'waypoints' ? 'Rejalashtirilgan Marshrut' : 'Bosib O‘tilgan Yo‘l'}`
+              name: "Qalqon Chizilgan Marshrut"
             }
           },
           ...pts.map((p, i) => ({
@@ -404,36 +395,12 @@ export const GoogleMapsPatrolView: React.FC = () => {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `qalqon_${source}_${Date.now()}.geojson`;
+      a.download = `qalqon_route_${Date.now()}.geojson`;
       a.click();
       URL.revokeObjectURL(url);
     } finally {
       setIsExporting(false);
     }
-  };
-
-  const handleExportKML = () => {
-    const kml = `<?xml version="1.0" encoding="UTF-8"?>
-<kml xmlns="http://www.opengis.net/kml/2.2">
-  <NetworkLink>
-    <name>Qalqon Robot - Real-time Live 3D Tracking</name>
-    <visibility>1</visibility>
-    <open>1</open>
-    <description>Trackk Cloud Hub orqali real-vaqt rejimida yangilanuvchi 3D RTK GPS signali</description>
-    <Url>
-      <href>https://trackk-gl6l.onrender.com/api.php?action=robot</href>
-      <refreshMode>onInterval</refreshMode>
-      <refreshInterval>2</refreshInterval>
-    </Url>
-  </NetworkLink>
-</kml>`;
-    const blob = new Blob([kml], { type: 'application/vnd.google-earth.kml+xml;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `qalqon_google_earth_live.kml`;
-    a.click();
-    URL.revokeObjectURL(url);
   };
 
   const makeVertexMarker = (lat: number, lon: number, idx: number) =>
@@ -682,10 +649,7 @@ export const GoogleMapsPatrolView: React.FC = () => {
     let lat = gps.latitude;
     let lon = gps.longitude;
 
-    if (gpsSource === 'trackk' && rtkData.is_online && rtkData.lat && rtkData.lng) {
-      lat = rtkData.lat;
-      lon = rtkData.lng;
-    } else if (gps.isReal && gps.latitude && gps.longitude) {
+    if (gps.isReal && gps.latitude && gps.longitude) {
       lat = gps.latitude;
       lon = gps.longitude;
     } else {
@@ -696,85 +660,31 @@ export const GoogleMapsPatrolView: React.FC = () => {
       }
     }
     teleport(lat, lon, { label: isOperator ? watchedRobot || undefined : undefined });
-  }, [gps.latitude, gps.longitude, gps.isReal, isOperator, startRealGPS, teleport, watchedRobot, gpsSource, rtkData]);
+  }, [gps.latitude, gps.longitude, gps.isReal, isOperator, startRealGPS, teleport, watchedRobot]);
 
-  // 1. DEMO / VIZUAL PATRUL: chizilgan chiziq bo'yicha robot markerini borib-qaytarish
-  const startPatrol = useCallback(() => {
-    if (detailedNodesRef.current.length < 2) {
-      setRoutingStatus("Avval \"Marshrut chizish\" bilan kamida 2 ta nuqta qo'ying.");
-      return;
-    }
-    if (drawModeRef.current) setDrawing(false);
-
-    setIsPatrolling(true);
-    patrolDirRef.current = 1;
-    currentPathIndexRef.current = 0;
-
-    if (patrolIntervalRef.current) clearInterval(patrolIntervalRef.current);
-
-    patrolIntervalRef.current = setInterval(() => {
-      const nodes = detailedNodesRef.current;
-      if (nodes.length === 0) return;
-
-      setTelemetry(prev => {
-        const target = nodes[currentPathIndexRef.current];
-        const dLat = target[0] - prev.lat;
-        const dLon = target[1] - prev.lon;
-        const dist = Math.hypot(dLat, dLon);
-
-        if (dist < 0.000025) {
-          // Nuqtaga yetdi: keyingisiga yoki orqaga qaytish
-          let next = currentPathIndexRef.current + patrolDirRef.current;
-          if (next >= nodes.length) {
-            if (roundTrip) {
-              patrolDirRef.current = -1;
-              next = nodes.length - 2;
-              setRoutingStatus("🔄 Oxirgi nuqtaga yetdi. Boshlang'ich nuqtaga qaytmoqda...");
-            } else {
-              stopPatrol();
-              setRoutingStatus("✅ Manzilga yetib keldi.");
-              return prev;
-            }
-          } else if (next < 0) {
-            if (roundTrip) {
-              patrolDirRef.current = 1;
-              next = 1;
-              setRoutingStatus("🔄 Boshlang'ich nuqtaga qaytdi. Qayta aylanish boshlandi.");
-            } else {
-              stopPatrol();
-              setRoutingStatus("✅ Boshlang'ich nuqtaga qaytib keldi.");
-              return prev;
-            }
-          }
-          currentPathIndexRef.current = Math.max(0, Math.min(nodes.length - 1, next));
-          return prev;
-        }
-
-        const targetHeading = (Math.atan2(dLon, dLat) * 180 / Math.PI + 360) % 360;
-        let headingDiff = targetHeading - prev.heading;
-        if (headingDiff > 180) headingDiff -= 360;
-        if (headingDiff < -180) headingDiff += 360;
-
-        const newHeading = (prev.heading + headingDiff * 0.25 + 360) % 360;
-        const step = 0.000015; // ~1.5m qadam (10 Hz da ~1.5 m/s)
-        const newLat = prev.lat + Math.cos(newHeading * Math.PI / 180) * step;
-        const newLon = prev.lon + Math.sin(newHeading * Math.PI / 180) * step;
-
-        setRobotVisual(newLat, newLon, newHeading);
-
-        return {
-          ...prev,
-          lat: newLat,
-          lon: newLon,
-          heading: newHeading,
-          speed: 1.2
-        };
-      });
-    }, 100);
-  }, [setDrawing, setRobotVisual, roundTrip]);
+  const simRef = useRef<{
+    lat: number;
+    lon: number;
+    heading: number;
+    idx: number;
+    dir: 1 | -1;
+    lap: number;
+    pausedByLidar: boolean;
+  }>({
+    lat: NAVOI_CENTER[0],
+    lon: NAVOI_CENTER[1],
+    heading: 0,
+    idx: 1,
+    dir: 1,
+    lap: 1,
+    pausedByLidar: false
+  });
+  const roundTripRef = useRef(roundTrip);
+  roundTripRef.current = roundTrip;
 
   const stopPatrol = useCallback(() => {
     setIsPatrolling(false);
+    isPatrollingRef.current = false;
     if (patrolIntervalRef.current) {
       clearInterval(patrolIntervalRef.current);
       patrolIntervalRef.current = null;
@@ -783,7 +693,122 @@ export const GoogleMapsPatrolView: React.FC = () => {
   }, []);
   stopPatrolRef.current = stopPatrol;
 
-  // 2. HAQIQIY GPS AVTOPILOT (ESP32): chizilgan marshrut bo'ylab robotni haqiqatan yurgizadi
+  // 1. DEMO / VIZUAL PATRUL: chizilgan chiziq bo'yicha robot markerini aniq yurish + LiDAR pauzasi
+  const startPatrol = useCallback(() => {
+    const nodes = detailedNodesRef.current;
+    if (nodes.length < 2) {
+      setRoutingStatus("Avval \"Marshrut chizish\" bilan kamida 2 ta nuqta qo'ying.");
+      return;
+    }
+    if (drawModeRef.current) setDrawing(false);
+    if (autopilotService.getState().active) autopilotService.stop('Vizual patrulga o‘tildi');
+
+    const startLat = nodes[0][0];
+    const startLon = nodes[0][1];
+    const initH = bearingDeg(startLat, startLon, nodes[1][0], nodes[1][1]);
+
+    simRef.current = {
+      lat: startLat,
+      lon: startLon,
+      heading: initH,
+      idx: 1,
+      dir: 1,
+      lap: 1,
+      pausedByLidar: false
+    };
+
+    setIsPatrolling(true);
+    isPatrollingRef.current = true;
+    setRobotVisual(startLat, startLon, initH);
+    setTelemetry(prev => ({ ...prev, lat: startLat, lon: startLon, heading: initH, speed: 2.2 }));
+    setRoutingStatus("➡️ Chiziq bo'ylab harakat boshlandi (1-aylana)");
+
+    if (patrolIntervalRef.current) clearInterval(patrolIntervalRef.current);
+
+    patrolIntervalRef.current = setInterval(() => {
+      const pts = detailedNodesRef.current;
+      if (pts.length < 2) {
+        stopPatrolRef.current();
+        return;
+      }
+
+      // Haqiqiy LiDAR ulangan bo'lsa va oldinda to'siq ko'rsa -> vizual harakatni ham xavfsiz pauza qiladi
+      const l = lidarInfoRef.current;
+      const isLidarFresh = Date.now() - l.lastUpdated < 2500;
+      if (isLidarFresh && l.isBlocked) {
+        simRef.current.pausedByLidar = true;
+        setRoutingStatus(`🛑 LiDAR To'siq (${l.frontCm} sm) — Yo'l ochilishi kutilmoqda`);
+        setTelemetry(prev => (prev.speed === 0 ? prev : { ...prev, speed: 0 }));
+        return;
+      }
+      if (simRef.current.pausedByLidar) {
+        simRef.current.pausedByLidar = false;
+      }
+
+      const s = simRef.current;
+      const target = pts[Math.max(0, Math.min(pts.length - 1, s.idx))];
+      const dist = distanceM(s.lat, s.lon, target[0], target[1]);
+      const stepM = 0.2; // 80ms da 0.20 m = 2.5 m/s silliq harakat
+
+      const segBearing = bearingDeg(s.lat, s.lon, target[0], target[1]);
+      let diff = ((segBearing - s.heading + 540) % 360) - 180;
+      const maxTurn = 24;
+      if (Math.abs(diff) > maxTurn) diff = Math.sign(diff) * maxTurn;
+      s.heading = (s.heading + diff + 360) % 360;
+
+      if (dist <= stepM) {
+        s.lat = target[0];
+        s.lon = target[1];
+        const nextIdx = s.idx + s.dir;
+        if (s.dir === 1 && nextIdx >= pts.length) {
+          if (roundTripRef.current) {
+            s.dir = -1;
+            s.idx = pts.length - 2;
+            setRoutingStatus("🔄 Oxirgi nuqtaga yetdi! Chiziq bo'ylab qaytmoqda...");
+          } else {
+            setRobotVisual(s.lat, s.lon, s.heading);
+            setTelemetry(prev => ({ ...prev, lat: s.lat, lon: s.lon, heading: s.heading, speed: 0 }));
+            stopPatrolRef.current();
+            setRoutingStatus("✅ Manzilga yetib keldi.");
+            return;
+          }
+        } else if (s.dir === -1 && nextIdx < 0) {
+          if (roundTripRef.current) {
+            s.dir = 1;
+            s.idx = 1;
+            s.lap += 1;
+            setRoutingStatus(`🔄 Boshlang'ich nuqtaga qaytdi! (${s.lap}-aylana)`);
+          } else {
+            setRobotVisual(s.lat, s.lon, s.heading);
+            setTelemetry(prev => ({ ...prev, lat: s.lat, lon: s.lon, heading: s.heading, speed: 0 }));
+            stopPatrolRef.current();
+            setRoutingStatus("✅ Boshlang'ich nuqtaga to'liq qaytib keldi.");
+            return;
+          }
+        } else {
+          s.idx = nextIdx;
+        }
+      } else {
+        const rad = (segBearing * Math.PI) / 180;
+        const cosLat = Math.cos((s.lat * Math.PI) / 180) || 1;
+        s.lat += (stepM * Math.cos(rad)) / 111320;
+        s.lon += (stepM * Math.sin(rad)) / (111320 * cosLat);
+        const dirText = s.dir === 1 ? '➡️ Borish' : '⬅️ Qaytish';
+        setRoutingStatus(`${dirText} (${s.idx + 1}/${pts.length}-nuqta, qoldi ${Math.round(dist)} m)`);
+      }
+
+      setRobotVisual(s.lat, s.lon, s.heading);
+      setTelemetry(prev => ({
+        ...prev,
+        lat: s.lat,
+        lon: s.lon,
+        heading: Math.round(s.heading),
+        speed: 2.5
+      }));
+    }, 80);
+  }, [setDrawing, setRobotVisual]);
+
+  // 2. HAQIQIY GPS + GIROSKOP + LIDAR AVTOPILOT (ESP32): chizilgan chiziq bo'ylab robotni haqiqatan yurgizadi
   const [ap, setAp] = useState<AutopilotState>(() => autopilotService.getState());
   useEffect(() => autopilotService.subscribe(setAp), []);
   const startAutopilot = useCallback(() => {
@@ -795,6 +820,47 @@ export const GoogleMapsPatrolView: React.FC = () => {
     stopPatrol();
     autopilotService.start(waypointsRef.current, roundTrip);
   }, [setDrawing, stopPatrol, roundTrip]);
+
+  // Avtopilot "Carrot" (chiziqdagi joriy maqsad nuqta) ni xaritada chizish
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (ap.active && ap.carrot) {
+      const pos: L.LatLngExpression = [ap.carrot.lat, ap.carrot.lon];
+      if (!carrotMarkerRef.current) {
+        carrotMarkerRef.current = L.circleMarker(pos, {
+          radius: 6,
+          color: '#ffffff',
+          weight: 2,
+          fillColor: '#f59e0b',
+          fillOpacity: 1,
+          interactive: false
+        }).addTo(map);
+      } else {
+        carrotMarkerRef.current.setLatLng(pos);
+      }
+      const robotPos = robotMarkerRef.current?.getLatLng();
+      if (robotPos) {
+        const linePts: L.LatLngExpression[] = [robotPos, pos];
+        if (!carrotLineRef.current) {
+          carrotLineRef.current = L.polyline(linePts, {
+            color: '#f59e0b',
+            weight: 2,
+            dashArray: '4 4',
+            opacity: 0.9,
+            interactive: false
+          }).addTo(map);
+        } else {
+          carrotLineRef.current.setLatLngs(linePts);
+        }
+      }
+    } else {
+      carrotMarkerRef.current?.remove();
+      carrotMarkerRef.current = null;
+      carrotLineRef.current?.remove();
+      carrotLineRef.current = null;
+    }
+  }, [ap.active, ap.carrot, telemetry.lat, telemetry.lon]);
 
   // Layer switch
   const switchMapLayer = (type: 'hybrid' | 'roadmap') => {
@@ -863,17 +929,33 @@ export const GoogleMapsPatrolView: React.FC = () => {
     map.on('mousemove', (e: L.LeafletMouseEvent) => updatePreview(e.latlng));
     map.on('mouseout', () => removePreview());
 
-    // Avtopilot yurayotgan bo'lsa (xarita qayta ochildi), uning marshrutini xaritaga qaytarish
+    // Avtopilot yurayotgan bo'lsa yoki oldin chizilgan chiziq saqlangan bo'lsa, xaritaga tiklash
     if (autopilotService.getState().active && waypointsRef.current.length === 0) {
       autopilotService.getRoute().forEach((p) => addWaypoint(p.lat, p.lon));
+    } else if (waypointsRef.current.length === 0) {
+      try {
+        const saved = localStorage.getItem(ROUTE_STORAGE_KEY);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) {
+            parsed.forEach((p: any) => {
+              if (p && isFinite(p.lat) && isFinite(p.lon)) addWaypoint(p.lat, p.lon);
+            });
+          }
+        }
+      } catch {}
     }
 
-    // Invalidate size to guarantee full container rendering (test marshruti endi avtomatik yuklanmaydi)
     setTimeout(() => {
       map.invalidateSize();
     }, 200);
 
     return () => {
+      stopPatrolRef.current();
+      carrotMarkerRef.current?.remove();
+      carrotMarkerRef.current = null;
+      carrotLineRef.current?.remove();
+      carrotLineRef.current = null;
       map.remove();
       mapRef.current = null;
     };
@@ -885,61 +967,42 @@ export const GoogleMapsPatrolView: React.FC = () => {
       <div ref={mapContainerRef} className="flex-1 h-full w-full z-0 bg-[#070c14]" />
 
       {/* TOP FLOATING HUD BAR */}
-      <div className="absolute top-3 left-3 right-16 z-20 pointer-events-none flex items-center justify-between">
-        <div className="pointer-events-auto flex items-center gap-2 bg-tactical-950/90 border border-tactical-700/80 backdrop-blur-md px-3 py-1.5 rounded-lg shadow-xl">
+      <div className="absolute top-3 left-3 right-16 z-20 pointer-events-none flex items-center justify-between gap-2 flex-wrap">
+        <div className="pointer-events-auto flex items-center gap-2 bg-tactical-950/90 border border-tactical-700/80 backdrop-blur-md px-3 py-1.5 rounded-lg shadow-xl flex-wrap">
           <span className="px-2 py-0.5 rounded bg-police-cyan/20 border border-police-cyan text-police-cyan font-mono text-xs font-bold tracking-wider">
             GOOGLE MAPS SLAM
           </span>
-          <span className="text-xs font-semibold text-slate-200">
-            QALQON v1.0 — DIGITAL TWIN &amp; AVTONOM PATRUL
+          <span className="text-xs font-semibold text-slate-200 hidden sm:inline">
+            QALQON v1.0 — AVTONOM PATRUL
           </span>
-          <div className="flex items-center gap-1.5 ml-2 pl-2 border-l border-tactical-700">
-            {/* GPS Manba Tanlash Tugmalari */}
-            <div className="flex items-center bg-tactical-900 rounded p-0.5 border border-tactical-800 text-[10px] font-mono">
-              <button
-                type="button"
-                onClick={() => setGpsSource('device')}
-                className={`px-2 py-0.5 rounded flex items-center gap-1 font-bold transition-all ${
-                  gpsSource === 'device'
-                    ? 'bg-emerald-600 text-white shadow-[0_0_8px_rgba(16,185,129,0.4)]'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-                title="Noutbuk / Planshet brauzer GPSi (Xonada va ko'chada aniq va barqaror)"
-              >
-                <Laptop className="w-3 h-3" />
-                <span>Noutbuk GPS</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setGpsSource('trackk')}
-                className={`px-2 py-0.5 rounded flex items-center gap-1 font-bold transition-all ${
-                  gpsSource === 'trackk'
-                    ? 'bg-police-blue text-white shadow-[0_0_8px_rgba(29,99,255,0.4)]'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-                title="Trackk Cloud Hub RTK GNSS ma'lumotlari"
-              >
-                <Cloud className="w-3 h-3" />
-                <span>Trackk RTK</span>
-              </button>
-            </div>
-
-            <span className={`w-2.5 h-2.5 rounded-full ${
-              gpsSource === 'device'
-                ? (gps.isReal ? 'bg-emerald-400 shadow-[0_0_8px_#10b981]' : 'bg-amber-400')
-                : (rtkData.is_online ? 'bg-police-cyan shadow-[0_0_8px_#00e5ff] animate-pulse' : 'bg-rose-500')
-            }`} />
+          <div className="flex items-center gap-1.5 ml-1 pl-2 border-l border-tactical-700">
+            <span className={`w-2.5 h-2.5 rounded-full ${gps.isReal ? 'bg-emerald-400 shadow-[0_0_8px_#10b981]' : 'bg-amber-400 shadow-[0_0_8px_#f59e0b]'}`} />
             <span className="text-[11px] font-mono font-bold text-slate-300">
-              {gpsSource === 'device'
-                ? (gps.isReal ? `💻 NOUTBUK GPS: ±${Math.round(gps.accuracy || 10)}m` : '💻 NOUTBUK: Qidirilmoqda...')
-                : (rtkData.is_online ? `☁️ CLOUD RTK: ${rtkData.fix_str}` : '☁️ CLOUD RTK: OFFLAYN')}
+              {gps.isReal ? `PLANSHET GPS: ±${Math.round(gps.accuracy || 10)}m` : 'GPS QIDIRILMOQDA'}
             </span>
-            {gpsSource === 'trackk' && rtkData.is_online && (
-              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-police-cyan/20 border border-police-cyan/50 text-police-cyan font-bold">
-                🛰️ {rtkData.sat} · {rtkData.latencyMs}ms
-              </span>
-            )}
           </div>
+          {/* Live LiDAR indicator */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('telemetry')}
+            className={`flex items-center gap-1.5 ml-1 pl-2 border-l border-tactical-700 text-[11px] font-mono font-bold transition-all ${
+              lidarConnected
+                ? (lidarInfo.isBlocked ? 'text-rose-400 animate-pulse' : 'text-emerald-400')
+                : 'text-slate-400 hover:text-police-cyan'
+            }`}
+            title="360° LiDAR Radar bo'limini ochish"
+          >
+            {lidarConnected && lidarInfo.isBlocked ? (
+              <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+            ) : (
+              <Radar className={`w-3.5 h-3.5 ${lidarConnected ? 'text-emerald-400 animate-spin' : 'text-slate-400'}`} />
+            )}
+            <span>
+              {lidarConnected
+                ? (lidarInfo.isBlocked ? `LiDAR TO'SIQ: ${lidarInfo.frontCm} sm` : `LiDAR: ${lidarInfo.frontCm >= 500 ? 'OCHIQ' : `${lidarInfo.frontCm} sm`}`)
+                : 'LiDAR: ULANMAGAN'}
+            </span>
+          </button>
         </div>
 
         {/* Quick Map Layer Toggles & Export */}
@@ -947,18 +1010,10 @@ export const GoogleMapsPatrolView: React.FC = () => {
           <button
             onClick={() => setShowExportModal(true)}
             className="px-2.5 py-1 text-[11px] font-mono rounded transition-all flex items-center gap-1 bg-emerald-950/80 border border-emerald-500/60 text-emerald-300 hover:text-white hover:bg-emerald-900"
-            title="Marshrut va koordinatalarni CSV, GPX, GeoJSON, KML formatida yuklab olish"
+            title="Chizilgan marshrutni CSV, GPX, GeoJSON formatida yuklab olish"
           >
             <Download className="w-3.5 h-3.5 text-emerald-400" />
-            <span>📤 Eksport</span>
-          </button>
-          <button
-            onClick={() => setShowApiModal(true)}
-            className="px-2.5 py-1 text-[11px] font-mono rounded transition-all flex items-center gap-1 bg-police-blue/30 border border-police-cyan/50 text-police-cyan hover:text-white hover:bg-police-blue/60"
-            title="Universal REST API va Webhook ma'lumotlari"
-          >
-            <Cloud className="w-3.5 h-3.5 text-police-cyan" />
-            <span>Simsiz API</span>
+            <span>Eksport</span>
           </button>
           <button
             onClick={() => switchMapLayer('hybrid')}
@@ -994,10 +1049,10 @@ export const GoogleMapsPatrolView: React.FC = () => {
 
       {/* RIGHT SIDEBAR CONTROLS & TELEMETRY */}
       <div className="absolute right-3 top-14 bottom-3 w-[21rem] max-w-[calc(100%-1.5rem)] z-20 flex flex-col gap-2.5 overflow-y-auto pr-1 pointer-events-auto">
-        {/* MARSHRUT VA HAQIQIY GPS AVTOPILOT */}
+        {/* MARSHRUT VA CHIZILGAN CHIZIQ BO'YLAB AVTOPILOT */}
         <div className="bg-tactical-950/90 border border-emerald-500/50 backdrop-blur-md rounded-xl p-3 shadow-xl flex flex-col gap-2">
           <div className="text-[10px] font-mono font-bold text-emerald-300 uppercase tracking-wider flex items-center justify-between">
-            <span>Marshrut va avtopilot</span>
+            <span>Marshrut va chiziq bo‘ylab yurish</span>
             <span className="text-police-cyan">{waypoints.length} ta nuqta</span>
           </div>
           <div className="text-emerald-400 text-[10px] font-mono font-bold truncate">{routingStatus}</div>
@@ -1007,7 +1062,7 @@ export const GoogleMapsPatrolView: React.FC = () => {
                 className="w-full py-1.5 px-2 bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-500/60 text-emerald-200 hover:text-white rounded font-mono text-[11px] flex items-center gap-1.5 transition-all text-left truncate"
               >
                 <Crosshair className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                <span>🎯 {isOperator ? `${watchedRobot || 'Robot'} joylashuvi` : rtkData.is_online ? `Cloud RTK (${rtkData.fix_str})` : 'Haqiqiy joylashuvim'} ({telemetry.lat.toFixed(5)}, {telemetry.lon.toFixed(5)})</span>
+                <span>🎯 {isOperator ? `${watchedRobot || 'Robot'} joylashuvi` : 'Haqiqiy joylashuvim'} ({telemetry.lat.toFixed(5)}, {telemetry.lon.toFixed(5)})</span>
               </button>
 
             {/* Operator marshrut chizishi */}
@@ -1037,6 +1092,14 @@ export const GoogleMapsPatrolView: React.FC = () => {
                 <Undo2 className="w-3 h-3 text-amber-400" />
                 Oxirgisini o'chirish
               </button>
+              <button
+                onClick={() => setShowExportModal(true)}
+                className="py-1.5 px-2 bg-tactical-900 hover:bg-tactical-800 border border-tactical-700 text-emerald-300 rounded font-mono text-xs flex items-center justify-center gap-1 transition-all"
+                title="Chizilgan marshrutni yuklab olish"
+              >
+                <Download className="w-3 h-3 text-emerald-400" />
+                Saqlash
+              </button>
             </div>
 
             <div className="flex gap-1.5">
@@ -1056,25 +1119,6 @@ export const GoogleMapsPatrolView: React.FC = () => {
               </button>
             </div>
 
-            {/* Eksport & Simsiz REST API Tugmalari */}
-            <div className="flex gap-1.5 pt-1">
-              <button
-                type="button"
-                onClick={() => setShowExportModal(true)}
-                className="flex-1 py-1.5 px-2 bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/60 hover:border-emerald-400 text-emerald-300 rounded font-mono text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow"
-              >
-                <Download className="w-3.5 h-3.5 text-emerald-400" />
-                <span>📤 Eksport</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowApiModal(true)}
-                className="flex-1 py-1.5 px-2 bg-police-blue/30 hover:bg-police-blue/50 border border-police-cyan/60 hover:border-police-cyan text-police-cyan rounded font-mono text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow"
-              >
-                <Cloud className="w-3.5 h-3.5 text-police-cyan" />
-                <span>☁️ Simsiz API</span>
-              </button>
-            </div>
             {/* OPERATOR: tanlangan robotni masofadan manzilga yuborish (avtopilot robot planshetida ishlaydi) */}
             {isOperator && (() => {
               const robot = fleet.robots.find((r) => r.id === watchedRobot);
@@ -1112,14 +1156,18 @@ export const GoogleMapsPatrolView: React.FC = () => {
                     <button
                       onClick={async () => {
                         if (drawModeRef.current) setDrawing(false);
-                        const ok = await fleetWatcher.sendAutopilot(watchedRobot, { op: 'start', route: waypointsRef.current.map((p) => ({ lat: p.lat, lon: p.lon })) });
+                        const ok = await fleetWatcher.sendAutopilot(watchedRobot, {
+                          op: 'start',
+                          route: waypointsRef.current.map((p) => ({ lat: p.lat, lon: p.lon })),
+                          roundTrip
+                        });
                         setRoutingStatus(ok ? `📡 Marshrut ${watchedRobot} robotiga yuborildi` : "Robotga ulanib bo'lmadi (park aloqasi yo'q)");
                       }}
                       disabled={waypoints.length < 1 || !fresh}
                       className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded font-mono text-xs font-bold flex items-center justify-center gap-1.5 shadow"
                     >
                       <Navigation className="w-3.5 h-3.5" />
-                      Robotni manzilga yuborish
+                      Robotni chiziq bo‘ylab yuborish
                     </button>
                   )}
                   <div className="text-[9px] font-mono text-slate-400 leading-snug">
@@ -1127,7 +1175,7 @@ export const GoogleMapsPatrolView: React.FC = () => {
                       ? 'Robot planshet onlayn emas: unda Qalqon ochiq va "Robot" rolida bo\'lishi kerak.'
                       : waypoints.length < 1
                       ? "Avval \"Marshrut chizish\" bilan manzil nuqtasini qo'ying."
-                      : 'Robot planshet o\'z GPS + giroskopi bo\'yicha ESP32 ga buyruq beradi, to\'siqni kamerasi bilan aniqlaydi (planshetda istalgan bo\'lim ochiq bo\'lishi mumkin).'}
+                      : 'Robot planshet GPS + giroskop + LiDAR yordamida chizilgan chiziq bo\'yicha yuradi va to\'siqlarni chetlab o\'tadi.'}
                   </div>
                 </div>
               );
@@ -1161,7 +1209,7 @@ export const GoogleMapsPatrolView: React.FC = () => {
                 </span>
               </div>
               <div className="text-[10px] text-slate-300 leading-tight">
-                Chizilgan chiziq bo'yicha robot markerini borib-qaytarish (GPS signali bo'lmasa ham xaritada sinash):
+                Chizilgan chiziq bo'yicha robot markerini aniq yurish va borib-qaytish sinovi (LiDAR ulangan bo'lsa to'siqda pauza qiladi):
               </div>
               {isPatrolling ? (
                 <button
@@ -1185,23 +1233,24 @@ export const GoogleMapsPatrolView: React.FC = () => {
               )}
             </div>
 
-            {/* 2. HAQIQIY GPS AVTOPILOT */}
+            {/* 2. HAQIQIY GPS + LIDAR AVTOPILOT */}
             {!isOperator && (
               <div className="border border-emerald-500/40 bg-emerald-950/30 rounded-lg p-2 flex flex-col gap-1.5">
                 <div className="text-[10px] font-mono font-bold text-emerald-300 uppercase tracking-wider flex items-center justify-between">
-                  <span>2. GPS Avtopilot (ESP32)</span>
+                  <span>2. Haqiqiy Avtopilot (ESP32 + LiDAR)</span>
                   <span className={ap.active ? 'text-emerald-400' : ap.phase === 'arrived' ? 'text-sky-300' : ap.phase === 'failed' ? 'text-rose-400' : 'text-slate-400'}>
-                    {ap.active ? `YURMOQDA · ${ap.command}` : ap.phase === 'arrived' ? 'YETDI' : ap.phase === 'failed' ? "TO'XTADI" : "O'CHIQ"}
+                    {ap.active ? `${ap.routeDir === 1 ? '➡️' : '⬅️'} ${ap.command}` : ap.phase === 'arrived' ? 'YETDI' : ap.phase === 'failed' ? "TO'XTADI" : "O'CHIQ"}
                   </span>
                 </div>
                 <div className={`text-[10px] font-mono font-bold ${ap.phase === 'obstacle-stop' || ap.phase === 'failed' ? 'text-rose-300' : ap.phase.startsWith('waiting') ? 'text-amber-300' : 'text-emerald-200'}`}>
                   {ap.message}
                 </div>
                 {ap.active && (
-                  <div className="grid grid-cols-3 gap-1 text-[10px] font-mono text-slate-300">
+                  <div className="grid grid-cols-2 gap-1 text-[10px] font-mono text-slate-300">
                     <span>Nuqta: {ap.targetIndex + 1}/{ap.total}</span>
                     <span>Qoldi: {ap.distanceToEndM < 1000 ? `${Math.round(ap.distanceToEndM)} m` : `${(ap.distanceToEndM / 1000).toFixed(2)} km`}</span>
                     <span>Xato: {ap.bearingErrorDeg}°</span>
+                    <span>Chiziqdan: ±{ap.crossTrackM} m</span>
                   </div>
                 )}
                 {ap.active ? (
@@ -1349,7 +1398,8 @@ export const GoogleMapsPatrolView: React.FC = () => {
           <p className="font-semibold text-police-cyan mb-0.5">💡 Qo'llanma:</p>
           <ul className="list-disc list-inside space-y-0.5">
             <li>"Marshrut chizish" tugmasini bosib, xaritada nuqtalarni ketma-ket bosing, so'ng "Chizishni tugatish".</li>
-            <li>Robot planshetida "Manzilga haqiqiy yurish", operatorda "Robotni manzilga yuborish": robot GPS + giroskop bo'yicha ESP32 orqali yuradi, to'siqni kamera bilan aylanib o'tadi.</li>
+            <li>"Borib-Qaytish" yoqilgan bo'lsa, robot oxirgi nuqtaga yetgach chizilgan chiziq bo'ylab boshiga qaytadi.</li>
+            <li>LiDAR ulangan bo'lsa, to'siq ko'rilganda avtotormoz ishlaydi va bo'sh tomondan aylanib o'tib yana chiziqqa qaytadi.</li>
           </ul>
         </div>
       </div>
@@ -1357,11 +1407,10 @@ export const GoogleMapsPatrolView: React.FC = () => {
       {/* Planshet Giroskop va Kompasini Kalibrlash Modali */}
       {showGyroModal && <GyroCalibrationModal onClose={() => setShowGyroModal(false)} />}
 
-      {/* 📤 MARSHRUT VA KOORDINATALARNI EKSPORT QILISH MODALI */}
+      {/* 📤 CHIZILGAN MARSHRUTNI EKSPORT QILISH MODALI */}
       {showExportModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm select-none">
-          <div className="bg-tactical-950 border border-emerald-500/70 rounded-2xl w-full max-w-lg shadow-[0_0_30px_rgba(16,185,129,0.3)] overflow-hidden flex flex-col">
-            {/* Modal Header */}
+          <div className="bg-tactical-950 border border-emerald-500/70 rounded-2xl w-full max-w-md shadow-[0_0_30px_rgba(16,185,129,0.3)] overflow-hidden flex flex-col">
             <div className="flex items-center justify-between p-4 border-b border-tactical-800 bg-tactical-900/80">
               <div className="flex items-center gap-2">
                 <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
@@ -1369,10 +1418,10 @@ export const GoogleMapsPatrolView: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-slate-100 font-mono tracking-wide">
-                    📤 KOORDINATALARNI EKSPORT QILISH
+                    MARSHRUTNI YUKLAB OLISH
                   </h3>
                   <p className="text-[11px] text-slate-400">
-                    Excel (CSV), GPX, GeoJSON va Google Earth formatlarida yuklab olish
+                    Chizilgan {waypoints.length} ta nuqta (CSV, GPX, GeoJSON)
                   </p>
                 </div>
               </div>
@@ -1384,237 +1433,53 @@ export const GoogleMapsPatrolView: React.FC = () => {
               </button>
             </div>
 
-            {/* Modal Body */}
-            <div className="p-4 flex flex-col gap-4">
-              {/* Manba tanlash (Tabs) */}
-              <div className="flex flex-col gap-1.5">
-                <span className="text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider">
-                  Qaysi ma'lumotlarni yuklab olmoqchisiz?
+            <div className="p-4 grid grid-cols-1 gap-2.5">
+              <button
+                onClick={handleExportCSV}
+                disabled={isExporting}
+                className="flex flex-col items-start p-3 rounded-xl bg-tactical-900/90 hover:bg-emerald-950/40 border border-tactical-700 hover:border-emerald-500/70 transition-all text-left group"
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <FileText className="w-4 h-4 text-emerald-400" />
+                  <span className="font-mono text-xs font-bold text-slate-100">CSV Formati (Excel)</span>
+                </div>
+                <span className="text-[10px] text-slate-400">
+                  Excel va jadvallar uchun koordinatalar ro'yxati.
                 </span>
-                <div className="grid grid-cols-2 gap-2 bg-tactical-900 p-1 rounded-xl border border-tactical-800">
-                  <button
-                    onClick={() => setExportSource('waypoints')}
-                    className={`py-2 px-3 rounded-lg font-mono text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                      exportSource === 'waypoints'
-                        ? 'bg-emerald-600 text-white shadow-[0_0_10px_rgba(16,185,129,0.5)]'
-                        : 'text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    <span>📌 Chizilgan Marshrut ({waypoints.length} ta)</span>
-                  </button>
-                  <button
-                    onClick={() => setExportSource('history')}
-                    className={`py-2 px-3 rounded-lg font-mono text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                      exportSource === 'history'
-                        ? 'bg-emerald-600 text-white shadow-[0_0_10px_rgba(16,185,129,0.5)]'
-                        : 'text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    <span>📜 Server Tarixi (240+ nuqta)</span>
-                  </button>
+              </button>
+
+              <button
+                onClick={handleExportGPX}
+                disabled={isExporting}
+                className="flex flex-col items-start p-3 rounded-xl bg-tactical-900/90 hover:bg-emerald-950/40 border border-tactical-700 hover:border-emerald-500/70 transition-all text-left group"
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <Navigation className="w-4 h-4 text-police-cyan" />
+                  <span className="font-mono text-xs font-bold text-slate-100">GPX (Navigatsiya)</span>
                 </div>
-              </div>
+                <span className="text-[10px] text-slate-400">
+                  GPS navigatorlar uchun trek fayli.
+                </span>
+              </button>
 
-              {/* Formatlar ro'yxati */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {/* 1. CSV */}
-                <button
-                  onClick={() => handleExportCSV(exportSource)}
-                  disabled={isExporting}
-                  className="flex flex-col items-start p-3 rounded-xl bg-tactical-900/90 hover:bg-emerald-950/40 border border-tactical-700 hover:border-emerald-500/70 transition-all text-left group"
-                >
-                  <div className="flex items-center gap-2 mb-1">
-                    <FileText className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform" />
-                    <span className="font-mono text-xs font-bold text-slate-100">CSV Formati (Excel)</span>
-                  </div>
-                  <span className="text-[10px] text-slate-400 leading-tight">
-                    Excel va Google Sheets jadvallari, hisobot va ma'lumotlar bazasi uchun.
-                  </span>
-                </button>
-
-                {/* 2. GPX */}
-                <button
-                  onClick={() => handleExportGPX(exportSource)}
-                  disabled={isExporting}
-                  className="flex flex-col items-start p-3 rounded-xl bg-tactical-900/90 hover:bg-emerald-950/40 border border-tactical-700 hover:border-emerald-500/70 transition-all text-left group"
-                >
-                  <div className="flex items-center gap-2 mb-1">
-                    <Navigation className="w-4 h-4 text-police-cyan group-hover:scale-110 transition-transform" />
-                    <span className="font-mono text-xs font-bold text-slate-100">GPX (Navigatsiya)</span>
-                  </div>
-                  <span className="text-[10px] text-slate-400 leading-tight">
-                    Garmin, OsmAnd, Geodeziya va standart GPS navigatorlar uchun trek fayli.
-                  </span>
-                </button>
-
-                {/* 3. GeoJSON */}
-                <button
-                  onClick={() => handleExportGeoJSON(exportSource)}
-                  disabled={isExporting}
-                  className="flex flex-col items-start p-3 rounded-xl bg-tactical-900/90 hover:bg-emerald-950/40 border border-tactical-700 hover:border-emerald-500/70 transition-all text-left group"
-                >
-                  <div className="flex items-center gap-2 mb-1">
-                    <Globe className="w-4 h-4 text-amber-400 group-hover:scale-110 transition-transform" />
-                    <span className="font-mono text-xs font-bold text-slate-100">GeoJSON (QGIS/GIS)</span>
-                  </div>
-                  <span className="text-[10px] text-slate-400 leading-tight">
-                    QGIS, ArcGIS, Mapbox va geodezik axborot tizimlariga import qilish uchun.
-                  </span>
-                </button>
-
-                {/* 4. Google Earth KML */}
-                <button
-                  onClick={handleExportKML}
-                  className="flex flex-col items-start p-3 rounded-xl bg-tactical-900/90 hover:bg-emerald-950/40 border border-tactical-700 hover:border-emerald-500/70 transition-all text-left group"
-                >
-                  <div className="flex items-center gap-2 mb-1">
-                    <Radio className="w-4 h-4 text-rose-400 group-hover:scale-110 transition-transform" />
-                    <span className="font-mono text-xs font-bold text-slate-100">Google Earth 3D (.KML)</span>
-                  </div>
-                  <span className="text-[10px] text-slate-400 leading-tight">
-                    Google Earth 3D da robotni jonli kuzatuvchi Network Link fayli.
-                  </span>
-                </button>
-              </div>
-
-              {isExporting && (
-                <div className="text-center text-xs font-mono text-emerald-400 animate-pulse">
-                  Fayl shakllantirilmoqda va yuklanmoqda...
+              <button
+                onClick={handleExportGeoJSON}
+                disabled={isExporting}
+                className="flex flex-col items-start p-3 rounded-xl bg-tactical-900/90 hover:bg-emerald-950/40 border border-tactical-700 hover:border-emerald-500/70 transition-all text-left group"
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <Globe className="w-4 h-4 text-amber-400" />
+                  <span className="font-mono text-xs font-bold text-slate-100">GeoJSON (GIS)</span>
                 </div>
-              )}
+                <span className="text-[10px] text-slate-400">
+                  QGIS, ArcGIS va xaritalash dasturlari uchun.
+                </span>
+              </button>
             </div>
 
-            {/* Modal Footer */}
             <div className="p-3 border-t border-tactical-800 bg-tactical-900/60 flex justify-end">
               <button
                 onClick={() => setShowExportModal(false)}
-                className="px-4 py-1.5 rounded-lg bg-tactical-800 hover:bg-tactical-700 text-slate-300 font-mono text-xs transition-all"
-              >
-                Yopish
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ☁️ UNIVERSAL REST API VA BULUTLI XIZMAT (CLOUD HUB) MODALI */}
-      {showApiModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm select-none">
-          <div className="bg-tactical-950 border border-police-cyan/70 rounded-2xl w-full max-w-xl shadow-[0_0_30px_rgba(0,229,255,0.25)] overflow-hidden flex flex-col max-h-[90vh]">
-            {/* Modal Header */}
-            <div className="flex items-center justify-between p-4 border-b border-tactical-800 bg-tactical-900/80">
-              <div className="flex items-center gap-2">
-                <div className="p-2 rounded-lg bg-police-cyan/20 text-police-cyan border border-police-cyan/40">
-                  <Cloud className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-slate-100 font-mono tracking-wide">
-                    ☁️ UNIVERSAL REST API (SIMSIZ CLOUD HUB)
-                  </h3>
-                  <p className="text-[11px] text-slate-400">
-                    USB kabellarsiz GPS integratsiyasi: Python, Flutter, React, Telegram Bot
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowApiModal(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-tactical-800 transition-all"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="p-4 flex flex-col gap-3 overflow-y-auto">
-              {/* Asosiy Endpoint */}
-              <div className="flex flex-col gap-1.5 p-3 rounded-xl bg-tactical-900 border border-police-cyan/40">
-                <span className="text-[10px] font-mono font-bold text-police-cyan uppercase tracking-wider">
-                  👉 Universal Markaziy Server Endpoint (GET):
-                </span>
-                <div className="flex items-center justify-between gap-2 bg-tactical-950 px-3 py-2 rounded-lg border border-tactical-700 font-mono text-xs text-emerald-300">
-                  <span className="truncate select-all">https://trackk-gl6l.onrender.com/api.php?action=robot</span>
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText("https://trackk-gl6l.onrender.com/api.php?action=robot");
-                      setCopiedApi(true),
-                      setTimeout(() => setCopiedApi(false), 2000);
-                    }}
-                    className="p-1 rounded bg-tactical-800 hover:bg-tactical-700 text-slate-200 transition-all shrink-0 flex items-center gap-1 text-[11px]"
-                  >
-                    {copiedApi ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copiedApi ? 'Nusxalandi!' : 'Nusxa'}</span>
-                  </button>
-                </div>
-                <div className="flex items-center gap-3 text-[10px] font-mono text-slate-400 pt-1">
-                  <span>Holat: <strong className={rtkData.is_online ? 'text-emerald-400' : 'text-amber-400'}>{rtkData.is_online ? 'ONLAYN' : 'KUTILMOQDA'}</strong></span>
-                  <span>Fix: <strong className="text-police-cyan">{rtkData.fix_str}</strong></span>
-                  <span>Yo'ldoshlar: <strong className="text-slate-200">{rtkData.sat} ta</strong></span>
-                </div>
-              </div>
-
-              {/* Integratsiya Misollari */}
-              <div className="flex flex-col gap-2">
-                <span className="text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider">
-                  Dasturlash tillari bo'yicha tayyor kodlar:
-                </span>
-
-                {/* 1. JavaScript / React */}
-                <div className="p-2.5 rounded-lg bg-tactical-900 border border-tactical-800 flex flex-col gap-1">
-                  <div className="flex items-center justify-between text-[11px] font-mono font-bold text-amber-300">
-                    <span>1. Veb-saytlar va JavaScript / React:</span>
-                  </div>
-                  <pre className="text-[10px] font-mono bg-tactical-950 p-2 rounded text-slate-300 overflow-x-auto">
-{`fetch('https://trackk-gl6l.onrender.com/api.php?action=robot')
-  .then(res => res.json())
-  .then(gps => console.log('Lat:', gps.lat, 'Lng:', gps.lng, 'Fix:', gps.fix_str));`}
-                  </pre>
-                </div>
-
-                {/* 2. Python / Telegram Bot */}
-                <div className="p-2.5 rounded-lg bg-tactical-900 border border-tactical-800 flex flex-col gap-1">
-                  <div className="flex items-center justify-between text-[11px] font-mono font-bold text-emerald-300">
-                    <span>2. Python (Telegram Bot / Avtomatlashtirish):</span>
-                  </div>
-                  <pre className="text-[10px] font-mono bg-tactical-950 p-2 rounded text-slate-300 overflow-x-auto">
-{`import urllib.request, json
-
-resp = urllib.request.urlopen('https://trackk-gl6l.onrender.com/api.php?action=robot')
-data = json.loads(resp.read().decode())
-print(f"Robot: Lat {data['lat']}, Lng {data['lng']} | Aniqlik: {data['fix_str']}")`}
-                  </pre>
-                </div>
-
-                {/* 3. Flutter / Android */}
-                <div className="p-2.5 rounded-lg bg-tactical-900 border border-tactical-800 flex flex-col gap-1">
-                  <div className="flex items-center justify-between text-[11px] font-mono font-bold text-sky-300">
-                    <span>3. Mobil Ilovalar (Flutter / Dart):</span>
-                  </div>
-                  <pre className="text-[10px] font-mono bg-tactical-950 p-2 rounded text-slate-300 overflow-x-auto">
-{`var response = await http.get(Uri.parse('https://trackk-gl6l.onrender.com/api.php?action=robot'));
-var data = jsonDecode(response.body);
-print('Robot: lat=\${data['lat']}, lng=\${data['lng']}');`}
-                  </pre>
-                </div>
-
-                {/* 4. Google Earth 3D */}
-                <div className="p-2.5 rounded-lg bg-tactical-900 border border-tactical-800 flex flex-col gap-1">
-                  <div className="flex items-center justify-between text-[11px] font-mono font-bold text-rose-300">
-                    <span>4. Google Earth (Jonli 3D Kuzatuv):</span>
-                  </div>
-                  <p className="text-[10px] text-slate-400">
-                    Google Earth dasturini oching ➔ <strong>Add ➔ Network Link</strong> ➔ Link maydoniga <code className="text-police-cyan">https://trackk-gl6l.onrender.com/api.php?action=robot</code> kiriting. Har 2 soniyada robot harakati 3D sun'iy yo'ldosh xaritasida yangilanadi!
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="p-3 border-t border-tactical-800 bg-tactical-900/60 flex justify-between items-center">
-              <span className="text-[10px] font-mono text-slate-400">
-                ESP32 faqat bitta joyga yuboradi, server esa uni hamma tizimlarga simsiz tarqatadi.
-              </span>
-              <button
-                onClick={() => setShowApiModal(false)}
                 className="px-4 py-1.5 rounded-lg bg-tactical-800 hover:bg-tactical-700 text-slate-300 font-mono text-xs transition-all"
               >
                 Yopish

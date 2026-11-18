@@ -36,9 +36,9 @@ export interface NavState {
 
 const TICK_MS = 100;
 /** GPS shuncha vaqt kelmasa dead reckoning rejimi */
-const GPS_TIMEOUT_MS = 2500;
+const GPS_TIMEOUT_MS = 5000;
 /** Dead reckoning shu vaqtdan oshsa joylashuv "eskirgan" deb belgilanadi (siljish to'xtaydi) */
-const DR_MAX_MS = 60_000;
+const DR_MAX_MS = 120_000;
 /** Jarayon shovqini: harakatda noaniqlik qanchalik tez o'sadi (m^2 / s) */
 const Q_MOVING = 1.5;
 const Q_STILL = 0.05;

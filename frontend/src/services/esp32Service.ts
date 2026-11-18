@@ -71,11 +71,11 @@ class ESP32Service {
   /**
    * 1. Harfli buyruq yuborish (Strelkalar va maxsus tugmalar uchun: F, B, L, R, G, I, H, J, S)
    */
-  public sendCommand(cmd: MecanumCommand) {
+  public sendCommand(cmd: MecanumCommand, force = false) {
     if (!this.isEnabled) return;
 
-    // Takroriy bir xil buyruqni qayta-qayta yubormaslik (STOP buyrug'i bundan mustasno)
-    if (cmd !== 'S' && cmd === this.lastSentCmd) {
+    // Keep-alive (heartbeat) yoki STOP uchun darhol yuboriladi
+    if (!force && cmd !== 'S' && cmd === this.lastSentCmd) {
       return;
     }
     this.lastSentCmd = cmd;

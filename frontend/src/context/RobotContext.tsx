@@ -30,7 +30,6 @@ import { navigationService } from '../services/navigationService';
 import { autopilotService } from '../services/autopilotService';
 import { esp32Service } from '../services/esp32Service';
 import { lidarSerialService } from '../services/lidarSerialService';
-import { rtkGpsService } from '../services/rtkGpsService';
 
 export interface LogMessage {
   id: string;
@@ -39,9 +38,6 @@ export interface LogMessage {
   level: 'info' | 'warn' | 'error' | 'success';
   text: string;
 }
-
-export type GpsSourceMode = 'device' | 'trackk' | 'auto';
-export const STORAGE_KEY_GPS_SOURCE = 'qalqon.gps_source.v1';
 
 interface RobotContextType {
   activeTab: 'hud' | 'ai' | 'telemetry' | 'maps' | 'settings';
@@ -118,8 +114,6 @@ interface RobotContextType {
   // Qurilmaning haqiqiy GPS i
   gps: GPSState;
   startRealGPS: () => void;
-  gpsSource: GpsSourceMode;
-  setGpsSource: (mode: GpsSourceMode) => void;
 
   // ESP32 Direct MQTT & Local HTTP Control
   esp32Status: string;
@@ -140,14 +134,6 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [speedLevel, setSpeedLevelState] = useState<SpeedLevel>(2);
   const [isMoving, setIsMoving] = useState<boolean>(false);
 
-  // GPS Manbasi: 'device' (Noutbuk / Planshet) | 'trackk' (RTK Bulut) | 'auto'
-  const [gpsSource, setGpsSourceState] = useState<GpsSourceMode>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem(STORAGE_KEY_GPS_SOURCE) as GpsSourceMode;
-      if (saved === 'device' || saved === 'trackk' || saved === 'auto') return saved;
-    }
-    return 'device'; // STANDART: Noutbuk / Planshet GPS'i
-  });
   // Navigatsiya: faqat buyruq O'ZGARGANDA xabar beriladi ("to'xta" -> dead reckoning siljimaydi, tezlik 0).
   // Boshlang'ich 'S' hisobga olinmaydi: robot avtonom yurayotgan bo'lishi mumkin
   const prevCmdRef = useRef<MecanumCommand>('S');
@@ -202,9 +188,10 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           setEsp32Status('ONLINE (MQTT)');
           addLogRef.current('SYSTEM', 'success', `ESP32 MQTT brokerga ulandi (${topic})`);
 
-          // Robot telemetriyasiga obuna bo'lish (MPU-6050 IMU, tezlik, holat)
+          // Robot telemetriyasi va LiDAR oqimiga obuna bo'lish (MPU-6050 IMU + STL-19P LiDAR)
           try {
             client.subscribe('qalqon/robot/telemetry');
+            client.subscribe('qalqon/robot/lidar');
           } catch {}
         });
 
@@ -214,6 +201,12 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               const text = payload.toString();
               const data = JSON.parse(text);
               headingService.ingestTelemetry(data);
+            } catch {}
+          } else if (incomingTopic === 'qalqon/robot/lidar') {
+            try {
+              const text = payload.toString();
+              const data = JSON.parse(text);
+              lidarSerialService.ingestRemoteLidar(data, 'mqtt');
             } catch {}
           }
         });
@@ -322,9 +315,11 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         console.error('MQTT publish error:', e);
       }
     }
-    const espIp = localStorage.getItem('qalqon_esp_ip');
-    if (espIp) {
-      fetch('http://' + espIp + '/move?dir=' + cmdStr, { mode: 'no-cors' }).catch(() => {});
+    if (esp32Service.getEnabled()) {
+      const base = esp32Service.getIp();
+      if (base && /^https?:\/\//i.test(base)) {
+        fetch(`${base}/move?dir=${encodeURIComponent(cmdStr)}`, { mode: 'no-cors' }).catch(() => {});
+      }
     }
   }, []);
 
@@ -387,10 +382,14 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       evasionDirection
     });
 
-    setSonars((prev) => ({
-      ...prev,
-      front: clampedDist
-    }));
+    // Agar haqiqiy LiDAR faol bo'lmasa, kamera taxminiy masofasini ko'rsatamiz
+    const l = lidarSerialService.getObstacleInfo();
+    if (Date.now() - l.lastUpdated >= 1500) {
+      setSonars((prev) => ({
+        ...prev,
+        front: clampedDist
+      }));
+    }
 
     if (blocked) {
       setSystem((s) => ({ ...s, serialWarning: `WARN:CAMERA_OBSTACLE (${clampedDist}sm)` }));
@@ -484,15 +483,6 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     watchIdRef.current = navigator.geolocation.watchPosition(
       (pos) => {
-        // Faqat foydalanuvchi qat'iy 'trackk' rejimini tanlagan bo'lsa va Trackk faol bo'lsa, brauzer GPS'i to'xtatiladi
-        const curMode = (localStorage.getItem(STORAGE_KEY_GPS_SOURCE) as GpsSourceMode) || 'device';
-        if (curMode === 'trackk') {
-          const rtk = rtkGpsService.getData();
-          if (rtk && rtk.is_online && rtk.status === 'ok') {
-            return;
-          }
-        }
-
         const speedKmH = pos.coords.speed !== null && pos.coords.speed !== undefined
           ? +(pos.coords.speed * 3.6).toFixed(1)
           : 0;
@@ -541,46 +531,10 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     );
   }, [addLog]);
 
-  const setGpsSource = useCallback((mode: GpsSourceMode) => {
-    setGpsSourceState(mode);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(STORAGE_KEY_GPS_SOURCE, mode);
-    }
-    if (mode === 'device' || mode === 'auto') {
-      startRealGPS();
-    }
-  }, [startRealGPS]);
-
-  // Sayt ochilganda avtomatik haqiqiy GPS va Trackk RTK xizmatini ishga tushirish
+  // Sayt ochilganda avtomatik planshet / qurilma GPS ni ishga tushirish
   useEffect(() => {
     startRealGPS();
-    rtkGpsService.start();
-
-    const unsubRtk = rtkGpsService.subscribe((data) => {
-      const curMode = (localStorage.getItem(STORAGE_KEY_GPS_SOURCE) as GpsSourceMode) || 'device';
-      // Faqat 'trackk' tanlangan bo'lsa yoki 'auto' rejimida haqiqiy RTK FIXED (fix=4) bo'lsa setGps yangilanadi
-      const applyCloud = (curMode === 'trackk') || (curMode === 'auto' && data.fix === 4);
-
-      if (applyCloud && data.status === 'ok' && data.is_online) {
-        const speedKmH = data.speed || 0;
-        setGps({
-          latitude: data.lat,
-          longitude: data.lng,
-          altitude: data.alt || 340,
-          accuracy: data.fix === 4 ? 0.02 : data.fix === 5 ? 0.25 : (data.hdop || 2.5),
-          speed: speedKmH,
-          heading: 0,
-          timestamp: data.lastFetchedAt,
-          isReal: true,
-          status: 'ONLINE',
-          error: undefined
-        });
-      }
-    });
-
     return () => {
-      unsubRtk();
-      rtkGpsService.stop();
       if (watchIdRef.current !== null) {
         navigator.geolocation.clearWatch(watchIdRef.current);
       }
@@ -708,13 +662,17 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     addLog('SERIAL', 'info', `Tezlik rejimiga o'tildi: ${lvl} (${pwm} PWM)`);
     // ESP32 ga tezlikni uzatish
     sendRawToESP32(`V:${pwm}`);
-    const espIp = localStorage.getItem('qalqon_esp_ip');
-    if (espIp) {
-      fetch(`http://${espIp}/speed?val=${pwm}`, { mode: 'no-cors' }).catch(() => {});
+    if (esp32Service.getEnabled()) {
+      const base = esp32Service.getIp();
+      if (base && /^https?:\/\//i.test(base)) {
+        fetch(`${base}/speed?val=${pwm}`, { mode: 'no-cors' }).catch(() => {});
+      }
     }
   }, [sendRawToESP32, addLog]);
 
-  const isFrontBlocked = (sonars.front ?? Infinity) <= 28 || cameraObstacle.isBlocked;
+  const lidarObsSnap = lidarSerialService.getObstacleInfo();
+  const isLidarFrontBlockedNow = lidarObsSnap.isBlocked && (Date.now() - lidarObsSnap.lastUpdated < 2500);
+  const isFrontBlocked = isLidarFrontBlockedNow || (sonars.front ?? Infinity) <= 28 || cameraObstacle.isBlocked;
 
   // Mecanum Command Handler (ESP32 MQTT + Heartbeat + Local Fallback)
   const sendMecanumCommand = useCallback((cmd: MecanumCommand) => {
@@ -781,7 +739,7 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (cmd === 'Q') espCmd = 'G';
     if (cmd === 'E') espCmd = 'I';
 
-    esp32Service.sendCommand(cmd);
+    esp32Service.sendCommand(cmd, true);
     sendRawToESP32(espCmd);
 
     // ESP32 safety taymeri uzilib qolmasligi uchun harakat davomida har 250ms da keep-alive yuboriladi
@@ -884,32 +842,63 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     [addLog]
   );
 
-  // GPS avtopilot: ESP32 buyrug'i va to'siq ma'lumoti (LiDAR + sonar) shu kontekstdan olinadi
+  // GPS avtopilot va LiDAR xavfsizlik nazorati: ESP32 buyrug'i va to'siq ma'lumoti
   const sendCmdRef = useRef(sendMecanumCommand);
   sendCmdRef.current = sendMecanumCommand;
   const obstacleRef = useRef({ sonars });
   obstacleRef.current = { sonars };
   useEffect(() => {
-    // Agar Web Serial qo'llab-quvvatlanmasa (masalan Android planshetda), avtomatik WebSocket ko'prigiga ulanish
-    if (!lidarSerialService.isSupported() && !lidarSerialService.isOpen()) {
+    // 1. Avval ruxsat olingan USB/Serial LiDAR porti bo'lsa avtomatik qayta ulash
+    void lidarSerialService.tryAutoReconnect().then((ok) => {
+      if (ok || lidarSerialService.isOpen()) return;
+      // 2. Aks holda saqlangan Pi 5 / PC WebSocket ko'prigiga (Mixed Content bo'lmaganda) ulanish
       const savedWs = localStorage.getItem('qalqon_lidar_ws');
       const piIp = localStorage.getItem('qalqon_pi_ip');
+      const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
       const host = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
       const wsUrl = savedWs || (piIp ? `ws://${piIp}:8000/ws` : `ws://${host}:8000/ws`);
-      lidarSerialService.connectWebSocket(wsUrl).catch(() => {});
-    }
+      if (!isHttps || wsUrl.startsWith('wss://') || wsUrl.includes('localhost') || wsUrl.includes('127.0.0.1')) {
+        lidarSerialService.connectWebSocket(wsUrl).catch(() => {});
+      }
+    });
+
+    // 3. Jonli LiDAR kadrlaridan 4-sektorli masofa va qo'lda harakatda favqulodda tormoz
+    let lastSonarSync = 0;
+    const unsubLidar = lidarSerialService.subscribeFrame(() => {
+      const l = lidarSerialService.getObstacleInfo();
+      const now = Date.now();
+      if (now - lastSonarSync >= 120) {
+        lastSonarSync = now;
+        setSonars({
+          front: l.frontCm < 500 ? l.frontCm : null,
+          right: l.rightCm < 500 ? l.rightCm : null,
+          rear: l.rearCm < 500 ? l.rearCm : null,
+          left: l.leftCm < 500 ? l.leftCm : null
+        });
+      }
+
+      // Qo'lda oldinga ketayotganda birdan LiDAR to'siq ko'rsa -> darhol tormoz!
+      const cur = currentCmdRef.current;
+      const isFwd = cur === 'F' || cur === 'G' || cur === 'I' || cur === 'Q' || cur === 'E';
+      if (isFwd && l.isBlocked && !autopilotService.getState().active) {
+        tacticalAudio.playObstacleAlert();
+        addLogRef.current('AI', 'error', `🛑 LIDAR AVTOTORMOZ: Oldinda to'siq (${l.frontCm} sm)! To'xtatildi.`);
+        sendCmdRef.current('S');
+      }
+    });
 
     autopilotService.setDriver((cmd) => sendCmdRef.current(cmd));
     autopilotService.setObstacleProvider(() => {
       const { sonars: s } = obstacleRef.current;
       const l = lidarSerialService.getObstacleInfo();
       const isLidarFresh = Date.now() - l.lastUpdated < 2500;
-      const lidarDist = isLidarFresh && l.frontCm > 0 && l.frontCm < 300 ? l.frontCm : Infinity;
-      const sonarDist = s.front ?? Infinity;
+      const lidarDist = isLidarFresh && l.frontCm > 0 && l.frontCm < 490 ? l.frontCm : Infinity;
+      const sonarDist = !isLidarFresh && s.front ? s.front : Infinity;
       const minDist = Math.min(lidarDist, sonarDist);
+      const activeBlocked = isLidarFresh ? l.isBlocked : sonarDist <= autopilotService.getStopCm();
       return {
         distanceCm: minDist,
-        label: l.isBlocked ? `LiDAR (${l.frontCm} sm)` : s.front ? `Sonar (${s.front} sm)` : 'Ochiq',
+        label: activeBlocked ? `LiDAR (${l.frontCm} sm)` : isLidarFresh ? `LiDAR (${l.frontCm} sm)` : s.front ? `Kamera (${s.front} sm)` : 'Ochiq',
         evasion: l.evasion,
         sonarFrontCm: sonarDist,
         lidarFrontCm: lidarDist,
@@ -917,6 +906,7 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       };
     });
     return () => {
+      unsubLidar();
       autopilotService.stop();
       autopilotService.setDriver(null);
       autopilotService.setObstacleProvider(null);
@@ -966,8 +956,6 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         toggleMute,
         gps,
         startRealGPS,
-        gpsSource,
-        setGpsSource,
         esp32Status,
         esp32Connected,
         hornActive,
