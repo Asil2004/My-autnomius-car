@@ -12,6 +12,7 @@
  */
 import type { MecanumCommand } from '../types/robot';
 import { navigationService, type NavState } from './navigationService';
+import { rtkGpsService } from './rtkGpsService';
 
 export interface AutopilotWaypoint {
   lat: number;
@@ -228,7 +229,15 @@ class AutopilotService {
     const nav: NavState = navigationService.getState();
     const obs = this.obstacles?.();
 
-    // 1) Joylashuv ishonchli emas -> turib kutadi
+    // 1) Xavfsizlik talabi (Failsafe): agar RTK GPS aloqasi uzilgan (is_online=false) yoki age_sec > 5s bo'lsa -> to'xtash
+    const rtk = rtkGpsService.getData();
+    if (rtk && rtk.status !== 'waiting' && (!rtk.is_online || rtk.age_sec > 5.0)) {
+      this.drive('S');
+      this.enter('waiting-gps', `⚠️ [FAILSAFE] GPS to‘xtadi (${rtk.age_sec.toFixed(1)}s oldin kelgan). Motor to‘xtatildi.`);
+      return;
+    }
+
+    // 2) Joylashuv ishonchli emas -> turib kutadi
     if (!nav.initialized || nav.positionSource === 'stale' || nav.positionSource === 'none' || nav.accuracy > cfg.maxAccuracyM) {
       this.drive('S');
       this.enter('waiting-gps', `GPS kutilmoqda (aniqlik ${Number.isFinite(nav.accuracy) ? Math.round(nav.accuracy) : '—'} m)`);

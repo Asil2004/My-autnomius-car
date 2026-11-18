@@ -124,6 +124,10 @@ class RtkGpsService {
       const now = Date.now();
 
       if (json && json.status === 'ok' && isFinite(json.lat) && isFinite(json.lng)) {
+        const isOnline = !!json.is_online;
+        const ageSec = typeof json.age_sec === 'number' ? json.age_sec : parseFloat(json.age_sec) || 0;
+        const isFresh = isOnline && ageSec < 5.0;
+
         const lat = parseFloat(json.lat);
         const lng = parseFloat(json.lng);
         const fix = parseInt(json.fix) || 0;
@@ -140,10 +144,10 @@ class RtkGpsService {
         else if (hdop > 0) accuracyM = Math.max(1.0, +(hdop * 2.0).toFixed(2));
 
         this.latestData = {
-          status: 'ok',
-          is_online: !!json.is_online,
-          age_ms: json.age_ms || 0,
-          age_sec: json.age_sec || 0,
+          status: isFresh ? 'ok' : 'waiting',
+          is_online: isFresh,
+          age_ms: json.age_ms || Math.round(ageSec * 1000),
+          age_sec: ageSec,
           lat,
           lng,
           fix,
@@ -158,17 +162,22 @@ class RtkGpsService {
           latencyMs: latency
         };
 
-        // Markaziy navigatsiya tizimiga uzatish
-        navigationService.pushGps({
-          lat,
-          lon: lng,
-          accuracyM,
-          speedKmh: speed,
-          courseDeg: null
-        });
+        if (isFresh) {
+          // 1. Aloqa bor va ma'lumot yangi (< 5s): Markaziy navigatsiyaga uzatish
+          navigationService.pushGps({
+            lat,
+            lon: lng,
+            accuracyM,
+            speedKmh: speed,
+            courseDeg: null
+          });
 
-        if (speed > 1.0) {
-          headingService.pushGps(null, speed);
+          if (speed > 1.0) {
+            headingService.pushGps(null, speed);
+          }
+        } else {
+          // Failsafe: Ma'lumot eskirgan yoki aloqa yo'q
+          console.warn(`[QALQON OGOHLANTIRISH] Robotdan ma'lumot to'xtadi! (${ageSec}s oldin kelgan, is_online=${isOnline})`);
         }
       } else {
         // Kutish yoki signal yo'q
