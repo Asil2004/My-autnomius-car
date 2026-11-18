@@ -2,8 +2,17 @@ import type { MecanumCommand } from '../types/robot';
 
 export type LineColorPreset = 'tactile_yellow' | 'bright_yellow' | 'blue' | 'white' | 'black';
 
+export type LineDriveMode = 'assisted' | 'auto' | 'test';
+
 export interface LineFollowerConfig {
   colorPreset: LineColorPreset;
+  /**
+   * assisted: Oldingani bosganda yuradi, qo'yib yuborganda avtonom buriladi,
+   *           chiziq bo'lmagan tomonga burilish taqiqlanadi (tavsiya etiladi!).
+   * auto: To'liq avtonom doimiy yurish.
+   * test: Motorlar o'chirilgan, faqat vizual kamera sinovi.
+   */
+  driveMode: LineDriveMode;
   /** (R+G)/2 - B minimal farqi (10..42). Qulay Makon taktil sariq yo'lak uchun 20 optimal. */
   yellownessMin: number;
   /** Oldinga/egri burilish o'lik zonasi (0.05..0.35). */
@@ -15,6 +24,27 @@ export interface LineFollowerConfig {
   /** Agar kamera apparat darajasida teskari (mirror) bo'lsa, chap/o'ng rulni almashtirish. */
   invertSteering: boolean;
 }
+
+export interface UserDriveIntent {
+  /** Foydalanuvchi oldinga yurishni bosib turibdimi (W, ArrowUp, HUD F, joystik yuqoriga)? */
+  forward: boolean;
+  /** Foydalanuvchi chapga burilishni bosib turibdimi (A, ArrowLeft, HUD L, joystik chap)? */
+  turnLeft: boolean;
+  /** Foydalanuvchi o'ngga burilishni bosib turibdimi (D, ArrowRight, HUD R, joystik o'ng)? */
+  turnRight: boolean;
+  /** Foydalanuvchi orqaga yurishni bosib turibdimi (S, ArrowDown, HUD B, joystik pastga)? */
+  reverse: boolean;
+  /** Favqulodda to'xtash bosilganmi */
+  emergencyStop?: boolean;
+}
+
+export const DEFAULT_DRIVE_INTENT: UserDriveIntent = {
+  forward: false,
+  turnLeft: false,
+  turnRight: false,
+  reverse: false,
+  emergencyStop: false
+};
 
 export interface LineBandSample {
   /** Normalizatsiyalangan vertikal markaz (0..1). */
@@ -40,6 +70,8 @@ export interface LineAnalysisResult {
   rawSteer: number;
   /** T-shaklidagi yon yo'lak shoxi aniqlanib filtrlandi. */
   tJunctionFiltered: boolean;
+  /** T-chorraha qaysi tomonga shoxlangan: 'left' | 'right' | null */
+  tJunctionSide?: 'left' | 'right' | null;
   /** Qancha foiz kadr maydoni chiziq piksellariga mos tushdi. */
   coverage: number;
   bands: LineBandSample[];
@@ -52,12 +84,17 @@ export interface LineControlStep extends LineAnalysisResult {
   command: MecanumCommand;
   statusLabel: string;
   lostDurationMs: number;
+  /** Chiziq yo'qligi sababli bloklangan yo'nalish */
+  guardBlocked?: 'left' | 'right' | null;
+  /** Qo'yib yuborilganda joyida avtonom burilish/to'g'irlanish holati */
+  autoAligning?: boolean;
 }
 
-export const LINE_FOLLOWER_STORAGE_KEY = 'qalqon_line_follower_cfg_v1';
+export const LINE_FOLLOWER_STORAGE_KEY = 'qalqon_line_follower_cfg_v2';
 
 export const DEFAULT_LINE_CONFIG: LineFollowerConfig = {
   colorPreset: 'tactile_yellow',
+  driveMode: 'assisted',
   yellownessMin: 20,
   curveDeadband: 0.14,
   spinThreshold: 0.52,
@@ -75,6 +112,10 @@ export function loadLineFollowerConfig(): LineFollowerConfig {
         parsed.colorPreset && ['tactile_yellow', 'bright_yellow', 'blue', 'white', 'black'].includes(parsed.colorPreset)
           ? parsed.colorPreset
           : DEFAULT_LINE_CONFIG.colorPreset,
+      driveMode:
+        parsed.driveMode && ['assisted', 'auto', 'test'].includes(parsed.driveMode)
+          ? parsed.driveMode
+          : DEFAULT_LINE_CONFIG.driveMode,
       yellownessMin:
         typeof parsed.yellownessMin === 'number' ? clamp(parsed.yellownessMin, 10, 42) : DEFAULT_LINE_CONFIG.yellownessMin,
       curveDeadband:
@@ -219,6 +260,7 @@ export function analyzeLineFrame(
       angleDeg: 0,
       rawSteer: 0,
       tJunctionFiltered: false,
+      tJunctionSide: null,
       coverage: 0,
       bands: []
     };
@@ -248,6 +290,7 @@ export function analyzeLineFrame(
   let prevCenter: number | null = null;
   let prevWidth: number | null = null;
   let tJunctionFiltered = false;
+  let tJunctionSide: 'left' | 'right' | null = null;
 
   for (let i = nBands - 1; i >= 0; i--) {
     const y0 = Math.floor(yStart + ((yEnd - yStart) * i) / nBands);
@@ -289,6 +332,10 @@ export function analyzeLineFrame(
     if (prevWidth !== null && prevCenter !== null && bw > width * 0.45 && bw > prevWidth * 1.45) {
       tJunctionFiltered = true;
       clamped = true;
+      const rightExpansion = x1 - prevCenter;
+      const leftExpansion = prevCenter - x0;
+      tJunctionSide = rightExpansion >= leftExpansion ? 'right' : 'left';
+
       const lo = x0 + prevWidth / 2;
       const hi = x1 - prevWidth / 2;
       cx = lo <= hi ? clamp(prevCenter, lo, hi) : prevCenter;
@@ -321,6 +368,7 @@ export function analyzeLineFrame(
       angleDeg: 0,
       rawSteer: 0,
       tJunctionFiltered,
+      tJunctionSide,
       coverage: matchedCount / roiPixels,
       bands
     };
@@ -367,9 +415,37 @@ export function analyzeLineFrame(
     angleDeg,
     rawSteer,
     tJunctionFiltered,
+    tJunctionSide,
     coverage: matchedCount / roiPixels,
     bands
   };
+}
+
+/**
+ * Foydalanuvchi chapga burila oladimi?
+ * Chiziq chapda bo'lmasa, robotni polga/devorga burilib ketishining oldini oladi.
+ */
+export function canTurnLeftOnLine(analysis: LineAnalysisResult | null): boolean {
+  if (!analysis || !analysis.detected) return false;
+  return (
+    analysis.offsetNorm <= -0.12 ||
+    analysis.angleDeg <= -8 ||
+    analysis.tJunctionSide === 'left'
+  );
+}
+
+/**
+ * Foydalanuvchi o'ngga burila oladimi?
+ * Chiziq o'ngda bo'lmasa (yoki o'ng shox bo'lmasa), o'ngga burilish taqiqlanadi.
+ */
+export function canTurnRightOnLine(analysis: LineAnalysisResult | null): boolean {
+  if (!analysis || !analysis.detected) return false;
+  return (
+    analysis.offsetNorm >= 0.12 ||
+    analysis.angleDeg >= 8 ||
+    analysis.tJunctionSide === 'right' ||
+    analysis.tJunctionFiltered
+  );
 }
 
 /**
@@ -391,9 +467,27 @@ export class LineFollowerController {
   step(
     analysis: LineAnalysisResult,
     cfg: LineFollowerConfig,
-    nowMs = Date.now(),
-    blockedBySensor = false
+    intentOrNow: UserDriveIntent | number = DEFAULT_DRIVE_INTENT,
+    maybeNowOrBlocked: number | boolean = Date.now(),
+    maybeBlocked = false
   ): LineControlStep {
+    let intent: UserDriveIntent;
+    let nowMs: number;
+    let blockedBySensor: boolean;
+
+    if (typeof intentOrNow === 'number') {
+      intent = DEFAULT_DRIVE_INTENT;
+      nowMs = intentOrNow;
+      blockedBySensor = typeof maybeNowOrBlocked === 'boolean' ? maybeNowOrBlocked : false;
+    } else {
+      intent = intentOrNow;
+      nowMs = typeof maybeNowOrBlocked === 'number' ? maybeNowOrBlocked : Date.now();
+      blockedBySensor = maybeBlocked;
+    }
+
+    const mode = cfg.driveMode ?? 'assisted';
+
+    // 1. SENSOR / LIDAR / SONAR TO'SIQ BLOKIROVKASI
     if (blockedBySensor) {
       this.smoothedSteer = 0;
       this.visualSteer = 0;
@@ -407,6 +501,33 @@ export class LineFollowerController {
       };
     }
 
+    // 2. FAVQULODDA STOP
+    if (intent.emergencyStop) {
+      this.smoothedSteer = 0;
+      this.visualSteer = 0;
+      return {
+        ...analysis,
+        smoothedSteer: 0,
+        visualSteer: 0,
+        command: 'S',
+        statusLabel: "STOP (TO'XTATILDI)",
+        lostDurationMs: 0
+      };
+    }
+
+    // 3. SINOV REJIMI (Motorlar aylanmaydi)
+    if (mode === 'test') {
+      return {
+        ...analysis,
+        smoothedSteer: 0,
+        visualSteer: analysis.rawSteer,
+        command: 'S',
+        statusLabel: analysis.detected ? 'FAQAT SINOV (KUZATUV)' : "YO'LAK TOPILMADI",
+        lostDurationMs: 0
+      };
+    }
+
+    // Silliqlash hisobi
     if (analysis.detected) {
       this.lastSeenAt = nowMs;
       const orientedSteer = cfg.invertSteering ? -analysis.rawSteer : analysis.rawSteer;
@@ -417,7 +538,170 @@ export class LineFollowerController {
         ? 0.45 * analysis.rawSteer + 0.55 * this.visualSteer
         : analysis.rawSteer;
       this.lastDetected = true;
+    } else {
+      this.smoothedSteer *= 0.6;
+      this.visualSteer *= 0.6;
+    }
 
+    // =========================================================================
+    // 4. YORDAMCHI REJIM (ASSISTED) — FOYDALANUVCHI SO'RAGAN TALAB BO'YICHA:
+    //  - Oldingani bosganda chiziq bo'ylab harakatlanadi
+    //  - Qo'yib yuborganda avtonom joyida burilib yo'lakka to'g'irlanadi
+    //  - Chapga/O'ngga burilish bosilganda chiziqqa qaraydi, chiziq yo'q bo'lsa yurmaydi!
+    // =========================================================================
+    if (mode === 'assisted') {
+      // 4A. Qo'lda orqaga harakat
+      if (intent.reverse) {
+        return {
+          ...analysis,
+          smoothedSteer: this.smoothedSteer,
+          visualSteer: this.visualSteer,
+          command: 'B',
+          statusLabel: 'ORQAGA HARAKAT (B)',
+          lostDurationMs: 0
+        };
+      }
+
+      // 4B. Qo'lda chapga burilish: Chiziq tekshiruvi!
+      if (intent.turnLeft && !intent.forward) {
+        if (canTurnLeftOnLine(analysis)) {
+          const steerCmd = cfg.invertSteering ? 'R' : 'L';
+          return {
+            ...analysis,
+            smoothedSteer: this.smoothedSteer,
+            visualSteer: this.visualSteer,
+            command: steerCmd,
+            statusLabel: `CHAPGA BURILISH (${steerCmd}) — RUXSAT ETILDI`,
+            lostDurationMs: 0
+          };
+        } else {
+          // Chapda chiziq yo'q -> BLOKLANADI!
+          return {
+            ...analysis,
+            smoothedSteer: this.smoothedSteer,
+            visualSteer: this.visualSteer,
+            command: 'S',
+            guardBlocked: 'left',
+            statusLabel: "⚠️ CHAPDA YO'LAK YO'Q — BURILISH BLOKLANDI!",
+            lostDurationMs: 0
+          };
+        }
+      }
+
+      // 4C. Qo'lda o'ngga burilish: Chiziq tekshiruvi!
+      if (intent.turnRight && !intent.forward) {
+        if (canTurnRightOnLine(analysis)) {
+          const steerCmd = cfg.invertSteering ? 'L' : 'R';
+          return {
+            ...analysis,
+            smoothedSteer: this.smoothedSteer,
+            visualSteer: this.visualSteer,
+            command: steerCmd,
+            statusLabel: `O'NGGA BURILISH (${steerCmd}) — RUXSAT ETILDI`,
+            lostDurationMs: 0
+          };
+        } else {
+          // O'ngda chiziq yo'q -> BLOKLANADI!
+          return {
+            ...analysis,
+            smoothedSteer: this.smoothedSteer,
+            visualSteer: this.visualSteer,
+            command: 'S',
+            guardBlocked: 'right',
+            statusLabel: "⚠️ O'NGDA YO'LAK YO'Q — BURILISH BLOKLANDI!",
+            lostDurationMs: 0
+          };
+        }
+      }
+
+      // 4D. Oldinga bosilgan: Chiziq bo'ylab harakatlanish!
+      if (intent.forward) {
+        if (!analysis.detected) {
+          return {
+            ...analysis,
+            smoothedSteer: 0,
+            visualSteer: 0,
+            command: 'S',
+            statusLabel: "YO'LAK KO'RINMAYDI — TO'XTATILDI",
+            lostDurationMs: nowMs - this.lastSeenAt
+          };
+        }
+
+        const absS = Math.abs(this.smoothedSteer);
+        let command: MecanumCommand = 'F';
+        let statusLabel = "OLDINGA CHIZIQ BO'YLAB (F)";
+
+        if (absS >= cfg.spinThreshold) {
+          command = this.smoothedSteer < 0 ? 'L' : 'R';
+          statusLabel = this.smoothedSteer < 0 ? "CHIZIQ: KESKIN CHAP (L)" : "CHIZIQ: KESKIN O'NG (R)";
+        } else if (absS >= cfg.curveDeadband) {
+          command = this.smoothedSteer < 0 ? 'G' : 'I';
+          statusLabel = this.smoothedSteer < 0 ? "CHIZIQ: CHAPGA YOY (G)" : "CHIZIQ: O'NGGA YOY (I)";
+        }
+
+        if (analysis.tJunctionFiltered) {
+          statusLabel += ' • T-FILTER';
+        }
+
+        return {
+          ...analysis,
+          smoothedSteer: this.smoothedSteer,
+          visualSteer: this.visualSteer,
+          command,
+          statusLabel,
+          lostDurationMs: 0
+        };
+      }
+
+      // 4E. Oldinga qo'yib yuborildi: "qo'yib yuborganda avtonom burilsin"
+      if (analysis.detected) {
+        const absSteer = Math.abs(analysis.rawSteer);
+        const absAngle = Math.abs(analysis.angleDeg);
+
+        // Agar yo'lak burilgan bo'lsa, robot joyida avtonom ravishda chiziqqa yuzlanadi
+        if (absSteer >= 0.16 || absAngle >= 8) {
+          const steerLeft = (analysis.rawSteer < -0.16 || analysis.angleDeg < -8);
+          const alignCmd: MecanumCommand = steerLeft
+            ? (cfg.invertSteering ? 'R' : 'L')
+            : (cfg.invertSteering ? 'L' : 'R');
+
+          return {
+            ...analysis,
+            smoothedSteer: this.smoothedSteer,
+            visualSteer: this.visualSteer,
+            command: alignCmd,
+            autoAligning: true,
+            statusLabel: `AVTONOM BURILISH (${alignCmd}) — YO'LAKKA TO'G'IRLANMOQDA`,
+            lostDurationMs: 0
+          };
+        }
+
+        // Chiziqqa to'g'irlandi -> to'xtab turadi
+        return {
+          ...analysis,
+          smoothedSteer: this.smoothedSteer,
+          visualSteer: this.visualSteer,
+          command: 'S',
+          autoAligning: false,
+          statusLabel: "YO'LAKKA TO'G'IRLANDI — TAYYOR (STOP)",
+          lostDurationMs: 0
+        };
+      }
+
+      return {
+        ...analysis,
+        smoothedSteer: 0,
+        visualSteer: 0,
+        command: 'S',
+        statusLabel: "KUTILMOQDA (STOP)",
+        lostDurationMs: nowMs - this.lastSeenAt
+      };
+    }
+
+    // =========================================================================
+    // 5. TO'LIQ AVTONOM REJIM (CONTINUOUS AUTO)
+    // =========================================================================
+    if (analysis.detected) {
       const absS = Math.abs(this.smoothedSteer);
       let command: MecanumCommand = 'F';
       let statusLabel = "TO'G'RIGA (F)";
@@ -444,11 +728,7 @@ export class LineFollowerController {
       };
     }
 
-    // Chiziq ko'rinmay qoldi
     const lostDurationMs = this.lastSeenAt > 0 ? Math.max(0, nowMs - this.lastSeenAt) : cfg.lostStopMs;
-    this.smoothedSteer *= 0.6;
-    this.visualSteer *= 0.6;
-
     if (lostDurationMs >= cfg.lostStopMs || !this.lastDetected) {
       this.lastDetected = false;
       this.smoothedSteer = 0;
@@ -463,7 +743,6 @@ export class LineFollowerController {
       };
     }
 
-    // Qisqa (<350 ms) porlash paytida oxirgi yo'nalish bo'yicha ehtiyotkor ushlash
     const absS = Math.abs(this.smoothedSteer);
     const holdCmd: MecanumCommand =
       absS >= cfg.spinThreshold ? (this.smoothedSteer < 0 ? 'L' : 'R') : absS >= cfg.curveDeadband ? (this.smoothedSteer < 0 ? 'G' : 'I') : 'F';
@@ -478,6 +757,147 @@ export class LineFollowerController {
     };
   }
 }
+
+/**
+ * Singleton xizmat: butun ilovada Taktil Chiziq avtopilotining holatini sinxronlashtiradi.
+ */
+export class LineFollowerService {
+  private enabled = false;
+  private sending = false;
+  private config: LineFollowerConfig = loadLineFollowerConfig();
+  private intent: UserDriveIntent = { ...DEFAULT_DRIVE_INTENT };
+  private lastStep: LineControlStep | null = null;
+  private readonly listeners = new Set<(step: LineControlStep | null) => void>();
+
+  isEnabled(): boolean {
+    return this.enabled;
+  }
+
+  setEnabled(val: boolean): void {
+    this.enabled = val;
+    if (!val) {
+      this.intent = { ...DEFAULT_DRIVE_INTENT };
+      this.lastStep = null;
+    }
+    this.notify();
+  }
+
+  isSending(): boolean {
+    return this.sending;
+  }
+
+  setSending(val: boolean): void {
+    this.sending = val;
+  }
+
+  getConfig(): LineFollowerConfig {
+    return this.config;
+  }
+
+  updateConfig(patch: Partial<LineFollowerConfig>): void {
+    this.config = { ...this.config, ...patch };
+    saveLineFollowerConfig(this.config);
+  }
+
+  getUserIntent(): UserDriveIntent {
+    return this.intent;
+  }
+
+  setUserIntent(patch: Partial<UserDriveIntent>): void {
+    this.intent = { ...this.intent, ...patch };
+  }
+
+  getStep(): LineControlStep | null {
+    return this.lastStep;
+  }
+
+  setStep(step: LineControlStep | null): void {
+    this.lastStep = step;
+    this.notify();
+  }
+
+  /**
+   * Qo'lda kelgan buyruqni tekshiradi:
+   * Agar chiziq bo'lmagan tomonga burilish bo'lsa -> bloklaydi!
+   */
+  filterUserCommand(cmd: MecanumCommand): {
+    allowed: boolean;
+    command: MecanumCommand;
+    reason: string;
+    guardBlocked?: 'left' | 'right' | null;
+  } {
+    if (!this.enabled || this.config.driveMode !== 'assisted') {
+      return { allowed: true, command: cmd, reason: 'OK' };
+    }
+
+    if (cmd === 'L') {
+      const allowed = canTurnLeftOnLine(this.lastStep);
+      if (!allowed) {
+        return {
+          allowed: false,
+          command: 'S',
+          guardBlocked: 'left',
+          reason: "⚠️ Chapda taktil yo'lak yo'q — burilish bloklandi!"
+        };
+      }
+      return { allowed: true, command: 'L', reason: 'Chapda yo‘lak bor' };
+    }
+
+    if (cmd === 'R') {
+      const allowed = canTurnRightOnLine(this.lastStep);
+      if (!allowed) {
+        return {
+          allowed: false,
+          command: 'S',
+          guardBlocked: 'right',
+          reason: "⚠️ O'ngda taktil yo'lak yo'q — burilish bloklandi!"
+        };
+      }
+      return { allowed: true, command: 'R', reason: 'O‘ngda yo‘lak bor' };
+    }
+
+    if (cmd === 'F') {
+      if (!this.lastStep || !this.lastStep.detected) {
+        return {
+          allowed: false,
+          command: 'S',
+          reason: "⚠️ Yo'lak aniqlanmadi — to'xtatildi!"
+        };
+      }
+      const absS = Math.abs(this.lastStep.visualSteer || this.lastStep.rawSteer);
+      let steerCmd: MecanumCommand = 'F';
+      if (absS >= this.config.spinThreshold) {
+        steerCmd = this.lastStep.rawSteer < 0
+          ? (this.config.invertSteering ? 'R' : 'L')
+          : (this.config.invertSteering ? 'L' : 'R');
+      } else if (absS >= this.config.curveDeadband) {
+        steerCmd = this.lastStep.rawSteer < 0
+          ? (this.config.invertSteering ? 'I' : 'G')
+          : (this.config.invertSteering ? 'G' : 'I');
+      }
+      return {
+        allowed: true,
+        command: steerCmd,
+        reason: `Chiziq bo'ylab (${steerCmd})`
+      };
+    }
+
+    return { allowed: true, command: cmd, reason: 'OK' };
+  }
+
+  subscribe(cb: (step: LineControlStep | null) => void): () => void {
+    this.listeners.add(cb);
+    return () => this.listeners.delete(cb);
+  }
+
+  private notify(): void {
+    for (const cb of this.listeners) {
+      cb(this.lastStep);
+    }
+  }
+}
+
+export const lineFollowerService = new LineFollowerService();
 
 /**
  * Kamera ustidagi shaffof canvas ga aniqlangan sariq yo'lak, o'q va rul vektorini chizadi.
@@ -526,11 +946,15 @@ export function drawLineFollowerOverlay(
     ctx.closePath();
     ctx.fillStyle = blocked
       ? 'rgba(255, 42, 42, 0.22)'
+      : step.guardBlocked
+      ? 'rgba(239, 68, 68, 0.28)'
+      : step.autoAligning
+      ? 'rgba(6, 182, 212, 0.25)'
       : step.tJunctionFiltered
       ? 'rgba(168, 85, 247, 0.22)'
       : 'rgba(16, 185, 129, 0.20)';
     ctx.fill();
-    ctx.strokeStyle = blocked ? '#ff4d4f' : '#22c55e';
+    ctx.strokeStyle = blocked ? '#ff4d4f' : step.guardBlocked ? '#ef4444' : '#22c55e';
     ctx.lineWidth = 2;
     ctx.stroke();
 
@@ -576,6 +1000,37 @@ export function drawLineFollowerOverlay(
     ctx.beginPath();
     ctx.arc(ex, ey, 6, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
+  }
+
+  // 4. Burilish bloklanganda ogohlantirish belgisi
+  if (step.guardBlocked) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(239, 68, 68, 0.9)';
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    const bx = step.guardBlocked === 'left' ? 20 : width - 140;
+    const by = height * 0.5;
+    ctx.fillRect(bx, by - 16, 120, 32);
+    ctx.strokeRect(bx, by - 16, 120, 32);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(step.guardBlocked === 'left' ? "🚫 CHAP BLOK" : "🚫 O'NG BLOK", bx + 60, by);
+    ctx.restore();
+  }
+
+  // 5. Avtonom to'g'irlanish belgisi
+  if (step.autoAligning) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(6, 182, 212, 0.85)';
+    ctx.fillRect(centerX - 80, height * 0.12, 160, 24);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('🔄 AVTONOM BURILISH', centerX, height * 0.12 + 12);
     ctx.restore();
   }
 }

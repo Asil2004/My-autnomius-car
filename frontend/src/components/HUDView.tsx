@@ -18,6 +18,7 @@ import {
   analyzeLineFrame,
   drawLineFollowerOverlay,
   LineFollowerController,
+  lineFollowerService,
   loadLineFollowerConfig,
   saveLineFollowerConfig,
   type LineColorPreset,
@@ -1384,6 +1385,7 @@ export const HUDView: React.FC = () => {
     setLineConfig((prev) => {
       const next = { ...prev, ...patch };
       saveLineFollowerConfig(next);
+      lineFollowerService.updateConfig(next);
       return next;
     });
   }, []);
@@ -1407,6 +1409,7 @@ export const HUDView: React.FC = () => {
     setActiveCam('face');
     setLineFollowEnabled(true);
     lineFollowRef.current.enabled = true;
+    lineFollowerService.setEnabled(true);
     lineControllerRef.current.reset();
     addLog('AI', 'info', `Yo'lak rasmi test uchun yuklandi (${file.name}). Motorlar o'chirilgan (xavfsiz sinov).`);
   }, [addLog]);
@@ -1415,12 +1418,14 @@ export const HUDView: React.FC = () => {
     if (!lineFollowRef.current.enabled) return;
     lineFollowRef.current.enabled = false;
     setLineFollowEnabled(false);
+    lineFollowerService.setEnabled(false);
     if (sendStop) {
       sendMecanumCommand('S');
     }
     lastLineCmdRef.current = null;
     lineControllerRef.current.reset();
     setLineStep(null);
+    lineFollowerService.setStep(null);
     addLog('AI', 'info', reason ?? "Taktil chiziq avtopiloti to'xtatildi.");
   }, [sendMecanumCommand, addLog]);
 
@@ -1434,12 +1439,21 @@ export const HUDView: React.FC = () => {
     lastLineSentAtRef.current = 0;
     lineFollowRef.current.enabled = true;
     setLineFollowEnabled(true);
+    lineFollowerService.setEnabled(true);
+    lineFollowerService.updateConfig(lineConfig);
+    const mode = lineConfig.driveMode ?? 'assisted';
+    const modeLabel =
+      mode === 'assisted'
+        ? "YORDAMCHI REJIM (Oldingani bosganda yuradi, burilish himoyasi faol)"
+        : mode === 'auto'
+        ? "TO'LIQ AVTONOM (Doimiy harakat)"
+        : "FAQAT SINOV (Motorsiz)";
     addLog(
       'AI',
       'success',
-      `Taktil chiziq kuzatish yoqildi (${lineFollowRef.current.drive && !lineFollowRef.current.hasPhoto ? 'AVTO YURISH' : 'FAQAT TEST'}).`
+      `Taktil chiziq kuzatish yoqildi: ${modeLabel}.`
     );
-  }, [stopLineFollow, addLog]);
+  }, [stopLineFollow, addLog, lineConfig]);
 
   // Sahifadan chiqqanda yoki Space bosilganda chiziq avtopiloti darhol to'xtatiladi
   useEffect(() => {
@@ -1587,7 +1601,9 @@ export const HUDView: React.FC = () => {
       const now = Date.now();
       const lidarInfo = lidarSerialService.getObstacleInfo();
       const blocked = cur.isBlocked || lidarInfo.isBlocked;
-      const step = lineControllerRef.current.step(analysis, cur.config, now, blocked);
+      const intent = lineFollowerService.getUserIntent();
+      const step = lineControllerRef.current.step(analysis, cur.config, intent, now, blocked);
+      lineFollowerService.setStep(step);
 
       if (targetCanvas && drawRect) {
         const ctx = targetCanvas.getContext('2d');
@@ -1606,12 +1622,26 @@ export const HUDView: React.FC = () => {
         setLineStep(step);
       }
 
-      // Motor buyruqlari faqat Avto Yurish yoniq va statik sinov rasmi yuklanmaganida yuboriladi
-      if (cur.enabled && cur.drive && !cur.hasPhoto) {
-        if (cmdChanged || now - lastLineSentAtRef.current >= 200) {
+      // Motor buyruqlari:
+      // - auto: doimiy harakat qiladi
+      // - assisted: foydalanuvchi oldinga bosib turganda chiziq bo'ylab yuradi,
+      //             qo'yib yuborganda avtonom to'g'irlanadi,
+      //             chapga/o'ngga chiziq bo'lmasa burilish bloklanadi
+      // - test: faqat vizual kamera tahlili, motorlar o'chirilgan
+      const canDrive = cur.enabled && cur.drive && !cur.hasPhoto && cur.config.driveMode !== 'test';
+      if (canDrive) {
+        if (cmdChanged || (step.command !== 'S' && now - lastLineSentAtRef.current >= 180)) {
           lastLineCmdRef.current = step.command;
           lastLineSentAtRef.current = now;
+          lineFollowerService.setSending(true);
           sendMecanumCommand(step.command);
+          lineFollowerService.setSending(false);
+        } else if (step.command === 'S' && lastLineCmdRef.current !== 'S') {
+          lastLineCmdRef.current = 'S';
+          lastLineSentAtRef.current = now;
+          lineFollowerService.setSending(true);
+          sendMecanumCommand('S');
+          lineFollowerService.setSending(false);
         }
       }
     };
@@ -1797,8 +1827,31 @@ export const HUDView: React.FC = () => {
     sendJoystickCoordinates(normX, normY);
 
     if (clampedDist < 12) {
+      if (lineFollowRef.current.enabled && lineConfig.driveMode === 'assisted') {
+        lineFollowerService.setUserIntent({
+          forward: false,
+          turnLeft: false,
+          turnRight: false,
+          reverse: false,
+          emergencyStop: false
+        });
+      }
       sendMecanumCommand('S');
       return;
+    }
+
+    if (lineFollowRef.current.enabled && lineConfig.driveMode === 'assisted') {
+      const fwd = normY > 20;
+      const back = normY < -20;
+      const left = normX < -30;
+      const right = normX > 30;
+      lineFollowerService.setUserIntent({
+        forward: fwd,
+        turnLeft: left,
+        turnRight: right,
+        reverse: back,
+        emergencyStop: false
+      });
     }
 
     const deg = (angle * 180) / Math.PI;
@@ -1823,7 +1876,9 @@ export const HUDView: React.FC = () => {
   };
 
   const handleDriveDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    stopLineFollow(false, "Qo'lda joystik boshqaruvi olindi.");
+    if (!lineFollowRef.current.enabled || lineConfig.driveMode !== 'assisted') {
+      stopLineFollow(false, "Qo'lda joystik boshqaruvi olindi.");
+    }
     e.currentTarget.setPointerCapture(e.pointerId);
     setIsDriving(true);
     updateDrive(e);
@@ -1836,14 +1891,50 @@ export const HUDView: React.FC = () => {
     setIsDriving(false);
     setDriveKnob({ x: 0, y: 0 });
     sendJoystickCoordinates(0, 0);
+    if (lineFollowRef.current.enabled && lineConfig.driveMode === 'assisted') {
+      lineFollowerService.setUserIntent({
+        forward: false,
+        turnLeft: false,
+        turnRight: false,
+        reverse: false,
+        emergencyStop: false
+      });
+    }
     sendMecanumCommand('S');
   };
 
   const sendManualMecanum = (cmd: MecanumCommand) => {
     if (lineFollowRef.current.enabled) {
-      stopLineFollow(false, "Qo'lda tugma boshqaruvi olindi.");
+      if (lineConfig.driveMode === 'assisted') {
+        if (cmd === 'F') {
+          lineFollowerService.setUserIntent({ forward: true, turnLeft: false, turnRight: false, reverse: false, emergencyStop: false });
+        } else if (cmd === 'L') {
+          lineFollowerService.setUserIntent({ turnLeft: true, forward: false, turnRight: false, reverse: false, emergencyStop: false });
+        } else if (cmd === 'R') {
+          lineFollowerService.setUserIntent({ turnRight: true, forward: false, turnLeft: false, reverse: false, emergencyStop: false });
+        } else if (cmd === 'B') {
+          lineFollowerService.setUserIntent({ reverse: true, forward: false, turnLeft: false, turnRight: false, emergencyStop: false });
+        } else if (cmd === 'S') {
+          lineFollowerService.setUserIntent({ forward: false, turnLeft: false, turnRight: false, reverse: false, emergencyStop: true });
+        }
+      } else {
+        stopLineFollow(false, "Qo'lda tugma boshqaruvi olindi.");
+      }
     }
     sendMecanumCommand(cmd);
+  };
+
+  const releaseManualMecanum = () => {
+    if (lineFollowRef.current.enabled && lineConfig.driveMode === 'assisted') {
+      lineFollowerService.setUserIntent({
+        forward: false,
+        turnLeft: false,
+        turnRight: false,
+        reverse: false,
+        emergencyStop: false
+      });
+    }
+    sendMecanumCommand('S');
   };
 
   // 2. PTZ Kamera Joystigi (faqat PTZ kamera kattalashtirilganda chiqadi)
@@ -2728,6 +2819,19 @@ export const HUDView: React.FC = () => {
                 <span className={`w-2 h-2 rounded-full ${lineStep?.detected ? 'bg-police-green animate-pulse' : 'bg-police-red animate-ping'}`} />
                 TAKTIL YO&apos;LAK
               </span>
+              <span className="px-1.5 py-0.5 rounded bg-tactical-800 text-[10px] text-slate-300 font-bold border border-tactical-700">
+                {lineConfig.driveMode === 'assisted' ? '🛡️ YORDAMCHI' : lineConfig.driveMode === 'auto' ? '🤖 TO\'LIQ AVTO' : '🔬 SINOV'}
+              </span>
+              {lineStep?.guardBlocked && (
+                <span className="px-2 py-0.5 rounded bg-police-red/35 border border-police-red text-white font-extrabold text-[11px] animate-pulse">
+                  🚫 {lineStep.guardBlocked === 'left' ? "CHAPDA YO'LAK YO'Q (BLOK)" : "O'NGDA YO'LAK YO'Q (BLOK)"}
+                </span>
+              )}
+              {lineStep?.autoAligning && (
+                <span className="px-2 py-0.5 rounded bg-cyan-500/35 border border-cyan-400 text-cyan-200 font-extrabold text-[11px] animate-pulse">
+                  🔄 AVTONOM BURILISH
+                </span>
+              )}
               <span className="px-1.5 py-0.5 rounded bg-tactical-850 border border-tactical-700 text-slate-200">
                 {lineStep ? lineStep.statusLabel : 'Kadr kutilmoqda...'}
               </span>
@@ -2894,9 +2998,9 @@ export const HUDView: React.FC = () => {
               <button
                 type="button"
                 onPointerDown={(e) => { e.preventDefault(); sendManualMecanum('G'); }}
-                onPointerUp={(e) => { e.preventDefault(); sendMecanumCommand('S'); }}
-                onPointerLeave={() => sendMecanumCommand('S')}
-                onPointerCancel={() => sendMecanumCommand('S')}
+                onPointerUp={(e) => { e.preventDefault(); releaseManualMecanum(); }}
+                onPointerLeave={releaseManualMecanum}
+                onPointerCancel={releaseManualMecanum}
                 title="Oldinga-chapga egri burilish (G)"
                 className="py-1.5 px-1 rounded-lg border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 active:bg-police-cyan/30 text-police-cyan text-xs font-bold font-mono flex flex-col items-center justify-center select-none touch-none"
               >
@@ -2905,9 +3009,9 @@ export const HUDView: React.FC = () => {
               <button
                 type="button"
                 onPointerDown={(e) => { e.preventDefault(); sendManualMecanum('F'); }}
-                onPointerUp={(e) => { e.preventDefault(); sendMecanumCommand('S'); }}
-                onPointerLeave={() => sendMecanumCommand('S')}
-                onPointerCancel={() => sendMecanumCommand('S')}
+                onPointerUp={(e) => { e.preventDefault(); releaseManualMecanum(); }}
+                onPointerLeave={releaseManualMecanum}
+                onPointerCancel={releaseManualMecanum}
                 title="To'g'ri oldinga (W / F)"
                 className="py-1.5 px-1 rounded-lg border border-police-cyan/40 bg-tactical-850 hover:bg-police-blue/40 active:bg-police-cyan/30 text-white text-xs font-bold font-mono flex flex-col items-center justify-center select-none touch-none shadow-[0_0_10px_rgba(0,229,255,0.15)]"
               >
@@ -2916,9 +3020,9 @@ export const HUDView: React.FC = () => {
               <button
                 type="button"
                 onPointerDown={(e) => { e.preventDefault(); sendManualMecanum('I'); }}
-                onPointerUp={(e) => { e.preventDefault(); sendMecanumCommand('S'); }}
-                onPointerLeave={() => sendMecanumCommand('S')}
-                onPointerCancel={() => sendMecanumCommand('S')}
+                onPointerUp={(e) => { e.preventDefault(); releaseManualMecanum(); }}
+                onPointerLeave={releaseManualMecanum}
+                onPointerCancel={releaseManualMecanum}
                 title="Oldinga-o'ngga egri burilish (I)"
                 className="py-1.5 px-1 rounded-lg border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 active:bg-police-cyan/30 text-police-cyan text-xs font-bold font-mono flex flex-col items-center justify-center select-none touch-none"
               >
@@ -2930,9 +3034,9 @@ export const HUDView: React.FC = () => {
               <button
                 type="button"
                 onPointerDown={(e) => { e.preventDefault(); sendManualMecanum('L'); }}
-                onPointerUp={(e) => { e.preventDefault(); sendMecanumCommand('S'); }}
-                onPointerLeave={() => sendMecanumCommand('S')}
-                onPointerCancel={() => sendMecanumCommand('S')}
+                onPointerUp={(e) => { e.preventDefault(); releaseManualMecanum(); }}
+                onPointerLeave={releaseManualMecanum}
+                onPointerCancel={releaseManualMecanum}
                 title="Chapga burilish (Chap 50%, O'ng 100%) (A / L)"
                 className="py-1.5 px-1 rounded-lg border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 active:bg-police-cyan/30 text-white text-xs font-bold font-mono flex items-center justify-center select-none touch-none"
               >
@@ -2949,9 +3053,9 @@ export const HUDView: React.FC = () => {
               <button
                 type="button"
                 onPointerDown={(e) => { e.preventDefault(); sendManualMecanum('R'); }}
-                onPointerUp={(e) => { e.preventDefault(); sendMecanumCommand('S'); }}
-                onPointerLeave={() => sendMecanumCommand('S')}
-                onPointerCancel={() => sendMecanumCommand('S')}
+                onPointerUp={(e) => { e.preventDefault(); releaseManualMecanum(); }}
+                onPointerLeave={releaseManualMecanum}
+                onPointerCancel={releaseManualMecanum}
                 title="O'ngga burilish (Chap 100%, O'ng 50%) (D / R)"
                 className="py-1.5 px-1 rounded-lg border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 active:bg-police-cyan/30 text-white text-xs font-bold font-mono flex items-center justify-center select-none touch-none"
               >
@@ -2963,9 +3067,9 @@ export const HUDView: React.FC = () => {
               <button
                 type="button"
                 onPointerDown={(e) => { e.preventDefault(); sendManualMecanum('H'); }}
-                onPointerUp={(e) => { e.preventDefault(); sendMecanumCommand('S'); }}
-                onPointerLeave={() => sendMecanumCommand('S')}
-                onPointerCancel={() => sendMecanumCommand('S')}
+                onPointerUp={(e) => { e.preventDefault(); releaseManualMecanum(); }}
+                onPointerLeave={releaseManualMecanum}
+                onPointerCancel={releaseManualMecanum}
                 title="Orqaga-chapga burilish (H)"
                 className="py-1.5 px-1 rounded-lg border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 active:bg-police-cyan/30 text-slate-300 text-xs font-bold font-mono flex flex-col items-center justify-center select-none touch-none"
               >
@@ -2974,9 +3078,9 @@ export const HUDView: React.FC = () => {
               <button
                 type="button"
                 onPointerDown={(e) => { e.preventDefault(); sendManualMecanum('B'); }}
-                onPointerUp={(e) => { e.preventDefault(); sendMecanumCommand('S'); }}
-                onPointerLeave={() => sendMecanumCommand('S')}
-                onPointerCancel={() => sendMecanumCommand('S')}
+                onPointerUp={(e) => { e.preventDefault(); releaseManualMecanum(); }}
+                onPointerLeave={releaseManualMecanum}
+                onPointerCancel={releaseManualMecanum}
                 title="To'g'ri orqaga (S / B)"
                 className="py-1.5 px-1 rounded-lg border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 active:bg-police-cyan/30 text-white text-xs font-bold font-mono flex items-center justify-center select-none touch-none"
               >
@@ -2985,9 +3089,9 @@ export const HUDView: React.FC = () => {
               <button
                 type="button"
                 onPointerDown={(e) => { e.preventDefault(); sendManualMecanum('J'); }}
-                onPointerUp={(e) => { e.preventDefault(); sendMecanumCommand('S'); }}
-                onPointerLeave={() => sendMecanumCommand('S')}
-                onPointerCancel={() => sendMecanumCommand('S')}
+                onPointerUp={(e) => { e.preventDefault(); releaseManualMecanum(); }}
+                onPointerLeave={releaseManualMecanum}
+                onPointerCancel={releaseManualMecanum}
                 title="Orqaga-o'ngga burilish (J)"
                 className="py-1.5 px-1 rounded-lg border border-tactical-700 bg-tactical-850 hover:bg-tactical-800 active:bg-police-cyan/30 text-slate-300 text-xs font-bold font-mono flex flex-col items-center justify-center select-none touch-none"
               >
@@ -3236,6 +3340,46 @@ export const HUDView: React.FC = () => {
                   </button>
                 </div>
 
+                {/* REJIM TANLASH: Yordamchi (tavsiya) | To'liq avtonom | Sinov */}
+                <label className="flex flex-col gap-1 text-[11px]">
+                  <span className="text-slate-400 font-semibold">Boshqaruv rejimi:</span>
+                  <div className="grid grid-cols-3 gap-1">
+                    <button
+                      type="button"
+                      onClick={() => updateLineConfig({ driveMode: 'assisted' })}
+                      className={`px-1.5 py-1 rounded border text-[10px] font-bold text-center leading-tight transition-colors ${
+                        lineConfig.driveMode === 'assisted'
+                          ? 'bg-police-green/25 border-police-green text-police-green shadow-[0_0_8px_rgba(34,197,94,0.3)]'
+                          : 'bg-tactical-850 border-tactical-700 text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      🛡️ Yordamchi<br /><span className="text-[8px] font-normal opacity-80">(Gaz + Himoya)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateLineConfig({ driveMode: 'auto' })}
+                      className={`px-1.5 py-1 rounded border text-[10px] font-bold text-center leading-tight transition-colors ${
+                        lineConfig.driveMode === 'auto'
+                          ? 'bg-amber-500/25 border-amber-400 text-amber-300 shadow-[0_0_8px_rgba(251,191,36,0.3)]'
+                          : 'bg-tactical-850 border-tactical-700 text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      🤖 Avto<br /><span className="text-[8px] font-normal opacity-80">(Doimiy)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateLineConfig({ driveMode: 'test' })}
+                      className={`px-1.5 py-1 rounded border text-[10px] font-bold text-center leading-tight transition-colors ${
+                        lineConfig.driveMode === 'test'
+                          ? 'bg-police-cyan/25 border-police-cyan text-police-cyan shadow-[0_0_8px_rgba(6,182,212,0.3)]'
+                          : 'bg-tactical-850 border-tactical-700 text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      🔬 Sinov<br /><span className="text-[8px] font-normal opacity-80">(Motorsiz)</span>
+                    </button>
+                  </div>
+                </label>
+
                 <div className="grid grid-cols-2 gap-1.5">
                   <button
                     type="button"
@@ -3246,7 +3390,7 @@ export const HUDView: React.FC = () => {
                         : 'bg-tactical-850 border-tactical-700 text-slate-300'
                     }`}
                   >
-                    {lineFollowDrive ? 'Motor: AVTO YURISH' : 'Motor: FAQAT SINOV'}
+                    Motor: {lineFollowDrive ? 'Yoqilgan' : "O'chirilgan"}
                   </button>
                   <button
                     type="button"

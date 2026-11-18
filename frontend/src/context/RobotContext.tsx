@@ -30,6 +30,7 @@ import { navigationService } from '../services/navigationService';
 import { autopilotService } from '../services/autopilotService';
 import { esp32Service } from '../services/esp32Service';
 import { lidarSerialService } from '../services/lidarSerialService';
+import { lineFollowerService } from '../services/lineFollowerService';
 
 export interface LogMessage {
   id: string;
@@ -680,6 +681,25 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (!autopilotService.isSending() && autopilotService.getState().active) {
       autopilotService.stop('Qo‘lda boshqaruv: avtopilot o‘chirildi');
     }
+
+    // Taktil chiziq yordamchi rejimida qo'lda chapga/o'ngga burilish xavfsizlik tekshiruvi:
+    if (lineFollowerService.isEnabled() && !lineFollowerService.isSending()) {
+      const check = lineFollowerService.filterUserCommand(cmd);
+      if (!check.allowed) {
+        tacticalAudio.playObstacleAlert();
+        addLog('AI', 'warn', check.reason);
+        setLastCommand('S');
+        setIsMoving(false);
+        currentCmdRef.current = 'S';
+        if (heartbeatRef.current) {
+          clearInterval(heartbeatRef.current);
+          heartbeatRef.current = null;
+        }
+        sendRawToESP32('S');
+        return;
+      }
+      cmd = check.command;
+    }
     setLastCommand(cmd);
     setIsMoving(cmd !== 'S');
 
@@ -785,6 +805,18 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (['W', 'A', 'S', 'D', 'Q', 'E', 'ARROWUP', 'ARROWDOWN', 'ARROWLEFT', 'ARROWRIGHT'].includes(key)) {
         if (pressedKeysRef.current[key]) return;
         pressedKeysRef.current[key] = true;
+        const p = pressedKeysRef.current;
+        const fwd = !!(p['W'] || p['ARROWUP']);
+        const back = !!(p['S'] || p['ARROWDOWN']);
+        const left = !!(p['A'] || p['ARROWLEFT']);
+        const right = !!(p['D'] || p['ARROWRIGHT']);
+        lineFollowerService.setUserIntent({
+          forward: fwd,
+          turnLeft: left,
+          turnRight: right,
+          reverse: back,
+          emergencyStop: false
+        });
         const nextCmd = evaluateKeys();
         if (nextCmd !== currentCmdRef.current) {
           sendMecanumCommand(nextCmd);
@@ -792,6 +824,13 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       } else if (key === ' ' || key === 'ESCAPE') {
         e.preventDefault();
         pressedKeysRef.current = {};
+        lineFollowerService.setUserIntent({
+          forward: false,
+          turnLeft: false,
+          turnRight: false,
+          reverse: false,
+          emergencyStop: true
+        });
         sendMecanumCommand('S');
       } else if (key === '1') setSpeedLevel(1);
       else if (key === '2') setSpeedLevel(2);
@@ -804,6 +843,18 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const key = e.key.toUpperCase();
       if (['W', 'A', 'S', 'D', 'Q', 'E', 'ARROWUP', 'ARROWDOWN', 'ARROWLEFT', 'ARROWRIGHT'].includes(key)) {
         pressedKeysRef.current[key] = false;
+        const p = pressedKeysRef.current;
+        const fwd = !!(p['W'] || p['ARROWUP']);
+        const back = !!(p['S'] || p['ARROWDOWN']);
+        const left = !!(p['A'] || p['ARROWLEFT']);
+        const right = !!(p['D'] || p['ARROWRIGHT']);
+        lineFollowerService.setUserIntent({
+          forward: fwd,
+          turnLeft: left,
+          turnRight: right,
+          reverse: back,
+          emergencyStop: false
+        });
         const nextCmd = evaluateKeys();
         if (nextCmd !== currentCmdRef.current) {
           sendMecanumCommand(nextCmd);
@@ -813,6 +864,13 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     const handleBlur = () => {
       pressedKeysRef.current = {};
+      lineFollowerService.setUserIntent({
+        forward: false,
+        turnLeft: false,
+        turnRight: false,
+        reverse: false,
+        emergencyStop: false
+      });
       if (currentCmdRef.current !== 'S') {
         sendMecanumCommand('S');
       }

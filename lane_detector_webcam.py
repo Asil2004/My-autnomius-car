@@ -69,6 +69,7 @@ class LaneDetector:
         prev_c = None
         prev_w = None
         t_junc = False
+        t_junc_side = None
 
         for i in range(n_bands - 1, -1, -1):
             y0, y1 = int(edges[i]), max(int(edges[i]) + 1, int(edges[i + 1]))
@@ -113,6 +114,9 @@ class LaneDetector:
             if prev_w is not None and bw > w * 0.45 and bw > prev_w * 1.45:
                 t_junc = True
                 clamped = True
+                r_exp = x1 - prev_c
+                l_exp = prev_c - x0
+                t_junc_side = 'right' if r_exp >= l_exp else 'left'
                 lo = x0 + prev_w / 2.0
                 hi = x1 - prev_w / 2.0
                 cx = float(np.clip(prev_c, lo, hi)) if lo <= hi else prev_c
@@ -142,6 +146,7 @@ class LaneDetector:
                 "angle_deg": 0.0,
                 "raw_steer": 0.0,
                 "t_junction": t_junc,
+                "t_junction_side": t_junc_side,
                 "command": "S",
                 "bands": bands,
                 "mask_u8": mask_u8,
@@ -176,10 +181,97 @@ class LaneDetector:
             "angle_deg": angle_deg,
             "raw_steer": raw_steer,
             "t_junction": t_junc,
+            "t_junction_side": t_junc_side,
             "command": cmd,
             "bands": bands,
             "mask_u8": mask_u8,
         }
+
+    @staticmethod
+    def can_turn_left(res):
+        """Foydalanuvchi chapga burila oladimi (chapda yo'lak bormi)?"""
+        if not res or not res.get("detected"):
+            return False
+        return (
+            res.get("offset_norm", 0.0) <= -0.12 or
+            res.get("angle_deg", 0.0) <= -8.0 or
+            res.get("t_junction_side") == "left"
+        )
+
+    @staticmethod
+    def can_turn_right(res):
+        """Foydalanuvchi o'ngga burila oladimi (o'ngda yo'lak yoki shox bormi)?"""
+        if not res or not res.get("detected"):
+            return False
+        return (
+            res.get("offset_norm", 0.0) >= 0.12 or
+            res.get("angle_deg", 0.0) >= 8.0 or
+            res.get("t_junction_side") == "right" or
+            res.get("t_junction", False)
+        )
+
+    def step_assisted(self, res, user_intent, invert_steering=False):
+        """
+        Yordamchi (assisted) boshqaruv qadami:
+          - Oldinga (forward=True): Faqat chiziq bo'ylab harakatlanadi (F/G/I/L/R).
+          - Oldinga qo'yib yuborilganda: Yo'lakka avtonom to'g'irlanadi (L/R), to'g'ri bo'lsa S.
+          - Chapga burilish: Agar chapda yo'lak bo'lmasa -> BLOKLANADI (S, guard_blocked='left').
+          - O'ngga burilish: Agar o'ngda yo'lak bo'lmasa -> BLOKLANADI (S, guard_blocked='right').
+        """
+        if user_intent.get("emergency_stop"):
+            return "S", {"status": "STOP (Tugatildi)", "guard_blocked": None, "auto_aligning": False}
+
+        if user_intent.get("reverse"):
+            return "B", {"status": "ORQAGA HARAKAT (B)", "guard_blocked": None, "auto_aligning": False}
+
+        if user_intent.get("turn_left") and not user_intent.get("forward"):
+            if self.can_turn_left(res):
+                cmd = "R" if invert_steering else "L"
+                return cmd, {"status": f"CHAPGA BURILISH ({cmd}) — RUXSAT ETILDI", "guard_blocked": None, "auto_aligning": False}
+            else:
+                return "S", {"status": "⚠️ CHAPDA YO'LAK YO'Q — BURILISH BLOKLANDI!", "guard_blocked": "left", "auto_aligning": False}
+
+        if user_intent.get("turn_right") and not user_intent.get("forward"):
+            if self.can_turn_right(res):
+                cmd = "L" if invert_steering else "R"
+                return cmd, {"status": f"O'NGGA BURILISH ({cmd}) — RUXSAT ETILDI", "guard_blocked": None, "auto_aligning": False}
+            else:
+                return "S", {"status": "⚠️ O'NGDA YO'LAK YO'Q — BURILISH BLOKLANDI!", "guard_blocked": "right", "auto_aligning": False}
+
+        if user_intent.get("forward"):
+            if not res or not res.get("detected"):
+                return "S", {"status": "YO'LAK KO'RINMAYDI — TO'XTATILDI", "guard_blocked": None, "auto_aligning": False}
+            raw_s = res.get("raw_steer", 0.0)
+            oriented_s = -raw_s if invert_steering else raw_s
+            abs_s = abs(oriented_s)
+            if abs_s >= 0.52:
+                cmd = "L" if oriented_s < 0 else "R"
+                dir_txt = "CHAP (L)" if oriented_s < 0 else "O'NG (R)"
+                status = f"CHIZIQ: KESKIN {dir_txt}"
+            elif abs_s >= 0.14:
+                cmd = "G" if oriented_s < 0 else "I"
+                dir_txt = "CHAPGA YOY (G)" if oriented_s < 0 else "O'NGGA YOY (I)"
+                status = f"CHIZIQ: {dir_txt}"
+            else:
+                cmd = "F"
+                status = "OLDINGA CHIZIQ BO'YLAB (F)"
+            return cmd, {"status": status, "guard_blocked": None, "auto_aligning": False}
+
+        # Oldinga qo'yib yuborildi: auto-align
+        if res and res.get("detected"):
+            raw_s = res.get("raw_steer", 0.0)
+            angle = res.get("angle_deg", 0.0)
+            if abs(raw_s) >= 0.16 or abs(angle) >= 8.0:
+                steer_left = (raw_s < -0.16 or angle < -8.0)
+                if invert_steering:
+                    align_cmd = "R" if steer_left else "L"
+                else:
+                    align_cmd = "L" if steer_left else "R"
+                return align_cmd, {"status": f"AVTONOM BURILISH ({align_cmd}) — YO'LAKKA TO'G'IRLANMOQDA", "guard_blocked": None, "auto_aligning": True}
+
+            return "S", {"status": "YO'LAKKA TO'G'IRLANDI — TAYYOR (STOP)", "guard_blocked": None, "auto_aligning": False}
+
+        return "S", {"status": "KUTILMOQDA (STOP)", "guard_blocked": None, "auto_aligning": False}
         
     def detect_edges(self, frame):
         """Kadrni HSV ga o'girish va yo'l chiziqlarining chegarasini (Canny) topish"""
