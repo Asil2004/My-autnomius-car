@@ -58,12 +58,11 @@ class CameraModule:
         self.lane_status = "YO'L QIDIRILMOQDA"
         self.line_found = False
         
-        # Odam / Yuz deteksiyasi
+        # Odam / Yuz deteksiyasi (sukut bo'yicha CPU yukini tejash uchun o'chiq, chunki Planshet buni ancha tez qiladi)
         self.detected_persons = []
         self.latest_alert = None
         self.face_cascade = None
-        if HAS_OPENCV:
-            self._init_face_detector()
+        self.enable_face_detection = False
         
         # Kamera drayverini ochish
         self.cap = None
@@ -252,15 +251,21 @@ class CameraModule:
                 frame = self._generate_synthetic_frame(sim_t)
 
             if frame is not None and HAS_OPENCV:
-                frame = self._process_lane(frame)
-                if fps_counter % 3 == 0:
-                    frame = self._process_faces(frame)
-                else:
-                    for p in self.detected_persons:
-                        b = p["box"]
-                        cv2.rectangle(frame, (b["x"], b["y"]), (b["x"] + b["w"], b["y"] + b["h"]), (0, 230, 118), 2)
+                # Faqat avtonom yo'lak rejimi yoqilgan bo'lsa yo'lni tahlil qilish
+                if self.auto_lane:
+                    frame = self._process_lane(frame)
+
+                # Agar maxsus yoqilgan bo'lsa yuzlarni aniqlash (aks holda CPU tejaladi)
+                if self.enable_face_detection and self.face_cascade is not None:
+                    if fps_counter % 5 == 0:
+                        frame = self._process_faces(frame)
+                    else:
+                        for p in self.detected_persons:
+                            b = p["box"]
+                            cv2.rectangle(frame, (b["x"], b["y"]), (b["x"] + b["w"], b["y"] + b["h"]), (0, 230, 118), 2)
+
                 frame = self._draw_hud_overlays(frame)
-                _, jpeg_buf = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+                _, jpeg_buf = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 65])
                 jpeg_bytes = jpeg_buf.tobytes()
             else:
                 jpeg_bytes = b""

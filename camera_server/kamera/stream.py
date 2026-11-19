@@ -12,9 +12,9 @@ import threading
 import time
 from typing import Iterator, Optional
 
-# RTSP'ni TCP orqali olish: UDP'da paketlar yo'qolib, oqim qotib qoladi.
-# (cv2 import qilinishidan oldin o'rnatilishi shart)
-os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp")
+# RTSP'ni TCP orqali olish va kesh/bufer tiqilishini oldini olish:
+# nobuffer va low_delay parametrlari RAM to'lib ketishi va qotib qolishini oldini oladi.
+os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay")
 
 import cv2  # noqa: E402
 
@@ -198,6 +198,12 @@ class CameraStream:
                 log.warning(self.last_error)
                 time.sleep(self.reconnect_delay)
                 continue
+
+            # RAM kesh to'lib qolmasligi va kechikish bo'lmasligi uchun bufer hajmini 1 kadr bilan cheklash
+            try:
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            except Exception:
+                pass
 
             self.connected = True
             self.last_error = None
