@@ -25,7 +25,7 @@ import {
   type LineControlStep,
   type LineFollowerConfig
 } from '../services/lineFollowerService';
-import { faceCameraSettings } from '../services/faceCameraSettings';
+import { faceCameraSettings, type PiWebcamStatus } from '../services/faceCameraSettings';
 import { camLinkSettings } from '../services/camLinkSettings';
 import {
   robotCamBroadcaster,
@@ -676,6 +676,41 @@ export const HUDView: React.FC = () => {
   const lastLineCmdRef = useRef<MecanumCommand | null>(null);
   const lastLineSentAtRef = useRef(0);
   const lastLineUiAtRef = useRef(0);
+  // Raspberry Pi 5 ga ulangan USB web-kamera (Frontal / Face ID / Taktil Yo'lak)
+  const [faceCamChoice, setFaceCamChoice] = useState(() => faceCameraSettings.get());
+  const [piWebcamBase, setPiWebcamBase] = useState(() => faceCameraSettings.getPiWebcamBase());
+  const [piWebcamStatus, setPiWebcamStatus] = useState<PiWebcamStatus>({ reachable: false, connected: false });
+  const [piWebcamNonce, setPiWebcamNonce] = useState(0);
+  const piWebcamImgRef = useRef<HTMLImageElement | null>(null);
+
+  useEffect(() => faceCameraSettings.subscribe(setFaceCamChoice), []);
+  useEffect(() => faceCameraSettings.subscribePiBase(setPiWebcamBase), []);
+  useEffect(() => {
+    if (faceCamChoice !== 'auto' && faceCamChoice !== 'pi-webcam') {
+      setPiWebcamStatus({ reachable: false, connected: false });
+      return;
+    }
+    let alive = true;
+    const poll = async () => {
+      const s = await faceCameraSettings.checkPiWebcam();
+      if (alive) setPiWebcamStatus(s);
+    };
+    void poll();
+    const id = window.setInterval(() => void poll(), 4000);
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+    };
+  }, [faceCamChoice, piWebcamBase]);
+
+  const piWebcamWanted =
+    faceCamChoice === 'pi-webcam' ||
+    (faceCamChoice === 'auto' &&
+      piWebcamStatus.connected &&
+      (isViewer ? remoteState.state !== 'live' : Boolean(cameraError || cameraLoading)));
+  const piWebcamStreamUrl = piWebcamWanted && piWebcamBase ? faceCameraSettings.piWebcamStreamUrl(piWebcamNonce) : '';
+  const piWebcamActive = Boolean(piWebcamWanted && piWebcamStatus.connected && piWebcamStreamUrl);
+
   const lineFollowRef = useRef({
     enabled: false,
     drive: true,
@@ -684,7 +719,8 @@ export const HUDView: React.FC = () => {
     mirror: false,
     activeCam: 'face' as CamId,
     isViewer: false,
-    hasPhoto: false
+    hasPhoto: false,
+    piWebcamActive: false
   });
   lineFollowRef.current = {
     enabled: lineFollowEnabled,
@@ -694,7 +730,8 @@ export const HUDView: React.FC = () => {
     mirror: mirrorVideo,
     activeCam,
     isViewer,
-    hasPhoto: Boolean(linePhotoUrl)
+    hasPhoto: Boolean(linePhotoUrl),
+    piWebcamActive
   };
 
   // NVR yozuviga odam ramkalari ham tushishi uchun: kompozitor har kadrda shu ref'dan o'qiydi
@@ -799,9 +836,9 @@ export const HUDView: React.FC = () => {
       }
     };
 
-    // Operator qurilmasi aniqlash qilmaydi (ramkalar robotdan tayyor keladi): ~30 MB model va TensorFlow yuklanmaydi.
-    // Bazaga yangi shaxs qo'shilsa, yuz modeli o'sha paytda o'zi yuklanadi
-    if (isViewer) {
+    // Operator qurilmasi faqat robot planshetidan kelgan kadrda aniqlash qilmaydi;
+    // Raspberry Pi USB web-kamera to'g'ridan-to'g'ri ulangan bo'lsa AI ishlayveradi.
+    if (isViewer && !piWebcamActive) {
       setAiModelLoading(false);
       setFaceStatus('ready');
       return;
@@ -813,7 +850,7 @@ export const HUDView: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, [addLog, setDetectedObjects, isViewer, aiEnabled, aiModelLoaded, aiModelLoading]);
+  }, [addLog, setDetectedObjects, isViewer, piWebcamActive, aiEnabled, aiModelLoaded, aiModelLoading]);
 
   // =========================================================================
   // 2. FRONTAL KAMERA (WEBCAM) OQIMINI BOSHQARISH
@@ -839,6 +876,11 @@ export const HUDView: React.FC = () => {
     const isStale = () => requestId !== cameraRequestRef.current;
 
     stopCameraStream();
+    if (faceCameraSettings.get() === 'pi-webcam') {
+      setCameraLoading(false);
+      setCameraError(null);
+      return;
+    }
     setCameraLoading(true);
     setCameraError(null);
 
@@ -1016,7 +1058,7 @@ export const HUDView: React.FC = () => {
 
   // OPERATOR: robotdan kelgan ramkalar HUD dagi odatiy obyektlar ro'yxatiga aylantiriladi
   useEffect(() => {
-    if (!isViewer) return;
+    if (!isViewer || piWebcamActive) return;
     const objs: DetectedObject[] = aiEnabled
       ? remoteBoxes.map((b, i) => {
           const x = (mirrorVideo ? 1 - (b.x + b.w) : b.x) * 100;
@@ -1043,25 +1085,26 @@ export const HUDView: React.FC = () => {
       obstacles: objs.filter((o) => o.category === 'other').length,
       total: objs.length
     });
-  }, [isViewer, aiEnabled, remoteBoxes, mirrorVideo, setDetectedObjects]);
+  }, [isViewer, piWebcamActive, aiEnabled, remoteBoxes, mirrorVideo, setDetectedObjects]);
 
   // =========================================================================
   // 3. TASVIRDAN ODAM VA MASHINALARNI HAMDA SHAXSNI ANIQLASH
   // =========================================================================
   const detectFrame = useCallback(async () => {
-    if (
-      !aiEnabled ||
-      !videoRef.current ||
-      videoRef.current.readyState < 2 ||
-      cameraSource !== 'FRONTAL' ||
-      isDetectingRef.current
-    ) {
+    const piImg = piWebcamActive ? piWebcamImgRef.current : null;
+    const usePiImg = Boolean(piImg && piImg.complete && piImg.naturalWidth > 0 && piImg.naturalHeight > 0);
+    const localVideo = videoRef.current;
+    const useVideo = Boolean(
+      !usePiImg && localVideo && localVideo.readyState >= 2 && localVideo.videoWidth > 0 && localVideo.videoHeight > 0
+    );
+
+    if (!aiEnabled || (!usePiImg && !useVideo) || cameraSource !== 'FRONTAL' || isDetectingRef.current) {
       return;
     }
 
-    const video = videoRef.current;
-    const vW = video.videoWidth;
-    const vH = video.videoHeight;
+    const video: HTMLVideoElement | HTMLImageElement = usePiImg ? piImg! : localVideo!;
+    const vW = usePiImg ? piImg!.naturalWidth : localVideo!.videoWidth;
+    const vH = usePiImg ? piImg!.naturalHeight : localVideo!.videoHeight;
     if (!vW || !vH) return;
     setVideoAspect((prev) => (Math.abs(prev - vW / vH) > 0.01 ? vW / vH : prev));
 
@@ -1349,15 +1392,15 @@ export const HUDView: React.FC = () => {
         isDetectingRef.current = false;
       }
     }
-  }, [aiEnabled, cameraSource, mirrorVideo, setDetectedObjects, updateCameraObstacle]);
+  }, [aiEnabled, cameraSource, mirrorVideo, piWebcamActive, setDetectedObjects, updateCameraObstacle]);
 
   // Deteksiya sikli. Har tekshiruvdan keyin kamida o'sha tekshiruv davomiyligicha (min 150 ms) dam beriladi:
   // planshetda bitta tekshiruv ~150 ms davom etadi va to'xtovsiz sikl interfeys va kamera tasvirini qotirardi
   useEffect(() => {
     let timer: number | null = null;
     let stopped = false;
-    // Operator kompyuterida aniqlash ishlamaydi: ramkalar robot planshetidan tayyor holda keladi
-    if (cameraSource === 'FRONTAL' && aiEnabled && !isViewer) {
+    // Operator kompyuterida faqat robot planshet oqimida aniqlash ishlamaydi; Pi USB kamerada esa ishlayveradi
+    if (cameraSource === 'FRONTAL' && aiEnabled && (!isViewer || piWebcamActive)) {
       const loop = async () => {
         if (stopped) return;
         const t0 = performance.now();
@@ -1376,7 +1419,7 @@ export const HUDView: React.FC = () => {
       stopped = true;
       if (timer) clearTimeout(timer);
     };
-  }, [cameraSource, aiEnabled, detectFrame, isViewer]);
+  }, [cameraSource, aiEnabled, detectFrame, isViewer, piWebcamActive]);
 
   // =========================================================================
   // 3B. SARIQ TAKTIL YO'LAK (KO'ZI OJIZLAR YO'LAGI) BO'YLAB CHIZIQLI YURISH (10 Hz)
@@ -1533,21 +1576,46 @@ export const HUDView: React.FC = () => {
           drawRect = { x: (cw - dw) / 2, y: (ch - dh) / 2, w: dw, h: dh };
         }
       } else if (cur.activeCam === 'face') {
-        const v = videoRef.current;
-        if (v && v.readyState >= 2 && v.videoWidth > 0 && v.videoHeight > 0) {
-          offCtx.clearRect(0, 0, ANALYSIS_W, ANALYSIS_H);
-          offCtx.drawImage(v, 0, 0, ANALYSIS_W, ANALYSIS_H);
-          sourceReady = true;
-          targetCanvas = lineOverlayFaceRef.current;
-          mirrorDisplay = cur.mirror;
-          if (targetCanvas) {
-            const cw = Math.max(1, targetCanvas.clientWidth);
-            const ch = Math.max(1, targetCanvas.clientHeight);
-            if (targetCanvas.width !== cw || targetCanvas.height !== ch) {
-              targetCanvas.width = cw;
-              targetCanvas.height = ch;
+        const piImg = cur.piWebcamActive ? piWebcamImgRef.current : null;
+        if (piImg && piImg.complete && piImg.naturalWidth > 0 && piImg.naturalHeight > 0) {
+          try {
+            offCtx.clearRect(0, 0, ANALYSIS_W, ANALYSIS_H);
+            offCtx.drawImage(piImg, 0, 0, ANALYSIS_W, ANALYSIS_H);
+            sourceReady = true;
+            targetCanvas = lineOverlayFaceRef.current;
+            mirrorDisplay = cur.mirror;
+            if (targetCanvas) {
+              const cw = Math.max(1, targetCanvas.clientWidth);
+              const ch = Math.max(1, targetCanvas.clientHeight);
+              if (targetCanvas.width !== cw || targetCanvas.height !== ch) {
+                targetCanvas.width = cw;
+                targetCanvas.height = ch;
+              }
+              const scale = Math.min(cw / piImg.naturalWidth, ch / piImg.naturalHeight);
+              const dw = piImg.naturalWidth * scale;
+              const dh = piImg.naturalHeight * scale;
+              drawRect = { x: (cw - dw) / 2, y: (ch - dh) / 2, w: dw, h: dh };
             }
-            drawRect = { x: 0, y: 0, w: cw, h: ch };
+          } catch {
+            sourceReady = false;
+          }
+        } else {
+          const v = videoRef.current;
+          if (v && v.readyState >= 2 && v.videoWidth > 0 && v.videoHeight > 0) {
+            offCtx.clearRect(0, 0, ANALYSIS_W, ANALYSIS_H);
+            offCtx.drawImage(v, 0, 0, ANALYSIS_W, ANALYSIS_H);
+            sourceReady = true;
+            targetCanvas = lineOverlayFaceRef.current;
+            mirrorDisplay = cur.mirror;
+            if (targetCanvas) {
+              const cw = Math.max(1, targetCanvas.clientWidth);
+              const ch = Math.max(1, targetCanvas.clientHeight);
+              if (targetCanvas.width !== cw || targetCanvas.height !== ch) {
+                targetCanvas.width = cw;
+                targetCanvas.height = ch;
+              }
+              drawRect = { x: 0, y: 0, w: cw, h: ch };
+            }
           }
         }
       } else if (MODULE_LENS[cur.activeCam] !== undefined) {
@@ -2337,7 +2405,7 @@ export const HUDView: React.FC = () => {
                   </div>
                 )}
 
-                {/* 1-REJIM: FRONTAL WEBCAM (FACE ID) */}
+                {/* 1-REJIM: FRONTAL WEBCAM (FACE ID / RASPBERRY PI USB KAMERA) */}
                 {cameraSource === 'FRONTAL' && (
                   <div className="absolute inset-0 bg-black" style={zoomStyle}>
                     <video
@@ -2345,8 +2413,34 @@ export const HUDView: React.FC = () => {
                       autoPlay
                       playsInline
                       muted
-                      className={`w-full h-full object-contain transition-transform ${mirrorVideo ? 'scale-x-[-1]' : ''}`}
+                      className={`w-full h-full object-contain transition-transform ${mirrorVideo ? 'scale-x-[-1]' : ''} ${piWebcamActive ? 'hidden' : ''}`}
                     />
+                    {piWebcamActive && (
+                      <img
+                        ref={piWebcamImgRef}
+                        src={piWebcamStreamUrl}
+                        crossOrigin="anonymous"
+                        alt="Raspberry Pi USB Frontal Kamera"
+                        onLoad={(e) => {
+                          const img = e.currentTarget;
+                          if (img.naturalWidth && img.naturalHeight) {
+                            const a = img.naturalWidth / img.naturalHeight;
+                            setVideoAspect((prev) => (Math.abs(prev - a) > 0.01 ? a : prev));
+                          }
+                        }}
+                        onError={() => {
+                          window.setTimeout(() => setPiWebcamNonce((n) => n + 1), 2000);
+                        }}
+                        className={`w-full h-full object-contain transition-transform ${mirrorVideo ? 'scale-x-[-1]' : ''}`}
+                      />
+                    )}
+                    {piWebcamActive && !linePhotoUrl && (
+                      <div className="absolute top-2 right-2 z-20 px-2 py-0.5 rounded bg-black/70 border border-police-green/50 text-police-green font-mono text-[10px] font-bold flex items-center gap-1.5 pointer-events-none">
+                        <span className="w-1.5 h-1.5 rounded-full bg-police-green animate-pulse" />
+                        Pi USB Frontal
+                        {piWebcamStatus.width && piWebcamStatus.height ? ` · ${piWebcamStatus.width}×${piWebcamStatus.height}` : ''}
+                      </div>
+                    )}
                     {linePhotoUrl && (
                       <img
                         ref={linePhotoImgRef}
@@ -2360,7 +2454,26 @@ export const HUDView: React.FC = () => {
                       className="absolute inset-0 w-full h-full pointer-events-none z-[25]"
                     />
 
-                    {cameraLoading && !isViewer && (
+                    {faceCamChoice === 'pi-webcam' && !piWebcamActive && (
+                      <div className="absolute inset-0 bg-tactical-950/90 flex flex-col items-center justify-center gap-2 p-4 text-center z-10">
+                        <RefreshCw className="w-8 h-8 text-police-cyan animate-spin" />
+                        <span className="font-mono text-sm font-bold text-white">Raspberry Pi USB web-kamera kutilmoqda...</span>
+                        <span className="font-mono text-xs text-slate-400 max-w-md">
+                          {piWebcamStatus.error
+                            ? `Holat: ${piWebcamStatus.error}`
+                            : `${piWebcamBase || 'Pi serveri'} /api/webcam/stream tekshirilmoqda.`}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setPiWebcamNonce((n) => n + 1)}
+                          className="mt-2 px-3 py-1.5 bg-police-blue text-white rounded font-mono text-xs hover:bg-police-blue/80"
+                        >
+                          Qayta ulanish
+                        </button>
+                      </div>
+                    )}
+
+                    {!piWebcamActive && faceCamChoice !== 'pi-webcam' && cameraLoading && !isViewer && (
                       <div className="absolute inset-0 bg-tactical-950/80 flex flex-col items-center justify-center space-y-2 z-10">
                         <RefreshCw className="w-8 h-8 text-police-cyan animate-spin" />
                         <span className="font-mono text-xs text-white">Frontal kamera ochilmoqda...</span>
@@ -2368,7 +2481,7 @@ export const HUDView: React.FC = () => {
                     )}
 
                     {/* OPERATOR: robot kamerasiga ulanish holati */}
-                    {cameraLoading && isViewer && (
+                    {!piWebcamActive && faceCamChoice !== 'pi-webcam' && cameraLoading && isViewer && (
                       <div className="absolute inset-0 bg-tactical-950/90 flex flex-col items-center justify-center gap-2 p-4 text-center z-10">
                         {remoteState.state === 'robot-offline' ? (
                           <VideoOff className="w-9 h-9 text-slate-500" />
@@ -2392,7 +2505,7 @@ export const HUDView: React.FC = () => {
                       </div>
                     )}
 
-                    {cameraError && (
+                    {!piWebcamActive && faceCamChoice !== 'pi-webcam' && cameraError && (
                       <div className="absolute inset-0 bg-tactical-950/90 flex flex-col items-center justify-center p-4 text-center z-10">
                         <AlertTriangle className="w-10 h-10 text-police-red mb-2" />
                         <span className="font-mono text-sm font-bold text-white">Frontal kameraga ulanib bo'lmadi</span>

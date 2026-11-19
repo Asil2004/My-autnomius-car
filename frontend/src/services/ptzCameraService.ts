@@ -17,7 +17,10 @@ export const CAMERA_ROTATED_180 = true;
 export const LENS = { ptz: 0, right: 1, left: 2 } as const;
 
 const BASE_KEY = 'qalqon.ptzCameraBase.v1';
-export const DEFAULT_PTZ_BASE = 'http://localhost:8090/camera';
+export const DEFAULT_PTZ_BASE =
+  typeof window !== 'undefined' && window.location.protocol === 'http:' && window.location.hostname
+    ? `http://${window.location.hostname}:8090/camera`
+    : 'http://localhost:8090/camera';
 
 export interface PtzCameraStatus {
   reachable: boolean;

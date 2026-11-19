@@ -1,13 +1,27 @@
 /**
- * Face ID (yuz tanish) kamerasi manbai: qurilmaning frontal kamerasi yoki ulangan tashqi USB web-kamera
- * (brauzer ko'radigan istalgan kamera). Tanlov localStorage da saqlanadi; HUD va robot yuzi ekrani shu tanlov
- * bo'yicha kamera ochadi va tanlov o'zgarsa kamerani qayta ochadi.
+ * Face ID (yuz tanish / frontal) kamerasi manbai:
+ *  - 'auto': Raspberry Pi USB web-kamera faol bo'lsa o'sha, bo'lmasa qurilmaning USB / frontal kamerasi;
+ *  - 'pi-webcam': Raspberry Pi 5 ga ulangan USB web-kamera (/api/webcam/stream, lidar_bridge_server.py);
+ *  - 'front' yoki deviceId: qurilmaning o'zidagi kamera (brauzer getUserMedia).
  */
 const KEY = 'qalqon_face_camera';
-/** 'auto' = tashqi (USB) kamera bo'lsa o'sha, bo'lmasa frontal kamera */
-export type FaceCameraChoice = 'auto' | 'front' | string;
+const PI_BASE_KEY = 'qalqon_pi_webcam_base';
+/** 'auto' = Pi USB yoki tashqi (USB) kamera bo'lsa o'sha, bo'lmasa frontal kamera */
+export type FaceCameraChoice = 'auto' | 'pi-webcam' | 'front' | string;
+
+export interface PiWebcamStatus {
+  reachable: boolean;
+  connected: boolean;
+  device?: string | null;
+  name?: string;
+  width?: number;
+  height?: number;
+  fps?: number;
+  error?: string | null;
+}
 
 const listeners = new Set<(c: FaceCameraChoice) => void>();
+const piBaseListeners = new Set<(b: string) => void>();
 
 function read(): FaceCameraChoice {
   try {
@@ -16,6 +30,35 @@ function read(): FaceCameraChoice {
   } catch {
     return 'auto';
   }
+}
+
+export function getDefaultPiWebcamBase(): string {
+  if (typeof window === 'undefined') return 'http://localhost:8000';
+  if (window.location.protocol === 'http:' && window.location.hostname) {
+    if (window.location.port === '5173' || window.location.port === '4173') {
+      return `http://${window.location.hostname}:8000`;
+    }
+    return window.location.origin;
+  }
+  return '';
+}
+
+function normalizePiBase(raw: string): string {
+  let s = raw.trim().replace(/\/+$/, '');
+  if (!s) return getDefaultPiWebcamBase();
+  if (!/^https?:\/\//i.test(s)) s = `http://${s}`;
+  s = s.replace(/\/api\/webcam(\/.*)?$/i, '');
+  return s;
+}
+
+function readPiBase(): string {
+  try {
+    const saved = localStorage.getItem(PI_BASE_KEY);
+    if (saved && saved.trim()) return normalizePiBase(saved);
+  } catch {
+    /* xotira yo'q */
+  }
+  return getDefaultPiWebcamBase();
 }
 
 export interface CameraOption {
@@ -46,6 +89,69 @@ export const faceCameraSettings = {
     };
   },
 
+  getPiWebcamBase: readPiBase,
+  setPiWebcamBase(url: string) {
+    const clean = url.trim() ? normalizePiBase(url) : '';
+    try {
+      if (clean) localStorage.setItem(PI_BASE_KEY, clean);
+      else localStorage.removeItem(PI_BASE_KEY);
+    } catch {
+      /* xotira yo'q */
+    }
+    const next = readPiBase();
+    piBaseListeners.forEach((l) => l(next));
+  },
+  subscribePiBase(cb: (b: string) => void) {
+    piBaseListeners.add(cb);
+    return () => {
+      piBaseListeners.delete(cb);
+    };
+  },
+  piWebcamStreamUrl(nonce = 0): string {
+    const base = readPiBase();
+    return base ? `${base}/api/webcam/stream?r=${nonce}` : '';
+  },
+  async checkPiWebcam(): Promise<PiWebcamStatus> {
+    const base = readPiBase();
+    if (!base) {
+      return { reachable: false, connected: false, error: 'Pi manzili kiritilmagan' };
+    }
+    try {
+      const res = await fetch(`${base}/api/webcam/status`, {
+        signal: AbortSignal.timeout(2500),
+        cache: 'no-store'
+      });
+      if (!res.ok) {
+        return { reachable: false, connected: false, error: `HTTP ${res.status}` };
+      }
+      const data = (await res.json()) as {
+        connected?: boolean;
+        device?: string | null;
+        name?: string;
+        width?: number;
+        height?: number;
+        fps?: number;
+        error?: string | null;
+      };
+      return {
+        reachable: true,
+        connected: Boolean(data.connected),
+        device: data.device ?? null,
+        name: data.name ?? '',
+        width: data.width ?? 0,
+        height: data.height ?? 0,
+        fps: data.fps ?? 0,
+        error: data.error ?? null
+      };
+    } catch (err: unknown) {
+      return {
+        reachable: false,
+        connected: false,
+        error: err instanceof Error ? err.message : 'Ulanib bo‘lmadi'
+      };
+    }
+  },
+
   /** Mavjud kameralar ro'yxati (nomlar faqat kameraga ruxsat berilgandan keyin ko'rinadi) */
   async list(): Promise<CameraOption[]> {
     if (!navigator.mediaDevices?.enumerateDevices) return [];
@@ -64,7 +170,7 @@ export const faceCameraSettings = {
     const base = { width: { ideal: size.width }, height: { ideal: size.height } };
     const choice = read();
     let deviceId: string | null = null;
-    if (choice !== 'auto' && choice !== 'front') deviceId = choice;
+    if (choice !== 'auto' && choice !== 'front' && choice !== 'pi-webcam') deviceId = choice;
     else if (choice === 'auto') {
       try {
         const ext = (await this.list()).find((c) => c.external);

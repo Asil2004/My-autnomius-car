@@ -34,14 +34,21 @@ except ImportError:
     sys.exit(1)
 
 try:
-    from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-    from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+    from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+    from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response, StreamingResponse
     from fastapi.staticfiles import StaticFiles
     from fastapi.middleware.cors import CORSMiddleware
     import uvicorn
 except ImportError:
     print("[-] Xatolik: fastapi yoki uvicorn o'rnatilmagan! (pip install fastapi uvicorn)")
     sys.exit(1)
+
+try:
+    import cv2
+    HAS_CV2 = True
+except ImportError:
+    cv2 = None
+    HAS_CV2 = False
 
 # ---------------------------------------------------------------------------
 # LDROBOT STL-19P / LD19 Protokol Doimiylari
@@ -312,14 +319,242 @@ class MqttLidarBridge:
                 connected = False
             time.sleep(0.15)
 
-# Global Reader & MQTT Bridge
+# ---------------------------------------------------------------------------
+# Raspberry Pi USB Web-Kamera (Frontal / Face ID / Taktil Yo'lak) Oqimi
+# ---------------------------------------------------------------------------
+class PiWebcamReader:
+    """
+    Raspberry Pi 5 (yoki PC) ga ulangan USB web-kamerani fon oqimida o'qiydi va
+    brauzer HUD (Frontal kamera) uchun MJPEG (/api/webcam/stream) uzatadi.
+    Pi 5 da ichki ISP/kodek qurilmalarini (pispbe, rp1-cfe, bcm2835) chetlab o'tib,
+    haqiqiy USB UVC web-kamerani avtomatik topadi.
+    """
+    _SKIP_NAMES = ("pispbe", "rp1-cfe", "bcm2835", "hevc", "codec", "unicam", "isp")
+
+    def __init__(self):
+        self.running = True
+        self.is_connected = False
+        self.device_label: Optional[str] = None
+        self.device_name: str = ""
+        self.width: int = 0
+        self.height: int = 0
+        self.fps: float = 0.0
+        self.last_frame_at: float = 0.0
+        self.error: Optional[str] = None
+
+        self._lock = threading.Lock()
+        self._latest_jpeg: Optional[bytes] = None
+        self._frame_seq: int = 0
+
+        self.target_w = int(os.environ.get("WEBCAM_WIDTH", "640"))
+        self.target_h = int(os.environ.get("WEBCAM_HEIGHT", "480"))
+        self.target_fps = int(os.environ.get("WEBCAM_FPS", "20"))
+        self.jpeg_quality = int(os.environ.get("WEBCAM_JPEG_QUALITY", "75"))
+        self.flip_mode = os.environ.get("WEBCAM_FLIP", "").strip().lower()
+
+        if os.environ.get("ENABLE_PI_WEBCAM", "1") != "1":
+            self.error = "ENABLE_PI_WEBCAM=0 (o'chirilgan)"
+            return
+        if not HAS_CV2:
+            self.error = "OpenCV (opencv-python-headless) o'rnatilmagan"
+            print("[WEBCAM] Ogohlantirish: opencv-python-headless topilmadi — USB web-kamera oqimi o'chiq.")
+            return
+
+        self.thread = threading.Thread(target=self._loop, daemon=True)
+        self.thread.start()
+
+    def _candidate_devices(self) -> List[tuple]:
+        """(device_id_or_path, human_name) ro'yxatini tartib bilan qaytaradi."""
+        candidates: List[tuple] = []
+        seen = set()
+
+        def add(dev, name=""):
+            key = str(dev)
+            if key not in seen:
+                seen.add(key)
+                candidates.append((dev, name or key))
+
+        env_dev = os.environ.get("WEBCAM_DEVICE", "").strip()
+        if env_dev:
+            add(int(env_dev) if env_dev.isdigit() else env_dev, f"env:{env_dev}")
+
+        # Linux / Raspberry Pi 5: /sys/class/video4linux orqali haqiqiy USB web-kamerani tanlash
+        if sys.platform.startswith("linux") and os.path.isdir("/sys/class/video4linux"):
+            v4l_entries = []
+            for path in glob.glob("/sys/class/video4linux/video*"):
+                base = os.path.basename(path)
+                num_str = base.replace("video", "")
+                if not num_str.isdigit():
+                    continue
+                idx = int(num_str)
+                name = ""
+                try:
+                    with open(os.path.join(path, "name"), "r", encoding="utf-8", errors="ignore") as f:
+                        name = f.read().strip()
+                except Exception:
+                    pass
+                v4l_entries.append((idx, name))
+            v4l_entries.sort(key=lambda item: item[0])
+            for idx, name in v4l_entries:
+                low = name.lower()
+                if any(skip in low for skip in self._SKIP_NAMES):
+                    continue
+                add(idx, name or f"/dev/video{idx}")
+
+        for idx in (0, 2, 1, 4):
+            add(idx, f"/dev/video{idx}" if sys.platform.startswith("linux") else f"Kamera {idx}")
+
+        return candidates
+
+    def _open_camera(self):
+        for dev, name in self._candidate_devices():
+            cap = None
+            try:
+                if sys.platform.startswith("linux") and isinstance(dev, int):
+                    cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
+                    if not cap.isOpened():
+                        cap.release()
+                        cap = cv2.VideoCapture(dev)
+                else:
+                    cap = cv2.VideoCapture(dev)
+
+                if not cap.isOpened():
+                    if cap:
+                        cap.release()
+                    continue
+
+                # USB kamerada MJPG formati Pi 5 CPU va USB yukini keskin kamaytiradi
+                try:
+                    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+                except Exception:
+                    pass
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.target_w)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.target_h)
+                cap.set(cv2.CAP_PROP_FPS, self.target_fps)
+                try:
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                except Exception:
+                    pass
+
+                ok = False
+                frame = None
+                for _ in range(5):
+                    ok, frame = cap.read()
+                    if ok and frame is not None and frame.size > 0:
+                        break
+                    time.sleep(0.05)
+
+                if ok and frame is not None and frame.size > 0:
+                    dev_str = f"/dev/video{dev}" if (sys.platform.startswith("linux") and isinstance(dev, int)) else str(dev)
+                    self.device_label = dev_str
+                    self.device_name = name
+                    self.height, self.width = frame.shape[:2]
+                    print(f"[WEBCAM] USB web-kamera ulandi: {dev_str} ({name}) {self.width}x{self.height}")
+                    return cap
+                cap.release()
+            except Exception:
+                if cap:
+                    try:
+                        cap.release()
+                    except Exception:
+                        pass
+        return None
+
+    def _loop(self):
+        encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality]
+        min_interval = 1.0 / max(1, self.target_fps)
+
+        while self.running:
+            cap = self._open_camera()
+            if cap is None:
+                self.is_connected = False
+                self.error = "USB web-kamera topilmadi"
+                time.sleep(3.0)
+                continue
+
+            self.is_connected = True
+            self.error = None
+            fail_count = 0
+            fps_frames = 0
+            fps_t0 = time.time()
+
+            try:
+                while self.running:
+                    t0 = time.time()
+                    ok, frame = cap.read()
+                    if not ok or frame is None or frame.size == 0:
+                        fail_count += 1
+                        if fail_count >= 15:
+                            self.error = "USB web-kamera oqimi uzildi"
+                            break
+                        time.sleep(0.05)
+                        continue
+
+                    fail_count = 0
+                    if self.flip_mode == "180":
+                        frame = cv2.rotate(frame, cv2.ROTATE_180)
+                    elif self.flip_mode == "h":
+                        frame = cv2.flip(frame, 1)
+                    elif self.flip_mode == "v":
+                        frame = cv2.flip(frame, 0)
+
+                    enc_ok, buf = cv2.imencode(".jpg", frame, encode_params)
+                    if enc_ok:
+                        jpg_bytes = buf.tobytes()
+                        now = time.time()
+                        with self._lock:
+                            self._latest_jpeg = jpg_bytes
+                            self._frame_seq += 1
+                            self.height, self.width = frame.shape[:2]
+                            self.last_frame_at = now
+
+                        fps_frames += 1
+                        if now - fps_t0 >= 1.5:
+                            self.fps = round(fps_frames / (now - fps_t0), 1)
+                            fps_frames = 0
+                            fps_t0 = now
+
+                    elapsed = time.time() - t0
+                    if elapsed < min_interval:
+                        time.sleep(min_interval - elapsed)
+            except Exception as e:
+                self.error = str(e)
+            finally:
+                self.is_connected = False
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+                time.sleep(1.5)
+
+    def get_frame(self):
+        with self._lock:
+            return self._latest_jpeg, self._frame_seq
+
+    def get_status(self) -> Dict[str, Any]:
+        age = round(time.time() - self.last_frame_at, 2) if self.last_frame_at > 0 else None
+        return {
+            "available": HAS_CV2,
+            "connected": self.is_connected and self._latest_jpeg is not None,
+            "device": self.device_label,
+            "name": self.device_name,
+            "width": self.width,
+            "height": self.height,
+            "fps": self.fps,
+            "last_frame_age": age,
+            "error": self.error,
+        }
+
+
+# Global Reader, MQTT Bridge & USB Webcam Reader
 lidar_reader = LidarHardwareReader()
 mqtt_lidar_bridge = MqttLidarBridge(lidar_reader)
+webcam_reader = PiWebcamReader()
 
 # ---------------------------------------------------------------------------
 # FastAPI & WebSocket Server
 # ---------------------------------------------------------------------------
-app = FastAPI(title="QALQON STL-19P LiDAR Server", version="2.1")
+app = FastAPI(title="QALQON STL-19P LiDAR & USB Kamera Server", version="2.2")
 
 app.add_middleware(
     CORSMiddleware,
@@ -328,6 +563,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def private_network_access(request: Request, call_next):
+    """Chrome: https sahifadan (GitHub Pages) lokal Raspberry Pi ga so'rov uchun ruxsat."""
+    response = await call_next(request)
+    if request.headers.get("access-control-request-private-network") == "true":
+        response.headers["Access-Control-Allow-Private-Network"] = "true"
+    return response
+
 
 connected_clients: List[WebSocket] = []
 
@@ -361,31 +606,79 @@ def get_status():
         "model": "LDROBOT STL-19P",
         "port": lidar_reader.port,
         "rate_hz": lidar_reader.rate_hz,
-        "packets": lidar_reader.packets_count
+        "packets": lidar_reader.packets_count,
+        "webcam": webcam_reader.get_status(),
     }
 
-# Statik veb fayllarni ulash (Frontend)
+
+@app.get("/api/webcam/status")
+def get_webcam_status():
+    return JSONResponse(
+        content=webcam_reader.get_status(),
+        headers={"Cache-Control": "no-store", "Access-Control-Allow-Origin": "*"},
+    )
+
+
+@app.get("/api/webcam/snapshot")
+def get_webcam_snapshot():
+    jpg, _ = webcam_reader.get_frame()
+    if not jpg:
+        return JSONResponse(status_code=503, content={"error": webcam_reader.error or "Kadr hali tayyor emas"})
+    return Response(
+        content=jpg,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store", "Access-Control-Allow-Origin": "*"},
+    )
+
+
+@app.get("/api/webcam/stream")
+async def get_webcam_stream():
+    async def frame_generator():
+        last_seq = -1
+        while True:
+            jpg, seq = webcam_reader.get_frame()
+            if jpg and seq != last_seq:
+                last_seq = seq
+                header = (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n"
+                    + f"Content-Length: {len(jpg)}\r\n\r\n".encode("ascii")
+                )
+                yield header + jpg + b"\r\n"
+            await asyncio.sleep(0.03)
+
+    return StreamingResponse(
+        frame_generator(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
+
+
+# Statik veb fayllarni ulash (Frontend + AI modellar + Yuzlar bazasi + Audio)
 static_dir = os.path.dirname(os.path.abspath(__file__))
-assets_dir = os.path.join(static_dir, "assets")
-images_dir = os.path.join(static_dir, "images")
-if os.path.isdir(assets_dir):
-    app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
-if os.path.isdir(images_dir):
-    app.mount("/images", StaticFiles(directory=images_dir), name="images")
+for folder in ("assets", "images", "models", "faces", "audio"):
+    folder_path = os.path.join(static_dir, folder)
+    if os.path.isdir(folder_path):
+        app.mount(f"/{folder}", StaticFiles(directory=folder_path), name=folder)
 
 @app.get("/")
 def serve_index():
     index_file = os.path.join(static_dir, "index.html")
     if os.path.exists(index_file):
         return FileResponse(index_file)
-    return HTMLResponse("<h1>QALQON LiDAR Server Faol</h1>")
+    return HTMLResponse("<h1>QALQON LiDAR & Kamera Serveri Faol</h1>")
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 8000))
     print("\n" + "="*65)
-    print("🛡️  QALQON — LDROBOT STL-19P 360° LIDAR SERVERI ISHGA TUSHMOQDA")
+    print("🛡️  QALQON — STL-19P LIDAR + USB FRONTAL KAMERA SERVERI")
     print(f"📡  LiDAR Porti: {lidar_reader.port} @ 230400 baud")
-    print(f"🌐  Veb Interfeys: http://localhost:{port}")
+    print(f"📷  USB Frontal Kamera: http://localhost:{port}/api/webcam/stream")
+    print(f"🌐  Veb Interfeys: http://localhost:{port}/#hud")
     print(f"🔌  WebSocket Telemetriya: ws://localhost:{port}/ws")
     print("="*65 + "\n")
 

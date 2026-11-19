@@ -620,7 +620,7 @@ class FaceRecognitionEngine {
    * ko'ringan odamlar ham oxirida qo'shiladi.
    */
   public async identifyPeople(
-    video: HTMLVideoElement,
+    video: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement,
     personBoxes: PersonBox[],
     /**
      * voteMissingFace: ramkada yuz topilmagan kadr "hech kim" ovozi sifatida yoziladi. Qulf ekrani butun kadrni
@@ -646,8 +646,18 @@ class FaceRecognitionEngine {
 
     // Yuz kadrni to'ldirib, kameraga yaqin turganda detektor uni topolmaydi (yuz juda katta).
     // Yaqin odam ramkasida yuz topilmagan bo'lsa, kadrni kichraytirib (atrofiga bo'sh joy qo'shib) qayta urinamiz.
-    const vw = video.videoWidth || video.width;
-    const vh = video.videoHeight || video.height;
+    const vw =
+      'videoWidth' in video
+        ? video.videoWidth || video.width
+        : 'naturalWidth' in video
+        ? video.naturalWidth || video.width
+        : video.width;
+    const vh =
+      'videoHeight' in video
+        ? video.videoHeight || video.height
+        : 'naturalHeight' in video
+        ? video.naturalHeight || video.height
+        : video.height;
     const closeWithoutFace = personBoxes.some(
       (pb) =>
         (pb.width >= vw * CLOSE_BOX_RATIO || pb.height >= vh * CLOSE_BOX_RATIO) &&
@@ -735,7 +745,7 @@ class FaceRecognitionEngine {
 
   // Yuzlarni topadi va koordinatalarni asl video piksellariga qaytaradi (kichraytirilgan kadr uchun scale va offset)
   private async detectLive(
-    input: HTMLVideoElement | HTMLCanvasElement,
+    input: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement,
     scale: number,
     offX: number,
     offY: number,
@@ -761,7 +771,7 @@ class FaceRecognitionEngine {
   }
 
   // Kadrni PAD_SCALE marta kichraytirib, kulrang fon ustiga markazga qo'yadi
-  private padFrame(video: HTMLVideoElement, w: number, h: number): HTMLCanvasElement {
+  private padFrame(video: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement, w: number, h: number): HTMLCanvasElement {
     if (!this.padCanvas) this.padCanvas = document.createElement('canvas');
     const canvas = this.padCanvas;
     if (canvas.width !== w || canvas.height !== h) {
