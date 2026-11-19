@@ -18,6 +18,11 @@ Ishga tushirish:
 
 import os
 import sys
+
+# OpenCV C++ ogohlantirishlarini (WARN: cap_v4l) o'chirish
+os.environ["OPENCV_LOG_LEVEL"] = "OFF"
+os.environ["OPENCV_VIDEOIO_DEBUG"] = "0"
+
 import time
 import math
 import glob
@@ -45,8 +50,9 @@ except ImportError:
 
 try:
     import cv2
+    cv2.setLogLevel(0)
     HAS_CV2 = True
-except ImportError:
+except Exception:
     cv2 = None
     HAS_CV2 = False
 
@@ -387,6 +393,9 @@ class PiWebcamReader:
                 if not num_str.isdigit():
                     continue
                 idx = int(num_str)
+                # Faqat haqiqiy /dev/video* mavjud bo'lsa
+                if not os.path.exists(f"/dev/video{idx}"):
+                    continue
                 name = ""
                 try:
                     with open(os.path.join(path, "name"), "r", encoding="utf-8", errors="ignore") as f:
@@ -401,8 +410,9 @@ class PiWebcamReader:
                     continue
                 add(idx, name or f"/dev/video{idx}")
 
-        for idx in (0, 2, 1, 4):
-            add(idx, f"/dev/video{idx}" if sys.platform.startswith("linux") else f"Kamera {idx}")
+        if not sys.platform.startswith("linux"):
+            for idx in (0, 1, 2):
+                add(idx, f"Kamera {idx}")
 
         return candidates
 
