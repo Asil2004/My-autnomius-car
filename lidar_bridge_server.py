@@ -101,31 +101,45 @@ def parse_ld19_packet(pkt: bytes):
         pts.append(((start + step * i) % 360.0, dist, inten))
     return speed, pts
 
-def auto_detect_lidar_port() -> str:
-    """LDROBOT STL-19P CP210x portini avtomatik topish (Windows va Linux/Raspberry Pi)"""
+def get_candidate_lidar_ports() -> List[str]:
+    """Barcha ehtimoliy LiDAR portlari ro'yxatini qaytaradi."""
+    ports = []
     env_port = os.environ.get("LIDAR_PORT")
     if env_port:
-        return env_port
+        ports.append(env_port)
 
+    # Udev qoidasi orqali /dev/lidar simvolik havolasi
+    if os.path.exists("/dev/lidar"):
+        ports.append("/dev/lidar")
+
+    # Serial portlarni qidirish (CP210x, Silicon Labs, CH340)
     for p in list_ports.comports():
         text = f"{p.device} {p.description} {p.manufacturer or ''}".lower()
-        if any(k in text for k in ("cp210", "ch340", "ftdi", "silicon labs", "usb-serial", "lidar", "ttyusb", "ttyacm")):
-            return p.device
+        if any(k in text for k in ("cp210", "ch340", "ftdi", "silicon labs", "usb-serial", "lidar")):
+            if p.device not in ports:
+                ports.append(p.device)
 
-    # Linux / Raspberry Pi standart yo'llarini tekshirish
+    # Linux / Raspberry Pi standart yo'llari
     if os.name != 'nt':
-        for dev in ("/dev/ttyUSB0", "/dev/ttyUSB1", "/dev/ttyACM0", "/dev/ttyACM1", "/dev/ttyAMA0"):
-            if os.path.exists(dev):
-                return dev
-        return "/dev/ttyUSB0"
+        for dev in ("/dev/ttyUSB0", "/dev/ttyUSB1", "/dev/ttyACM0", "/dev/ttyACM1"):
+            if os.path.exists(dev) and dev not in ports:
+                ports.append(dev)
 
-    return "COM3"
+    if not ports:
+        ports.append("COM3" if os.name == 'nt' else "/dev/ttyUSB0")
+    return ports
+
+def auto_detect_lidar_port() -> str:
+    """LDROBOT STL-19P CP210x portini avtomatik topish (Windows va Linux/Raspberry Pi)"""
+    ports = get_candidate_lidar_ports()
+    return ports[0] if ports else ("/dev/ttyUSB0" if os.name != 'nt' else "COM3")
 
 # ---------------------------------------------------------------------------
 # LiDAR Datchigi Oqimi va Ma'lumotlar Boshqaruvi
 # ---------------------------------------------------------------------------
 class LidarHardwareReader:
     def __init__(self, port: str = None, baudrate: int = 230400):
+        self.specified_port = port
         self.port = port or auto_detect_lidar_port()
         self.baudrate = baudrate
         self.running = True
@@ -145,23 +159,63 @@ class LidarHardwareReader:
 
     def _serial_loop(self):
         while self.running:
-            try:
-                print(f"[LiDAR] {self.port} portiga ulanilmoqda ({self.baudrate} baud)...")
-                ser = serial.Serial(self.port, self.baudrate, timeout=0.1)
-                self.is_connected = True
-                print(f"[+] [OK] LDROBOT STL-19P LiDAR muvaffaqiyatli ulandi: {self.port}")
+            candidate_ports = [self.specified_port] if self.specified_port else get_candidate_lidar_ports()
+            connected_ser = None
+            active_port = None
 
+            for p in candidate_ports:
+                try:
+                    ser = serial.Serial(p, self.baudrate, timeout=0.5)
+                    # Port haqiqatdan ham STL-19P (0x54 0x2C) paketini yuborayotganini tekshirish
+                    t_probe = time.time()
+                    probe_buf = bytearray()
+                    is_stl19 = False
+                    while time.time() - t_probe < 1.0:
+                        chunk = ser.read(ser.in_waiting or 64)
+                        if chunk:
+                            probe_buf.extend(chunk)
+                            if b"\x54\x2c" in probe_buf:
+                                is_stl19 = True
+                                break
+                        time.sleep(0.01)
+
+                    if is_stl19:
+                        connected_ser = ser
+                        active_port = p
+                        self.port = p
+                        self.is_connected = True
+                        print(f"[+] [OK] LDROBOT STL-19P LiDAR muvaffaqiyatli ulandi: {p} ({self.baudrate} baud)")
+                        break
+                    else:
+                        ser.close()
+                except Exception:
+                    continue
+
+            if not connected_ser:
+                self.is_connected = False
+                time.sleep(2.0)
+                continue
+
+            ser = connected_ser
+            try:
                 buf = bytearray()
                 acc = [0.0] * 360
                 acc_i = [0] * 360
                 last_start = None
                 stamps = []
+                last_data_time = time.time()
 
                 while self.running:
                     data = ser.read(ser.in_waiting or 128)
                     if not data:
+                        # 2 soniya davomida umuman ma'lumot kelmasa (datchik uzilgan)
+                        if time.time() - last_data_time > 2.0:
+                            print(f"[-] [LiDAR] {active_port} dan ma'lumot oqimi to'xtadi.")
+                            break
                         time.sleep(0.005)
                         continue
+
+                    last_data_time = time.time()
                     buf.extend(data)
 
                     while len(buf) >= PKT_LEN:
@@ -210,9 +264,14 @@ class LidarHardwareReader:
                         last_start = cur_start
 
             except Exception as e:
+                print(f"[-] [LiDAR Xatosi] Port ulanishida uzilish ({active_port}): {e}")
+            finally:
                 self.is_connected = False
-                print(f"[-] [LiDAR Xatosi] Port ulanishida uzilish: {e}. 2 soniyadan so'ng qayta uriniladi...")
-                time.sleep(2.0)
+                try:
+                    ser.close()
+                except Exception:
+                    pass
+                time.sleep(1.0)
 
     def get_telemetry_payload(self) -> Dict[str, Any]:
         with self.lock:
