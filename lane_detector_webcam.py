@@ -17,6 +17,58 @@ import math
 import time
 import sys
 import os
+import glob
+
+def find_serial_port():
+    """Raspberry Pi yoki kompyuterga ulangan ESP32/Arduino serial portini topadi"""
+    try:
+        import serial.tools.list_ports
+        for p in serial.tools.list_ports.comports():
+            desc = (p.description or "").lower()
+            if any(k in desc for k in ["cp210", "ch340", "ftdi", "usb serial", "uart", "arduino", "esp32"]):
+                return p.device
+    except Exception:
+        pass
+    ports = glob.glob('/dev/ttyUSB*') + glob.glob('/dev/ttyACM*')
+    return ports[0] if ports else None
+
+class SerialMotorBridge:
+    """ESP32 / Arduino motor drayveriga serial buyruq yuborish ko'prigi"""
+    def __init__(self, port=None, baud=115200):
+        self.ser = None
+        self.port = port or find_serial_port()
+        self.baud = baud
+        self.is_connected = False
+        self.last_cmd = None
+        try:
+            import serial
+            if self.port:
+                self.ser = serial.Serial(self.port, self.baud, timeout=0.1)
+                time.sleep(1.0)
+                self.is_connected = True
+                print(f"[SERIAL] ESP32 motor drayveri ulandi: {self.port} @ {self.baud} baud")
+            else:
+                print("[SERIAL] Serial port topilmadi (Simulyatsiya rejimida ishlaydi)")
+        except Exception as e:
+            print(f"[SERIAL] Serial ulanishda ogohlantirish: {e}")
+
+    def send(self, cmd):
+        if cmd == self.last_cmd and cmd != 'S':
+            return
+        self.last_cmd = cmd
+        if self.is_connected and self.ser:
+            try:
+                self.ser.write(f"{cmd}\n".encode('utf-8'))
+            except Exception as e:
+                print(f"\n[SERIAL XATO] {e}")
+
+    def close(self):
+        self.send('S')
+        if self.ser:
+            try:
+                self.ser.close()
+            except Exception:
+                pass
 
 class LaneDetector:
     def __init__(self, color_mode='tactile_yellow', yellowness_min=20):
@@ -587,56 +639,133 @@ def run_on_custom_photos(photo_paths, no_gui=False):
         cv2.destroyAllWindows()
 
 
-def run_webcam():
-    """Jonli USB Webcam orqali ishga tushirish"""
-    print("=" * 60)
-    print("Raspberry Pi & USB WebCam Avtonom Yo'l Aniqlash")
-    print("=" * 60)
-    cap = cv2.VideoCapture(0)
+def run_webcam(serial_port=None, camera_idx=0, drive_mode='assisted', no_gui=False):
+    """Jonli USB Webcam orqali ishga tushirish (Raspberry Pi 5 va PC)"""
+    print("=" * 65)
+    print("🛡️  QALQON — Raspberry Pi 5 & USB WebCam Taktil Yo'lak Dasturi")
+    print(f"🎮  Boshqaruv rejimi: {drive_mode.upper()}")
+    print("=" * 65)
+    
+    bridge = SerialMotorBridge(port=serial_port)
+    cap = cv2.VideoCapture(camera_idx)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
     
     if not cap.isOpened():
-        print("[XATO] USB WebCam topilmadi!")
-        print("[MASLAHAT] Namunaviy videoda sinash uchun:")
-        print("  python lane_detector_webcam.py video")
+        print(f"[XATO] Kamera topilmadi (index={camera_idx})!")
         return
         
     detector = LaneDetector(color_mode='tactile_yellow', yellowness_min=20)
-    print("[OK] Kamera faol! Chiqish: 'q', rejim: 'y'=taktil sariq, 'b'=ko'k, 'w'=oq, 'k'=qora")
+    user_intent = {"forward": False, "turn_left": False, "turn_right": False, "reverse": False, "emergency_stop": False}
     
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        vis, angle, edges = detector.process_frame(frame)
-        cv2.imshow("Avtonom Yo'l Kamerasi", vis)
-        cv2.imshow("Taktil Yo'lak Maskasi / Qirralar", edges)
-        
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord('q'):
-            break
-        elif key == ord('b'):
-            detector.color_mode = 'blue'
-        elif key == ord('w'):
-            detector.color_mode = 'white'
-        elif key in (ord('y'), ord('t')):
-            detector.color_mode = 'tactile_yellow'
-        elif key == ord('k'):
-            detector.color_mode = 'black'
+    print("[OK] Kamera faol!")
+    print("Klaviaturadan boshqaruv:")
+    print("  [W] - Oldinga gaz (yo'lak bo'ylab egilib yuradi)")
+    print("  [S] / [Space] - To'xtash (qo'yib yuborganda avtonom to'g'irlanadi)")
+    print("  [A] - Chapga burilish (chapda yo'lak bo'lmasa BLOKLANADI)")
+    print("  [D] - O'ngga burilish (o'ngda yo'lak bo'lmasa BLOKLANADI)")
+    print("  [M] - Rejimni o'zgartirish (assisted <-> auto)")
+    print("  [Q] - Chiqish")
+    print("-" * 65)
+
+    last_fwd_time = 0
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            res = detector.track_tactile_strip(frame)
+            meta = {}
             
-    cap.release()
-    cv2.destroyAllWindows()
+            # Agar assisted rejimda bo'lsa va oxirgi 'w' bosilganidan 0.4s o'tsa -> avto-qo'yib yuborish
+            if drive_mode == 'assisted':
+                if user_intent["forward"] and (time.time() - last_fwd_time > 0.4):
+                    user_intent["forward"] = False
+
+                cmd, meta = detector.step_assisted(res, user_intent)
+                status_txt = meta.get("status", "")
+            else: # auto mode
+                cmd = res["command"] if res["detected"] else "S"
+                status_txt = "TO'LIQ AVTONOM"
+
+            bridge.send(cmd)
+
+            # Terminalga holatni chiqarish
+            align_txt = "🔄 ALIGN" if meta.get("auto_aligning") else ""
+            block_txt = f"🚫 BLOK: {meta.get('guard_blocked')}" if meta.get("guard_blocked") else ""
+            print(f"\r[STATUS] {drive_mode.upper()} | Cmd: {cmd:2s} | Det: {str(res['detected']):5s} | Conf: {int(res['confidence']*100)}% | {status_txt[:30]} {align_txt} {block_txt}    ", end="", flush=True)
+
+            if not no_gui:
+                vis, angle, edges = detector.process_frame(frame)
+                # Kadr ustiga holat yozish
+                cv2.putText(vis, f"CMD: {cmd} | MODE: {drive_mode.upper()}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0) if cmd != 'S' else (0, 0, 255), 2)
+                if drive_mode == 'assisted' and meta.get("guard_blocked"):
+                    cv2.putText(vis, f"BLOK: {meta.get('guard_blocked').upper()}", (15, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                elif drive_mode == 'assisted' and meta.get("auto_aligning"):
+                    cv2.putText(vis, "AVTONOM BURILISH...", (15, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+
+                cv2.imshow("QALQON - Avtonom Kamera", vis)
+                cv2.imshow("Taktil Maska", edges)
+
+                key = cv2.waitKey(20) & 0xFF
+                if key == ord('q'):
+                    break
+                elif key == ord('w'):
+                    user_intent["forward"] = True
+                    user_intent["turn_left"] = False
+                    user_intent["turn_right"] = False
+                    last_fwd_time = time.time()
+                elif key == ord('s') or key == 32: # s or space
+                    user_intent["forward"] = False
+                    user_intent["turn_left"] = False
+                    user_intent["turn_right"] = False
+                    bridge.send('S')
+                elif key == ord('a'):
+                    user_intent["turn_left"] = True
+                    user_intent["turn_right"] = False
+                    user_intent["forward"] = False
+                elif key == ord('d'):
+                    user_intent["turn_right"] = True
+                    user_intent["turn_left"] = False
+                    user_intent["forward"] = False
+                elif key == ord('m'):
+                    drive_mode = 'auto' if drive_mode == 'assisted' else 'assisted'
+                    user_intent["forward"] = False
+                    print(f"\n[REJIM] Yangi rejim: {drive_mode.upper()}")
+                elif key in (ord('y'), ord('t')):
+                    detector.color_mode = 'tactile_yellow'
+                elif key == ord('b'):
+                    detector.color_mode = 'blue'
+            else:
+                time.sleep(0.05)
+
+    except KeyboardInterrupt:
+        print("\n[STOP] Foydalanuvchi tomonidan to'xtatildi.")
+    finally:
+        bridge.close()
+        cap.release()
+        if not no_gui:
+            cv2.destroyAllWindows()
+        print("\n[OK] Dastur yakunlandi. Motorlar xavfsiz to'xtatildi.")
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1].lower() == "video":
+    import argparse
+    parser = argparse.ArgumentParser(description="Qalqon - Taktil yo'lak detektori va avtopilot")
+    parser.add_argument("action", nargs="?", default="webcam", help="webcam | video | image | test")
+    parser.add_argument("--serial", dest="serial_port", default=None, help="ESP32 Serial porti (/dev/ttyUSB0 yoki COM3)")
+    parser.add_argument("--camera", dest="camera_idx", type=int, default=0, help="Kamera indeksi (0, 1, 2)")
+    parser.add_argument("--mode", dest="drive_mode", choices=["assisted", "auto"], default="assisted", help="Boshqaruv rejimi")
+    parser.add_argument("--no-gui", dest="no_gui", action="store_true", help="Oynasiz (SSH/headless) ishga tushirish")
+    args, unknown = parser.parse_known_args()
+
+    if args.action == "video":
         run_on_video()
-    elif len(sys.argv) > 1 and sys.argv[1].lower() == "image":
+    elif args.action == "image":
         run_on_sample_images()
-    elif len(sys.argv) > 1 and sys.argv[1].lower() == "test":
-        no_gui_flag = "--no-gui" in sys.argv
-        files = [a for a in sys.argv[2:] if not a.startswith("--")]
-        run_on_custom_photos(files, no_gui=no_gui_flag)
+    elif args.action == "test":
+        files = [a for a in unknown if not a.startswith("--")]
+        run_on_custom_photos(files, no_gui=args.no_gui)
     else:
-        run_webcam()
+        run_webcam(serial_port=args.serial_port, camera_idx=args.camera_idx, drive_mode=args.drive_mode, no_gui=args.no_gui)
