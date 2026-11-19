@@ -574,6 +574,11 @@ class PiWebcamReader:
                     elif self.flip_mode == "v":
                         frame = cv2.flip(frame, 0)
 
+                    # 4K kamera CPU ni to'ldirib yubormasligi uchun qat'iy 640x480 ga tushirish
+                    h, w = frame.shape[:2]
+                    if w > self.target_w or h > self.target_h:
+                        frame = cv2.resize(frame, (self.target_w, self.target_h), interpolation=cv2.INTER_AREA)
+
                     enc_ok, buf = cv2.imencode(".jpg", frame, encode_params)
                     if enc_ok:
                         jpg_bytes = buf.tobytes()
@@ -708,20 +713,32 @@ def get_webcam_snapshot():
 
 
 @app.get("/api/webcam/stream")
-async def get_webcam_stream():
+async def get_webcam_stream(request: Request):
+    """
+    Brauzer uchun xavfsiz MJPEG video oqimi.
+    Mijoz sahifani yangilaganda yoki yopganda fon oqimi darhol to'xtatiladi,
+    xotira (RAM) va CPU tiqilib qolishi (Memory leak) to'liq oldi olinadi.
+    """
     async def frame_generator():
         last_seq = -1
-        while True:
-            jpg, seq = webcam_reader.get_frame()
-            if jpg and seq != last_seq:
-                last_seq = seq
-                header = (
-                    b"--frame\r\n"
-                    b"Content-Type: image/jpeg\r\n"
-                    + f"Content-Length: {len(jpg)}\r\n\r\n".encode("ascii")
-                )
-                yield header + jpg + b"\r\n"
-            await asyncio.sleep(0.03)
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                jpg, seq = webcam_reader.get_frame()
+                if jpg and seq != last_seq:
+                    last_seq = seq
+                    header = (
+                        b"--frame\r\n"
+                        b"Content-Type: image/jpeg\r\n"
+                        + f"Content-Length: {len(jpg)}\r\n\r\n".encode("ascii")
+                    )
+                    yield header + jpg + b"\r\n"
+                await asyncio.sleep(0.045)
+        except (asyncio.CancelledError, GeneratorExit):
+            pass
+        except Exception:
+            pass
 
     return StreamingResponse(
         frame_generator(),
