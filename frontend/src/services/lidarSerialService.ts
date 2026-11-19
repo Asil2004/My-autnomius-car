@@ -72,7 +72,7 @@ class LidarSerialService {
   private isWsConnected = false;
   private currentPortName = '';
   private frameListeners = new Set<FrameCallback>();
-  private stopCm = 50;
+  private stopCm = 35;
 
   // 360-graduslik kesh (0 = bo'sh / to'siq yo'q)
   private distances: number[] = new Array(360).fill(0);
@@ -829,7 +829,8 @@ class LidarSerialService {
 
     const checkDeg = (deg: number) => {
       const d = this.distances[deg];
-      if (d >= 0.06 && d < 12.0) {
+      // 0.18m (18 sm) dan kichik masofalar robotning o'z korpusi/ustuni/kabeli (Blind zone)
+      if (d >= 0.18 && d < 12.0) {
         vals.push(d);
       }
     };

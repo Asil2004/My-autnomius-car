@@ -289,9 +289,11 @@ class LidarHardwareReader:
         min_rear = 999.0
         min_left = 999.0
 
+        # 4-Zonalar va to'siqlarni aniqlash
+        # DIQQAT: 0.18m (18 sm) dan kichik nuqtalar robotning o'z korpusi/kamerasi/simlari hisoblanadi (Blind Zone)
         for deg in range(360):
             d = dists[deg]
-            if d > 0.05:
+            if d >= 0.18:
                 points.append({
                     "angle": deg,
                     "distance": round(d, 2),
@@ -301,8 +303,8 @@ class LidarHardwareReader:
                     min_dist = d
                     min_angle = deg
 
-                # 4-Zonalar
-                if deg >= 330 or deg <= 30:
+                # 4-Zonalar (Old, O'ng, Orqa, Chap)
+                if deg >= 335 or deg <= 25:
                     if d < min_front: min_front = d
                 elif 60 <= deg <= 120:
                     if d < min_right: min_right = d
@@ -312,7 +314,8 @@ class LidarHardwareReader:
                     if d < min_left: min_left = d
 
         front_cm = int(round(min_front * 100)) if min_front < 900 else 250
-        is_front_blocked = front_cm <= 50
+        # Avtotormoz chegarasi: 35 sm (oldin 50 edi, robot o'z qismlarini to'siq deb o'ylamasligi uchun)
+        is_front_blocked = front_cm <= 35
 
         return {
             "source": "LIDAR",
@@ -417,8 +420,8 @@ class PiWebcamReader:
 
         self.target_w = int(os.environ.get("WEBCAM_WIDTH", "640"))
         self.target_h = int(os.environ.get("WEBCAM_HEIGHT", "480"))
-        self.target_fps = int(os.environ.get("WEBCAM_FPS", "20"))
-        self.jpeg_quality = int(os.environ.get("WEBCAM_JPEG_QUALITY", "75"))
+        self.target_fps = int(os.environ.get("WEBCAM_FPS", "16"))
+        self.jpeg_quality = int(os.environ.get("WEBCAM_JPEG_QUALITY", "55"))
         self.flip_mode = os.environ.get("WEBCAM_FLIP", "").strip().lower()
 
         if os.environ.get("ENABLE_PI_WEBCAM", "1") != "1":

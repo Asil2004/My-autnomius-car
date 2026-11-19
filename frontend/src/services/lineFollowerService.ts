@@ -95,10 +95,10 @@ export const LINE_FOLLOWER_STORAGE_KEY = 'qalqon_line_follower_cfg_v2';
 export const DEFAULT_LINE_CONFIG: LineFollowerConfig = {
   colorPreset: 'tactile_yellow',
   driveMode: 'assisted',
-  yellownessMin: 20,
-  curveDeadband: 0.14,
-  spinThreshold: 0.52,
-  lostStopMs: 350,
+  yellownessMin: 12,
+  curveDeadband: 0.05,
+  spinThreshold: 0.38,
+  lostStopMs: 1200,
   invertSteering: false
 };
 
