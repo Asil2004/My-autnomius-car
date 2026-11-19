@@ -50,8 +50,12 @@ except ImportError:
 
 try:
     import cv2
-    cv2.setLogLevel(0)
     HAS_CV2 = True
+    try:
+        if hasattr(cv2, "utils") and hasattr(cv2.utils, "logging"):
+            cv2.utils.logging.setLogLevel(0)
+    except Exception:
+        pass
 except Exception:
     cv2 = None
     HAS_CV2 = False
