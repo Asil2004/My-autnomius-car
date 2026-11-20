@@ -158,43 +158,69 @@ class CameraModule:
         if not HAS_OPENCV or cv2 is None or frame is None:
             return frame
         h, w = frame.shape[:2]
-        roi_top = int(h * 0.55)
+        roi_top = int(h * 0.45) # Pastki 55% ni tahlil qilish
         roi = frame[roi_top:h, 0:w]
+        roi_h = roi.shape[0]
 
-        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        edges = cv2.Canny(blur, 50, 150)
+        # 1. Rang bo'yicha tahlil (HSV): Sariq taktil yo'lak (ko'zi ojizlar yo'lagi) uchun
+        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        
+        # Sariq rang (QULAY MAKON taktil plitka)
+        lower_yellow = np.array([14, 50, 60])
+        upper_yellow = np.array([38, 255, 255])
+        mask_yellow = cv2.inRange(hsv, lower_yellow, upper_yellow)
 
-        M = cv2.moments(edges)
+        # Agar sariq piksellar yetarli bo'lsa sariq maskani ishlatamiz, aks holda umumiy kontrast (oq/qora)
+        yellow_count = cv2.countNonZero(mask_yellow)
+        if yellow_count > 250:
+            mask = mask_yellow
+            self.lane_color = "SARIQ TAKTIL"
+        else:
+            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            blur = cv2.GaussianBlur(gray, (5, 5), 0)
+            mask = cv2.Canny(blur, 50, 150)
+            self.lane_color = "STANDART"
+
+        # T-chorraha va gorizontal yo'laklarni filtrlash uchun eng yaqin pastki qismga ko'proq og'irlik beramiz
+        near_roi = mask[int(roi_h * 0.3):roi_h, :]
+        M = cv2.moments(near_roi)
         frame_center = w // 2
         deviation = 0
 
-        if M["m00"] > 400:
+        if M["m00"] > 300:
             cx = int(M["m10"] / M["m00"])
-            cy = int(M["m01"] / M["m00"]) + roi_top
+            cy = int(M["m01"] / M["m00"]) + int(roi_h * 0.3) + roi_top
             deviation = cx - frame_center
             self.line_found = True
 
-            cv2.circle(frame, (cx, cy), 8, (0, 0, 255), -1)
-            cv2.line(frame, (frame_center, h), (cx, cy), (0, 255, 0), 2)
+            # Vizual ko'rsatkichlar (Yashil yo'nalish chizig'i va nishon)
+            cv2.circle(frame, (cx, cy), 10, (0, 255, 0), -1)
+            cv2.circle(frame, (cx, cy), 14, (0, 229, 255), 2)
+            cv2.line(frame, (frame_center, h), (cx, cy), (0, 255, 0), 3)
 
-            if deviation < -45:
+            # Rul burchagi chegaralari (Deadband: +-35px)
+            if deviation < -35:
                 direction = "CHAPGA (L)"
                 cmd = 'L'
-            elif deviation > 45:
+            elif deviation > 35:
                 direction = "O'NGGA (R)"
                 cmd = 'R'
             else:
                 direction = "TO'G'RI (F)"
                 cmd = 'F'
         else:
-            direction = "YO'L YO'Q"
+            direction = "YO'L QIDIRILMOQDA"
             cmd = 'S'
             self.line_found = False
 
         self.lane_deviation = deviation
         self.recommended_cmd = cmd
         self.lane_status = direction
+
+        # Vizual ma'lumot kadrga yoziladi
+        status_color = (0, 255, 0) if cmd == 'F' else ((0, 229, 255) if cmd in ('L', 'R') else (0, 0, 255))
+        cv2.putText(frame, f"YO'L: {direction} (og'ish: {deviation:+d}px)", (15, h - 25),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, status_color, 2)
         return frame
 
     def _process_faces(self, frame):
