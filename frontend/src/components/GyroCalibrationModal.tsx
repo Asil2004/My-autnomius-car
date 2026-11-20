@@ -12,7 +12,6 @@ import {
 } from 'lucide-react';
 import { headingService, type HeadingState } from '../services/headingService';
 import { esp32Service } from '../services/esp32Service';
-import { Robot3DVisualizer } from './Robot3DVisualizer';
 
 interface GyroCalibrationModalProps {
   onClose: () => void;
@@ -232,16 +231,29 @@ export const GyroCalibrationModal: React.FC<GyroCalibrationModalProps> = ({ onCl
             </div>
           )}
 
-          {/* 3D AVTOMOBIL ANIMATSIYALI VIZUALIZATORI */}
-          <Robot3DVisualizer
-            heading={currentHeading}
-            pitch={currentPitch}
-            roll={currentRoll}
-            rate={turnRate}
-            source={details.source}
-            mountingAngle={mountingAngle}
-            inverted={inverted}
-          />
+          {/* 2D GIROSKOP ORIENTATSIYA KO'RSATGICHI */}
+          <div className="p-4 bg-tactical-900/90 rounded-xl border border-tactical-700/80 grid grid-cols-2 sm:grid-cols-4 gap-3 shadow-inner">
+            <div className="text-center p-2 rounded bg-tactical-950 border border-tactical-800">
+              <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Kurs (Heading)</div>
+              <div className="text-xl font-bold text-amber-400 font-mono">{Math.round(currentHeading)}°</div>
+              <div className="text-[10px] text-slate-500">{details.source}</div>
+            </div>
+            <div className="text-center p-2 rounded bg-tactical-950 border border-tactical-800">
+              <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Tanga (Pitch)</div>
+              <div className="text-xl font-bold text-police-cyan font-mono">{Math.round(currentPitch)}°</div>
+              <div className="text-[10px] text-slate-500">old/orqa</div>
+            </div>
+            <div className="text-center p-2 rounded bg-tactical-950 border border-tactical-800">
+              <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Kren (Roll)</div>
+              <div className="text-xl font-bold text-emerald-400 font-mono">{Math.round(currentRoll)}°</div>
+              <div className="text-[10px] text-slate-500">o'ng/chap</div>
+            </div>
+            <div className="text-center p-2 rounded bg-tactical-950 border border-tactical-800">
+              <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Burilish Tezl.</div>
+              <div className="text-xl font-bold text-indigo-400 font-mono">{Math.round(turnRate)}°/s</div>
+              <div className="text-[10px] text-slate-500">gyro rate</div>
+            </div>
+          </div>
 
           {/* TEZKOR PRESET: RASMDAGI MONTAJ (TAVSIYA ETILADI) */}
           <div className="p-3 bg-gradient-to-r from-amber-950/70 via-tactical-900 to-indigo-950/70 rounded-xl border-2 border-amber-500/70 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-lg">

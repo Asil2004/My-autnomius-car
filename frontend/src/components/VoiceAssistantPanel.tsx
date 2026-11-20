@@ -1,10 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Mic, Key, Eye, EyeOff, Bot, Save, Volume2, CheckCircle2, Camera, CameraOff, Hand, Ear } from 'lucide-react';
+import { Mic, Key, Eye, EyeOff, Bot, Save, Volume2, CheckCircle2, Hand, Ear } from 'lucide-react';
 import { uzbekVoiceService } from '../services/uzbekVoiceService';
 import { aiDialogService } from '../services/aiDialogService';
 import { edgeTtsService } from '../services/edgeTtsService';
 import { tacticalAudio } from '../services/audioService';
-import { faceViewSettings, type FaceViewSettings } from '../services/faceViewSettings';
 import { SpeechToSpeechModal } from './SpeechToSpeechModal';
 import { answerCache } from '../services/answerCache';
 import { qaCount } from '../services/localKnowledge';
@@ -15,8 +14,8 @@ import { situationService, weatherText } from '../services/situationService';
  * Bosh sahifadan ko'chirilgan: kamera, avto-salom, ovozni sinash, ovozli muloqot (S2S) va API kalitlari.
  */
 export const VoiceAssistantPanel: React.FC = () => {
-  const [settings, setSettings] = useState<FaceViewSettings>(() => faceViewSettings.get());
-  useEffect(() => faceViewSettings.subscribe(setSettings), []);
+  const [autoGreet, setAutoGreet] = useState(() => localStorage.getItem('qalqon_auto_greet') === 'true');
+  const [listen, setListen] = useState(() => localStorage.getItem('qalqon_voice_listen') === 'true');
 
   const [uvApiKey, setUvApiKey] = useState(() => uzbekVoiceService.getApiKey());
   const [claudeApiKey, setClaudeApiKey] = useState(() => aiDialogService.getClaudeKey());
@@ -116,35 +115,32 @@ export const VoiceAssistantPanel: React.FC = () => {
           <button
             onClick={() => {
               tacticalAudio.playClick();
-              faceViewSettings.set({ cameraEnabled: !settings.cameraEnabled });
+              setAutoGreet((v) => {
+                const next = !v;
+                localStorage.setItem('qalqon_auto_greet', String(next));
+                return next;
+              });
             }}
-            className={toggleBtn(settings.cameraEnabled)}
-            title="Bosh sahifadagi old kamera: yuz tanish va video arxiv"
-          >
-            {settings.cameraEnabled ? <Camera className="w-4 h-4" /> : <CameraOff className="w-4 h-4" />}
-            {settings.cameraEnabled ? 'Kamera: yoqilgan' : "Kamera: o'chirilgan"}
-          </button>
-          <button
-            onClick={() => {
-              tacticalAudio.playClick();
-              faceViewSettings.set({ autoGreet: !settings.autoGreet });
-            }}
-            className={toggleBtn(settings.autoGreet)}
+            className={toggleBtn(autoGreet)}
             title="Kamera insonni ko'rganda avtomatik salomlashish"
           >
             <Hand className="w-4 h-4" />
-            {settings.autoGreet ? 'Avto-salom: faol' : "Avto-salom: o'chiq"}
+            {autoGreet ? 'Avto-salom: faol' : "Avto-salom: o'chiq"}
           </button>
           <button
             onClick={() => {
               tacticalAudio.playClick();
-              faceViewSettings.set({ listen: !settings.listen });
+              setListen((v) => {
+                const next = !v;
+                localStorage.setItem('qalqon_voice_listen', String(next));
+                return next;
+              });
             }}
-            className={toggleBtn(settings.listen)}
-            title="Bosh sahifadagi robot mikrofon orqali gapingizni o'zi eshitadi va javob beradi"
+            className={toggleBtn(listen)}
+            title="Robot mikrofon orqali gapingizni eshitadi va javob beradi"
           >
             <Ear className="w-4 h-4" />
-            {settings.listen ? 'Tinglash: faol' : "Tinglash: o'chiq"}
+            {listen ? 'Tinglash: faol' : "Tinglash: o'chiq"}
           </button>
           <button
             onClick={handleTestVoice}

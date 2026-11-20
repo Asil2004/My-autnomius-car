@@ -2,11 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useRobot } from '../context/RobotContext';
 import type { DetectedObject, MecanumCommand } from '../types/robot';
 import { faceRecognitionService, type KnownPerson } from '../services/faceRecognitionService';
-import { distanceEstimator } from '../services/distanceService';
-import type * as cocoSsd from '@tensorflow-models/coco-ssd';
-import { loadCocoModel } from '../services/aiPreload';
-import { createAnnotatedStream, type AnnotatedStream } from '../services/nvrOverlayCompositor';
-import { nvrRecordingService, type TimelineRange, type NvrChunk, type NvrStorageStats, type NvrDiskStatus, NVR_MAX_STORAGE_BYTES } from '../services/nvrRecordingService';
+// Ultra-fast: COCO-SSD, NVR and Pinhole distance estimator removed for maximum performance
 import { FloatingPanel } from './FloatingPanel';
 import { PtzLensView } from './PtzLensView';
 import { PanoramaLensView } from './PanoramaLensView';
@@ -63,18 +59,11 @@ import {
   Plus,
   X,
   CheckCircle2,
-  Ruler,
   Maximize2,
   Minimize2,
   ZoomIn,
   ZoomOut,
-  Play,
-  Pause,
-  FastForward,
-  Rewind,
-  Calendar,
   Radio,
-  Film,
   Volume2,
   Lightbulb,
   Square
@@ -112,45 +101,16 @@ const REMOTE_CMD_NAMES: Record<string, string> = {
   D: 'Minora pastga'
 };
 
-// COCO-SSD klasslari uchun o'zbekcha nomlar. Odam va transport alohida ishlanadi, qolgan hamma jism robot uchun "to'siq"
-const UZ_OBSTACLE_NAMES: Record<string, string> = {
-  chair: "Stul (To'siq)",
-  couch: "Divan (To'siq)",
-  'dining table': "Stol (To'siq)",
-  bed: "Karovot (To'siq)",
-  'potted plant': "Gultuvak (To'siq)",
-  tv: 'Monitor / TV',
-  laptop: 'Noutbuk',
-  'cell phone': 'Telefon (Obyekt)',
-  bottle: 'Idish / Butilka',
-  cup: 'Chashka / Finka',
-  backpack: 'Ryukzak (Yuk)',
-  handbag: 'Sumka',
-  suitcase: 'Chemodan (Yuk)',
-  book: 'Kitob / Blok',
-  umbrella: 'Soyabon',
-  box: "Quti (To'siq)",
-  dog: 'It (Hayvon)',
-  cat: 'Mushuk (Hayvon)'
-};
-// COCO-SSD ni odam bo'lmagan jismlar uchun past baho bilan qidiramiz (to'siqlarni ko'proq ushlash), odam uchun esa qat'iy chegara
-const OBSTACLE_MIN_SCORE = 0.28;
-const PERSON_MIN_SCORE = 0.4;
-const VEHICLE_CLASSES = ['car', 'truck', 'bus', 'motorcycle', 'bicycle'];
-
-// Kalibrovka kamera turi bo'yicha alohida saqlanadi (hozir faqat frontal kamera aniqlanadi)
-const CAMERA_KEY = 'FRONTAL';
-
-// Sonar masofasiga (sm) qarab rang: <=22 xavf (avtotormoz), <=45 ogohlantirish, qolgani xavfsiz
+// LiDAR sektor masofasiga (sm) qarab rang: <=25 xavf (avtotormoz), <=50 ogohlantirish, qolgani xavfsiz
 const getSonarColor = (distance: number, isCritical = false) => {
-  if (isCritical || distance <= 22) return 'text-police-red bg-police-red/10 border-police-red/60';
-  if (distance <= 45) return 'text-police-amber bg-police-amber/10 border-police-amber/50';
+  if (isCritical || distance <= 25) return 'text-police-red bg-police-red/10 border-police-red/60';
+  if (distance <= 50) return 'text-police-amber bg-police-amber/10 border-police-amber/50';
   return 'text-police-green bg-tactical-850 border-tactical-700';
 };
 
 const SONAR_ARROW = { front: ArrowUp, rear: ArrowDown, left: ArrowLeft, right: ArrowRight } as const;
 
-// Video ostidagi qatorda turuvchi sonar chipi: yo'nalish o'qi, nomi va masofasi
+// Video ostidagi qatorda turuvchi LiDAR sektor chipi: yo'nalish o'qi, nomi va masofasi
 const SonarChip: React.FC<{
   side: 'front' | 'rear' | 'left' | 'right';
   label: string;
@@ -158,13 +118,13 @@ const SonarChip: React.FC<{
   value: number | null;
   pins?: string;
   critical?: boolean;
-}> = ({ side, label, value, pins, critical = false }) => {
-  const danger = critical || (value !== null && value <= 22);
+}> = ({ side, label, value, pins: _pins, critical = false }) => {
+  const danger = critical || (value !== null && value <= 25);
   const Arrow = SONAR_ARROW[side];
   const title =
     value === null
-      ? `${label}: ma'lumot yo'q (datchik ulanmagan)`
-      : `${label} sonar${pins ? ` (${pins})` : ''}: ${value} sm. Chegara: <22 sm = avtotormoz`;
+      ? `${label}: to'siq yo'q / ochiq`
+      : `${label} LiDAR masofasi: ${value} sm. Chegara: <30 sm = avtotormoz`;
   return (
     <div
       className={`px-2.5 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap transition-colors ${
@@ -178,22 +138,6 @@ const SonarChip: React.FC<{
       <span className="ml-auto">{value === null ? '—' : `${value} sm`}</span>
     </div>
   );
-};
-
-// Kalibrovka uchun yuz kadrlari shu oraliqda yig'iladi. Sekin qurilmada aniqlash sikli ~1 kadr/0.7 s bo'lishi mumkin
-const CALIB_WINDOW_MS = 4000;
-const CALIB_MIN_SAMPLES = 3;
-// Yuz kengligi shu oraliqda (medianaga nisbatan) o'zgarmasa, odam qimirlamayapti deb hisoblanadi
-const CALIB_MAX_SPREAD = 0.12;
-
-type FaceSample = { width: number; eyePx: number; frameH: number; t: number };
-
-// Kalibrovka ma'lumoti yetarlimi: kadrlar soni va yuz kengligining barqarorligi
-const evaluateCalibSamples = (samples: FaceSample[]) => {
-  const widths = samples.map((s) => s.width).sort((a, b) => a - b);
-  const median = widths.length ? widths[Math.floor(widths.length / 2)] : 0;
-  const spread = widths.length > 1 && median > 0 ? (widths[widths.length - 1] - widths[0]) / median : 0;
-  return { count: samples.length, median, stable: spread <= CALIB_MAX_SPREAD };
 };
 
 export const HUDView: React.FC = () => {
@@ -241,13 +185,6 @@ export const HUDView: React.FC = () => {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   };
 
-  const formatSecToTime = (totalSec: number) => {
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const h = Math.floor(totalSec / 3600) % 24;
-    const m = Math.floor((totalSec % 3600) / 60);
-    const s = Math.floor(totalSec % 60);
-    return `${pad(h)}:${pad(m)}:${pad(s)}`;
-  };
 
   // Zoom va Fullscreen holati
   // Zoom: s - masshtab (1x..8x), x/y - kadr siljishi (piksel)
@@ -259,98 +196,8 @@ export const HUDView: React.FC = () => {
   const cameraOverlayRef = useRef<HTMLDivElement | null>(null);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
 
-  // Live vs Playback (Qayta ko'rish) rejimi
-  const [viewMode, setViewMode] = useState<'live' | 'playback'>('live');
-  const [isPlaying, setIsPlaying] = useState<boolean>(false);
-  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
-  const [playbackDate, setPlaybackDate] = useState<string>(() => {
-    const d = new Date();
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  });
-  const [playbackSec, setPlaybackSec] = useState<number>(14400); // 04:00:00
-  const [timelineRanges, setTimelineRanges] = useState<TimelineRange[]>([]);
-  const [storageStats, setStorageStats] = useState<NvrStorageStats>({
-    usedBytes: 0,
-    maxBytes: NVR_MAX_STORAGE_BYTES,
-    percentUsed: 0,
-    chunkCount: 0
-  });
-  const [currentPlaybackChunk, setCurrentPlaybackChunk] = useState<NvrChunk | null>(null);
-  const [nvrDisk, setNvrDisk] = useState<NvrDiskStatus>(() => nvrRecordingService.getDiskStatus());
-  const playbackVideoRef = useRef<HTMLVideoElement | null>(null);
-
-  // NVR timeline oralig'i va 100MB xotira statistikasini yuklash
-  useEffect(() => {
-    let active = true;
-    const refreshData = async () => {
-      const ranges = await nvrRecordingService.getTimelineRanges(playbackDate);
-      const stats = await nvrRecordingService.getStorageStats();
-      if (!active) return;
-      setTimelineRanges(ranges);
-      setStorageStats(stats);
-    };
-
-    refreshData();
-    const unsub = nvrRecordingService.subscribe(() => {
-      setNvrDisk(nvrRecordingService.getDiskStatus());
-      void refreshData();
-    });
-    return () => {
-      active = false;
-      unsub();
-    };
-  }, [playbackDate, viewMode]);
-
-  // Qayta ko'rish rejimida playbackSec ga mos keluvchi haqiqiy video bo'lagini ulash
-  useEffect(() => {
-    if (viewMode !== 'playback') return;
-    let cancelled = false;
-
-    nvrRecordingService.findChunkAt(playbackDate, playbackSec).then((found) => {
-      if (cancelled) return;
-      if (found && found.chunk.blobUrl) {
-        setCurrentPlaybackChunk(found.chunk);
-        if (playbackVideoRef.current) {
-          if (playbackVideoRef.current.src !== found.chunk.blobUrl) {
-            playbackVideoRef.current.src = found.chunk.blobUrl;
-          }
-          if (Math.abs(playbackVideoRef.current.currentTime - found.offsetSec) > 1) {
-            playbackVideoRef.current.currentTime = found.offsetSec;
-          }
-          if (isPlaying) {
-            playbackVideoRef.current.play().catch(() => {});
-          }
-        }
-      } else {
-        setCurrentPlaybackChunk(null);
-        if (playbackVideoRef.current) {
-          playbackVideoRef.current.pause();
-        }
-      }
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [playbackDate, playbackSec, viewMode, isPlaying]);
-
-  // Playback video tezligi
-  useEffect(() => {
-    if (playbackVideoRef.current) {
-      playbackVideoRef.current.playbackRate = playbackSpeed;
-    }
-  }, [playbackSpeed]);
-
-  // Playback timer (sekundma-sekund oldinga siljish)
-  useEffect(() => {
-    if (viewMode !== 'playback' || !isPlaying) return;
-    const intervalTime = Math.max(100, Math.round(1000 / playbackSpeed));
-    const timer = window.setInterval(() => {
-      setPlaybackSec((prev) => (prev >= 86399 ? 0 : prev + 1));
-    }, intervalTime);
-    return () => clearInterval(timer);
-  }, [viewMode, isPlaying, playbackSpeed]);
+  // Live rejim
+  const viewMode = 'live';
 
   // 5 sekundlik Auto-Hide (Mishka harakatida chiqish, 5s qimirlamasa yashirinish, telefonda tap bilan almashtirish)
   const [showOverlay, setShowOverlay] = useState<boolean>(true);
@@ -737,7 +584,6 @@ export const HUDView: React.FC = () => {
   // NVR yozuviga odam ramkalari ham tushishi uchun: kompozitor har kadrda shu ref'dan o'qiydi
   const overlayStateRef = useRef({ objects: detectedObjects, ai: aiEnabled, mirror: mirrorVideo });
   overlayStateRef.current = { objects: detectedObjects, ai: aiEnabled, mirror: mirrorVideo };
-  const annotatedRef = useRef<AnnotatedStream | null>(null);
   const [detectedCounts, setDetectedCounts] = useState({ people: 0, cars: 0, obstacles: 0, total: 0 });
 
   // Yuzlar bazasi modali va ro'yxati
@@ -756,12 +602,6 @@ export const HUDView: React.FC = () => {
   // ESLATMA: sonar bilan masofani tuzatish o'chirilgan. Kamera "robot ko'zi" sifatida o'z masofasini sonars.front ga yozadi
   // (RobotContext.updateCameraObstacle), shuning uchun sonars.front ni qaytib kameraga berish o'z-o'zini kuchaytiruvchi sikl bo'lardi.
 
-  // Kalibrovka uchun oxirgi yuz o'lchamlari (eng yaqin yuz, piksel)
-  const faceSamplesRef = useRef<FaceSample[]>([]);
-  const [showCalibration, setShowCalibration] = useState(false);
-  const [calibDistance, setCalibDistance] = useState('0.5');
-  const [calibrated, setCalibrated] = useState(distanceEstimator.isCalibrated(CAMERA_KEY));
-
   // Yuz modeli holati va oxirgi kadr natijasi (ekranda ko'rsatiladi: nima uchun yuz topilmayotganini ko'rish uchun)
   const [faceStatus, setFaceStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [faceInfo, setFaceInfo] = useState<{
@@ -771,60 +611,39 @@ export const HUDView: React.FC = () => {
     calibCount: number;
     calibStable: boolean;
     eyePx: number;
-    faceDistM: number; // yuz ramkasi bo'yicha masofa (m), 0 = yuz yo'q
-    eyeDistM: number; // ko'zlar orasidagi masofa bo'yicha (m). Faqat tizim uchun, ekranda ko'rsatilmaydi
+    faceDistM: number;
+    eyeDistM: number;
   }>({ count: 0, widthPx: 0, cycleMs: 0, calibCount: 0, calibStable: true, eyePx: 0, faceDistM: 0, eyeDistM: 0 });
-  const cocoModelRef = useRef<cocoSsd.ObjectDetection | null>(null);
   const isDetectingRef = useRef<boolean>(false);
   const lastObjectsSigRef = useRef('');
-  const proximityCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  // Kontekstga oxirgi yuborilgan to'siq holati: bir xil qiymatni har kadrda yuborib, butun ilovani qayta chizdirmaslik uchun
-  const lastObstacleRef = useRef({ key: '', t: 0 });
 
   // =========================================================================
-  // 1. TENSORFLOW COCO-SSD VA YUZ BAZASINI YUKLASH
+  // 1. YUZ BAZASINI YUKLASH (OPTIMALLASHTIRILGAN, COCO-SSD-SIZ)
   // =========================================================================
   useEffect(() => {
     let isMounted = true;
     const loadAiServices = async () => {
       try {
-        // Kontekstdagi namuna (soxta) ramkalar jonli kamera ustida ko'rinib qolmasin
         setDetectedObjects([]);
         setAiModelLoading(true);
-        addLog('AI', 'info', "Neyron tarmoq va yuzlar bazasi yuklanmoqda...");
-        
-        // Yuz modeli va bazani yuklash. Xato bo'lsa ham COCO ishlayveradi, odamlar "Piyoda" bo'ladi
+        addLog('AI', 'info', "Yuz tanish modeli yuklanmoqda...");
+
         let faceReady = true;
-        const faceInit = faceRecognitionService.prepare().catch((faceErr: unknown) => {
+        await faceRecognitionService.prepare().catch((faceErr: unknown) => {
           faceReady = false;
           if (isMounted) setFaceStatus('error');
           const msg = faceErr instanceof Error ? faceErr.message : String(faceErr);
-          addLog('AI', 'error', `Yuz tanish modeli yuklanmadi, barcha odamlar "Piyoda": ${msg}`);
+          addLog('AI', 'error', `Yuz tanish modeli yuklanmadi: ${msg}`);
         });
 
-        // COCO-SSD va yuz modeli parallel yuklanadi. Har birining vaqti jurnalga yoziladi (sekinlikni topish uchun)
-        const tStart = performance.now();
-        const ms = () => Math.round(performance.now() - tStart);
-        const cocoLoad = loadCocoModel().then((m) => {
-          addLog('AI', 'info', `COCO-SSD tayyor: ${ms()} ms`);
-          return m;
-        });
-        faceInit.then(() => {
-          if (faceReady) {
-            const t = faceRecognitionService.timings;
-            addLog('AI', 'info', `Yuz modeli tayyor: ${ms()} ms (modellar ${t.modellar} ms, isitish ${t.isitish} ms)`);
-          }
-        });
-        const [model] = await Promise.all([cocoLoad, faceInit]);
         if (isMounted) {
-          cocoModelRef.current = model;
           setAiModelLoaded(true);
           setAiModelLoading(false);
           setKnownPersons([...faceRecognitionService.getPersons()]);
           if (faceReady) {
             setFaceStatus('ready');
             const n = faceRecognitionService.getPersons().filter((p) => p.descriptor).length;
-            addLog('AI', 'success', `Yuzni tanish va COCO-SSD tayyor: bazada ${n} ta shaxs`);
+            addLog('AI', 'success', `Yuzni tanish tayyor: bazada ${n} ta shaxs (tezkor rejim)`);
           }
         }
       } catch (err: unknown) {
@@ -836,29 +655,16 @@ export const HUDView: React.FC = () => {
       }
     };
 
-    // Operator qurilmasi faqat robot planshetidan kelgan kadrda aniqlash qilmaydi;
-    // Raspberry Pi USB web-kamera to'g'ridan-to'g'ri ulangan bo'lsa AI ishlayveradi.
-    if (isViewer && !piWebcamActive) {
-      setAiModelLoading(false);
-      setFaceStatus('ready');
-      return;
-    }
-    // AI "yoqilgan" tugmasi bosilmaguncha model yuklanmaydi: WebGL shaderlarini birinchi kompilyatsiya qilish
-    // 10-20+ s asosiy oqimni bloklaydi (zaif qurilmalarda sahifa qotib qolardi, aiPreload.ts'dagi eslatmaga qarang).
-    if (!aiEnabled || aiModelLoaded || aiModelLoading) return;
     loadAiServices();
     return () => {
       isMounted = false;
     };
-  }, [addLog, setDetectedObjects, isViewer, piWebcamActive, aiEnabled, aiModelLoaded, aiModelLoading]);
+  }, [addLog]);
 
   // =========================================================================
   // 2. FRONTAL KAMERA (WEBCAM) OQIMINI BOSHQARISH
   // =========================================================================
   const stopCameraStream = useCallback(() => {
-    nvrRecordingService.stopRecording();
-    annotatedRef.current?.stop();
-    annotatedRef.current = null;
     robotCamBroadcaster.clearSource(streamRef.current);
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
@@ -902,31 +708,6 @@ export const HUDView: React.FC = () => {
       }
       if (isStale()) return;
       setCameraLoading(false);
-      // Kamera tasviri avtomatik yoziladi (disk papkasi 1 GB yoki brauzer 100 MB, eng eskisi o'chadi).
-      // Yozuvga kadr bilan birga odam identifikatsiya ramkalari, ism, masofa va sana-vaqt ham chiziladi
-      const annotated = videoRef.current
-        ? createAnnotatedStream(videoRef.current, {
-            title: 'QALQON HUD',
-            mirror: () => overlayStateRef.current.mirror,
-            getBoxes: () => {
-              const s = overlayStateRef.current;
-              if (!s.ai) return [];
-              return s.objects
-                .filter((o) => o.category === 'person')
-                .map((o) => ({
-                  x: o.box.x / 100,
-                  y: o.box.y / 100,
-                  w: o.box.width / 100,
-                  h: o.box.height / 100,
-                  color: o.color,
-                  label: o.isIdentifiedPerson ? `${o.label} ${(o.confidence * 100).toFixed(0)}%` : o.label,
-                  note: `${o.distanceUpperBound ? '<' : o.distanceApprox ? '~' : ''}${o.distance} m`
-                }));
-            }
-          })
-        : null;
-      annotatedRef.current = annotated;
-      nvrRecordingService.startRecording(annotated?.stream ?? stream);
       addLog('SYSTEM', 'success', "Frontal kamera oqimi tiniq rejimda ulandi.");
     } catch (err: unknown) {
       if (isStale()) return;
@@ -942,17 +723,12 @@ export const HUDView: React.FC = () => {
     stopCameraStream();
     setCameraError(null);
     setCameraLoading(true);
-    let annotated: AnnotatedStream | null = null;
     const stop = watchRobotCamera(robotId, {
       onTelemetry: onLiveTelemetry,
       // Robotga ulangan PTZ kamera moduli (PTZ / o'ng / chap) tasviri: kichik va katta oynalarda ko'rsatiladi
       onPtzStream: (stream) => remoteLens.setStream(stream),
       onStream: (stream) => {
         const v = videoRef.current;
-        nvrRecordingService.stopRecording();
-        annotated?.stop();
-        annotated = null;
-        annotatedRef.current = null;
         if (!stream || !v) {
           if (v) v.srcObject = null;
           setCameraLoading(true);
@@ -968,26 +744,6 @@ export const HUDView: React.FC = () => {
         void v.play().catch(() => {});
         setCameraLoading(false);
         setCameraError(null);
-        // Operator kompyuterida ham robot tasviri (ramkalar bilan) NVR ga yoziladi
-        annotated = createAnnotatedStream(v, {
-          title: 'QALQON ROBOT (masofaviy)',
-          mirror: () => overlayStateRef.current.mirror,
-          getBoxes: () => {
-            const s = overlayStateRef.current;
-            if (!s.ai) return [];
-            return s.objects.map((o) => ({
-              x: o.box.x / 100,
-              y: o.box.y / 100,
-              w: o.box.width / 100,
-              h: o.box.height / 100,
-              color: o.color,
-              label: o.isIdentifiedPerson ? `${o.label} ${(o.confidence * 100).toFixed(0)}%` : o.label,
-              note: o.distance > 0 ? `${o.distanceUpperBound ? '<' : o.distanceApprox ? '~' : ''}${o.distance} m` : undefined
-            }));
-          }
-        });
-        annotatedRef.current = annotated;
-        nvrRecordingService.startRecording(annotated?.stream ?? stream);
       },
       onBoxes: setRemoteBoxes,
       onState: (state, detail) => {
@@ -998,7 +754,6 @@ export const HUDView: React.FC = () => {
     addLog('SYSTEM', 'info', `${robotId} robot kamerasiga masofadan ulanilmoqda...`);
     return () => {
       stop();
-      annotated?.stop();
     };
   }, [addLog, stopCameraStream, onLiveTelemetry]);
 
@@ -1108,286 +863,88 @@ export const HUDView: React.FC = () => {
     if (!vW || !vH) return;
     setVideoAspect((prev) => (Math.abs(prev - vW / vH) > 0.01 ? vW / vH : prev));
 
-    if (cocoModelRef.current) {
+    if (faceRecognitionService.isReady()) {
       try {
         isDetectingRef.current = true;
         const cycleStart = performance.now();
-        const predictions = await cocoModelRef.current.detect(video, 12, OBSTACLE_MIN_SCORE);
+        const identities = await faceRecognitionService.identifyPeople(video, []);
 
-        let personCount = 0;
-        let carCount = 0;
-        let obstacleCount = 0;
-
-        const vehiclePreds = predictions.filter((pred) => VEHICLE_CLASSES.includes(pred.class.toLowerCase()));
-        // Odam uchun chegara qat'iyroq: past baholi "odam" soxta bo'lishi mumkin
-        const personPreds = predictions.filter(
-          (pred) => pred.class.toLowerCase() === 'person' && pred.score >= PERSON_MIN_SCORE
-        );
-        // Odam ustidagi/ichidagi kichik jismlar (galstuk, sumka, telefon...) robot uchun to'siq emas: odamning o'zi hisobga olinadi
-        const insidePerson = (b: number[]) =>
-          personPreds.some((pp) => {
-            const [px, py, pw, ph] = pp.bbox;
-            const cx = b[0] + b[2] / 2;
-            const cy = b[1] + b[3] / 2;
-            return cx >= px && cx <= px + pw && cy >= py && cy <= py + ph && b[2] * b[3] < pw * ph * 0.25;
-          });
-        const otherPreds = predictions.filter((pred) => {
-          const cls = pred.class.toLowerCase();
-          return cls !== 'person' && cls !== 'tie' && !VEHICLE_CLASSES.includes(cls) && !insidePerson(pred.bbox);
-        });
-
-        // Odamlar: yuz orqali tanish. Bazada yo'q yoki yuzi ko'rinmagan odam — "Piyoda"
-        const identities = await faceRecognitionService.identifyPeople(
-          video,
-          personPreds.map((p) => ({ x: p.bbox[0], y: p.bbox[1], width: p.bbox[2], height: p.bbox[3] }))
-        );
-
-        // Yuz dvigateli hali tayyor bo'lmasa (qayta yuklanmoqda), "topilmadi" emas, "yuklanmoqda" ko'rsatiladi
         setFaceStatus((prev) => (prev === 'error' ? prev : faceRecognitionService.isWarm() ? 'ready' : 'loading'));
 
-        // Eng katta (eng yaqin) yuz: kalibrovka ma'lumoti va ko'z masofasini ko'rsatish uchun
         const withFace = identities.filter((i) => i.faceBox);
         const closest = withFace.length
           ? withFace.reduce((a, b) => (a.faceBox!.width >= b.faceBox!.width ? a : b))
           : null;
-        const now = Date.now();
         const eyePx = closest?.eyes
           ? Math.hypot(closest.eyes.x2 - closest.eyes.x1, closest.eyes.y2 - closest.eyes.y1)
           : 0;
-        if (closest?.faceBox) {
-          faceSamplesRef.current = [
-            ...faceSamplesRef.current,
-            { width: closest.faceBox.width, eyePx, frameH: vH, t: now }
-          ];
-        }
-        // Eskirgan kadrlar ham tozalanadi, shunda yuz yo'qolsa indikator yana sariqqa qaytadi
-        faceSamplesRef.current = faceSamplesRef.current.filter((s) => now - s.t < CALIB_WINDOW_MS);
-        const calib = evaluateCalibSamples(faceSamplesRef.current);
 
-        // Har kadrda emas, faqat ko'rinadigan qiymat o'zgarganda qayta chizamiz (butun HUD qayta chizilishi qimmat)
         const nextFaceInfo = {
           count: withFace.length,
           widthPx: closest?.faceBox ? Math.round(closest.faceBox.width / 4) * 4 : 0,
           cycleMs: Math.round((performance.now() - cycleStart) / 50) * 50,
-          calibCount: calib.count,
-          calibStable: calib.stable,
+          calibCount: 0,
+          calibStable: true,
           eyePx: Math.round(eyePx),
-          faceDistM: closest?.faceBox
-            ? Math.round(distanceEstimator.rawFaceDistance(CAMERA_KEY, closest.faceBox.width, vH) * 100) / 100
-            : 0,
-          eyeDistM: eyePx > 0 ? Math.round(distanceEstimator.rawEyeDistance(CAMERA_KEY, eyePx, vH) * 100) / 100 : 0
+          faceDistM: 0,
+          eyeDistM: 0
         };
         setFaceInfo((prev) => (JSON.stringify(prev) === JSON.stringify(nextFaceInfo) ? prev : nextFaceInfo));
 
-        const items = [
-          ...identities.map((identity, i) => ({
-            class: 'person',
-            bbox: [identity.box.x, identity.box.y, identity.box.width, identity.box.height] as [number, number, number, number],
-            score: personPreds[i]?.score ?? identity.faceScore ?? 0.5,
-            identity
-          })),
-          ...vehiclePreds.map((pred) => ({ class: pred.class, bbox: pred.bbox, score: pred.score, identity: undefined })),
-          // Odam ham, transport ham bo'lmagan har qanday jism robot uchun to'siq
-          ...otherPreds.map((pred) => ({ class: pred.class, bbox: pred.bbox, score: pred.score, identity: undefined }))
-        ];
+        const newObjects: DetectedObject[] = identities.map((identity, idx) => {
+          const rawBox = identity.faceBox || identity.box;
+          let boxX = (rawBox.x / vW) * 100;
+          const boxY = (rawBox.y / vH) * 100;
+          const boxW = (rawBox.width / vW) * 100;
+          const boxH = (rawBox.height / vH) * 100;
 
-        const newObjects: DetectedObject[] = items
-          .map((pred, idx) => {
-            const cls = pred.class.toLowerCase();
-            const [rawX, rawY, rawW, rawH] = pred.bbox;
-
-            let label = "Noma'lum";
-            let color = "#5ad1e6";
-            let category: DetectedObject['category'] = 'other';
-            let personName: string | undefined = undefined;
-            let isIdentifiedPerson = false;
-            let confidence = +pred.score.toFixed(2);
-
-            if (cls === 'person') {
-              personCount++;
-              category = 'person';
-
-              const match = pred.identity;
-              if (match?.person) {
-                label = match.person.fullName;
-                personName = match.person.fullName;
-                color = match.person.color || '#4ade80';
-                isIdentifiedPerson = true;
-                confidence = +(match.confidence ?? pred.score).toFixed(2);
-              } else {
-                label = "Piyoda";
-                personName = undefined;
-                color = "#5ad1e6";
-                isIdentifiedPerson = false;
-                confidence = +pred.score.toFixed(2);
-              }
-            } else if (cls === 'car') {
-              carCount++;
-              label = "Mashina (Avtomobil)";
-              color = "#5ad1e6"; // Tsian / Moviy
-              category = 'car';
-            } else if (cls === 'truck') {
-              carCount++;
-              label = "Yuk mashinasi";
-              color = "#5ad1e6";
-              category = 'car';
-            } else if (cls === 'bus') {
-              carCount++;
-              label = "Avtobus";
-              color = "#5ad1e6";
-              category = 'car';
-            } else if (cls === 'motorcycle' || cls === 'bicycle') {
-              label = cls === 'motorcycle' ? "Motosikl" : "Velosiped";
-              color = "#f5b544"; // Sariq
-              category = 'vehicle';
-            } else {
-              obstacleCount++;
-              label = UZ_OBSTACLE_NAMES[cls] || `To'siq (${cls})`;
-              color = "#f5b544";
-              category = 'other';
-            }
-
-            // Foiz koordinatalar (0 - 100%)
-            let boxX = (rawX / vW) * 100;
-            const boxY = (rawY / vH) * 100;
-            const boxW = (rawW / vW) * 100;
-            const boxH = (rawH / vH) * 100;
-
-            // Oyna (mirror) effekti bo'lsa gorizontal koordinatani moslash
-            if (mirrorVideo) {
-              boxX = 100 - (boxX + boxW);
-            }
-
-            // Masofa: pinhole modeli (yuz kengligi yoki obyekt balandligi) va silliqlash. Haqiqiy o'lchami noma'lum
-            // to'siqlar (stul, quti...) uchun kadrdagi balandlikdan taxminiy qiymat (jamoaning dastlabki formulasi)
-            const dist =
-              category === 'other'
-                ? {
-                    meters: Math.min(18, Math.max(0.18, +(45 / Math.max(10, boxH)).toFixed(2))),
-                    source: 'vehicle' as const,
-                    approx: true,
-                    upperBound: false
-                  }
-                : distanceEstimator.estimate(CAMERA_KEY, {
-                    cls,
-                    box: { x: rawX, y: rawY, width: rawW, height: rawH },
-                    faceBox: pred.identity?.faceBox ?? undefined,
-                    frameWidth: vW,
-                    frameHeight: vH
-                  });
-            // Juda yaqin begona jism qizil xavf rangiga o'tadi
-            if (dist.meters <= 0.4 && !isIdentifiedPerson) color = '#ef5b5b';
-
-            return {
-              // Barqaror kalit: React har kadrda ramkalarni o'chirib-qayta yaratmasin
-              id: `real-obj-${idx}`,
-              label,
-              confidence,
-              distance: dist.meters,
-              distanceSource: dist.source,
-              distanceApprox: dist.approx,
-              distanceUpperBound: dist.upperBound,
-              box: {
-                x: Math.max(0, Math.min(100 - boxW, boxX)),
-                y: Math.max(0, Math.min(100 - boxH, boxY)),
-                width: Math.min(100, boxW),
-                height: Math.min(100, boxH)
-              },
-              color,
-              category,
-              personName,
-              isIdentifiedPerson
-            };
-          });
-
-        // Optik yaqinlik: kamera oldi tekis jism (qo'l, devor, kitob) bilan to'silgan, lekin hech narsa tanilmagan bo'lsa
-        try {
-          if (!proximityCanvasRef.current) {
-            proximityCanvasRef.current = document.createElement('canvas');
-            proximityCanvasRef.current.width = 40;
-            proximityCanvasRef.current.height = 30;
+          if (mirrorVideo) {
+            boxX = 100 - (boxX + boxW);
           }
-          const pCtx = proximityCanvasRef.current.getContext('2d', { willReadFrequently: true });
-          if (pCtx && newObjects.length === 0) {
-            pCtx.drawImage(video, 0, 0, 40, 30);
-            const px = pCtx.getImageData(10, 12, 20, 16).data;
-            let totalLum = 0;
-            let minLum = 255;
-            let maxLum = 0;
-            for (let i = 0; i < px.length; i += 4) {
-              const lum = (px[i] + px[i + 1] + px[i + 2]) / 3;
-              totalLum += lum;
-              if (lum < minLum) minLum = lum;
-              if (lum > maxLum) maxLum = lum;
-            }
-            const avgLum = totalLum / (px.length / 4);
-            if (maxLum - minLum < 30 && (avgLum < 50 || avgLum > 200)) {
-              obstacleCount++;
-              newObjects.push({
-                id: 'opt-barrier',
-                label: "To'siq (Yaqin Jism)",
-                confidence: 0.94,
-                distance: 0.18,
-                distanceApprox: true,
-                box: { x: 20, y: 35, width: 60, height: 60 },
-                color: '#ef5b5b',
-                category: 'other'
-              });
-            }
-          }
-        } catch {
-          // Offscreen canvas tahlili xatosi e'tiborga olinmaydi
-        }
 
-        // Xavfsizlik yo'lagi: robot oldidagi markaziy koridordagi eng yaqin jism va aylanib o'tish yo'nalishi
-        let minCollisionCm = 200;
-        let closestLabel = "Yo'l ochiq";
-        let closestCenterX = 50;
-        let closestWidth = 0;
-        for (const obj of newObjects) {
-          const centerX = obj.box.x + obj.box.width / 2;
-          const bottomY = obj.box.y + obj.box.height;
-          const distCm = Math.round(obj.distance * 100);
-          if (centerX >= 18 && centerX <= 82 && bottomY >= 25 && distCm < minCollisionCm) {
-            minCollisionCm = distCm;
-            closestLabel = obj.label;
-            closestCenterX = centerX;
-            closestWidth = obj.box.width;
-          }
-        }
-        let evasion: 'CLEAR' | 'LEFT' | 'RIGHT' | 'REVERSE' = 'CLEAR';
-        if (minCollisionCm <= 80) {
-          if (closestWidth >= 55) evasion = 'REVERSE';
-          else if (closestCenterX < 48) evasion = 'RIGHT'; // to'siq chapda: o'ngga burilish
-          else evasion = 'LEFT'; // to'siq o'ngda: chapga burilish
-        }
-        // Robot miyasiga (RobotContext) uzatish. Holat o'zgarmasa ~1 s da bir marta (kontekst "jonli" deb bilishi uchun)
-        const obstacleKey = `${Math.round(minCollisionCm / 2)}|${closestLabel}|${evasion}`;
-        const nowMs = Date.now();
-        if (obstacleKey !== lastObstacleRef.current.key || nowMs - lastObstacleRef.current.t > 1000) {
-          lastObstacleRef.current = { key: obstacleKey, t: nowMs };
-          updateCameraObstacle(minCollisionCm, closestLabel, evasion);
-        }
+          const isIdentified = !!identity.person;
+          const label = identity.person?.fullName || (identity.faceFound ? "Noma'lum" : "Piyoda");
+          const color = identity.person?.color || (isIdentified ? '#4ade80' : '#38bdf8');
+          const confidence = +(identity.confidence ?? identity.faceScore ?? 0.85).toFixed(2);
 
-        // Ramkalar ~0.6% (bir necha piksel) dan kam siljisa, qayta chizmaymiz: kamera shovqini tufayli har kadrda o'zgarmasin
+          return {
+            id: `face-${idx}`,
+            label,
+            confidence,
+            distance: 0,
+            distanceSource: 'face' as const,
+            distanceApprox: false,
+            distanceUpperBound: false,
+            box: {
+              x: Math.max(0, Math.min(100 - boxW, boxX)),
+              y: Math.max(0, Math.min(100 - boxH, boxY)),
+              width: Math.min(100, boxW),
+              height: Math.min(100, boxH)
+            },
+            color,
+            category: 'person' as const,
+            personName: identity.person?.fullName,
+            isIdentifiedPerson: isIdentified
+          };
+        });
+
         const sig = newObjects
-          .map((o) => {
-            const q = (v: number) => Math.round(v / 0.6);
-            return `${o.label}|${o.isIdentifiedPerson ? 1 : 0}|${q(o.box.x)}|${q(o.box.y)}|${q(o.box.width)}|${q(o.box.height)}|${o.distance}|${o.distanceApprox ? 1 : 0}${o.distanceUpperBound ? 1 : 0}`;
-          })
+          .map((o) => `${o.label}|${o.isIdentifiedPerson ? 1 : 0}|${Math.round(o.box.x)}|${Math.round(o.box.y)}|${Math.round(o.box.width)}|${Math.round(o.box.height)}`)
           .join(';');
         if (sig !== lastObjectsSigRef.current) {
           lastObjectsSigRef.current = sig;
           setDetectedObjects(newObjects);
-          setDetectedCounts({
-            people: personCount,
-            cars: carCount,
-            obstacles: obstacleCount,
-            total: newObjects.length
-          });
+          overlayStateRef.current.objects = newObjects;
         }
-      } catch {
-        // AI detection pass
+
+        setDetectedCounts({
+          people: identities.length,
+          cars: 0,
+          obstacles: 0,
+          total: identities.length
+        });
+      } catch (err) {
+        console.warn('[FaceID] xatolik:', err);
       } finally {
         isDetectingRef.current = false;
       }
@@ -1760,70 +1317,6 @@ export const HUDView: React.FC = () => {
     }
   };
 
-  // Kalibrovka datchigi holati: yashil bo'lishi uchun yuz yetarli kadrda topilib, o'lchami barqaror bo'lishi kerak
-  const calibReady = faceStatus === 'ready' && faceInfo.calibCount >= CALIB_MIN_SAMPLES && faceInfo.calibStable;
-  const calibHint =
-    faceStatus === 'idle'
-      ? 'AI o\'chiq: avval "AI va yuz tanish" panelida yoqing.'
-      : faceStatus === 'loading'
-      ? 'Yuz modeli yuklanmoqda...'
-      : faceStatus === 'error'
-      ? 'Yuz modeli xato: kalibrovka mumkin emas (jurnalga qarang).'
-      : faceInfo.calibCount === 0
-      ? "Yuz topilmadi: kameraga qarang, yuzga yorug'lik tushsin, kameradan taxminan 50 sm da turing."
-      : faceInfo.calibCount < CALIB_MIN_SAMPLES
-      ? `Yuz kadrlari yig'ilmoqda: ${faceInfo.calibCount}/${CALIB_MIN_SAMPLES}. Kamerada qimirlamay turing.`
-      : !faceInfo.calibStable
-      ? "Yuz o'lchami o'zgaryapti: qimirlamang va kameraga to'g'ri qarang."
-      : `Ma'lumot yetarli (${faceInfo.calibCount} kadr, barqaror). "Kalibrovka qilish"ni bosing.`;
-
-  // Kalibrovka: odam kameradan ma'lum masofada turganda yuz kengligidan fokus uzunligi hisoblanadi
-  const handleCalibrate = () => {
-    const dist = parseFloat(calibDistance.replace(',', '.'));
-    if (!(dist >= 0.3 && dist <= 10)) {
-      addLog('AI', 'warn', "Kalibrovka masofasi 0.3 dan 10 metrgacha bo'lishi kerak.");
-      return;
-    }
-    if (faceStatus !== 'ready') {
-      addLog('AI', 'warn', "Yuz modeli tayyor emas (yuqori chapdagi 'YUZ' holatiga qarang). Kalibrovka mumkin emas.");
-      return;
-    }
-    const now = Date.now();
-    const samples = faceSamplesRef.current.filter((s) => now - s.t < CALIB_WINDOW_MS);
-    const calib = evaluateCalibSamples(samples);
-    if (calib.count < CALIB_MIN_SAMPLES || !calib.stable) {
-      addLog('AI', 'warn', "Kalibrovka ma'lumoti hali yetarli emas: indikator yashil bo'lishini kuting.");
-      return;
-    }
-    const medianWidth = calib.median;
-    const result = distanceEstimator.calibrate(CAMERA_KEY, dist, medianWidth, samples[samples.length - 1].frameH);
-    if (!result.saved) {
-      addLog(
-        'AI',
-        'error',
-        `Kalibrovka rad etildi: natija ishonchsiz (kamera ko'rish burchagi ~${result.vFovDeg}°, odatda 40-60°). Haqiqiy masofa ${dist} m ekanini va yuz ${Math.round(medianWidth)} px bo'lganini tekshiring.`
-      );
-      return;
-    }
-    // Ko'z masofasi ham xuddi shu ma'lumotdan kalibrovka qilinadi (solishtirish uchun)
-    const eyeWidths = samples.map((s) => s.eyePx).filter((v) => v > 0).sort((a, b) => a - b);
-    if (eyeWidths.length > 0) {
-      distanceEstimator.calibrateEye(CAMERA_KEY, dist, eyeWidths[Math.floor(eyeWidths.length / 2)], samples[samples.length - 1].frameH);
-    }
-    setCalibrated(true);
-    setShowCalibration(false);
-    addLog(
-      'AI',
-      'success',
-      `Masofa kalibrovkasi saqlandi: ${dist} m, yuz ${Math.round(medianWidth)} px, ko'rish burchagi ~${result.vFovDeg}°.`
-    );
-  };
-
-  const handleResetCalibration = () => {
-    distanceEstimator.resetCalibration(CAMERA_KEY);
-    setCalibrated(false);
-    addLog('AI', 'info', "Kalibrovka tiklandi: standart ko'rish burchagi (45°) ishlatiladi.");
-  };
 
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -2450,43 +1943,7 @@ export const HUDView: React.FC = () => {
                   maxHeight: '100%'
                 }}
               >
-                {/* 2-REJIM: QAYTA KO'RISH (PLAYBACK) - HAQIQIY ARXIV VIDEO IJROSI */}
-                {viewMode === 'playback' && (
-                  <div className="absolute inset-0 bg-black flex items-center justify-center overflow-hidden z-20">
-                    <video
-                      ref={playbackVideoRef}
-                      playsInline
-                      className={`w-full h-full object-contain ${currentPlaybackChunk ? 'block' : 'hidden'}`}
-                      style={zoomStyle}
-                    />
-                    
-                    {!currentPlaybackChunk && (
-                      <div className="absolute inset-0 bg-tactical-950 flex flex-col items-center justify-center p-6 text-center z-10">
-                        <div className="p-4 rounded-full bg-slate-800/80 border border-slate-700 text-slate-400 mb-3 shadow-lg">
-                          <Film className="w-10 h-10" />
-                        </div>
-                        <div className="font-mono text-sm font-bold text-slate-200">
-                          Ushbu vaqtda ({formatSecToTime(playbackSec)}) video yozuv mavjud emas
-                        </div>
-                        <div className="text-xs text-slate-400 max-w-md mt-1.5 leading-relaxed">
-                          Scrollbarda faqat <span className="text-blue-400 font-bold">KO'K</span> rangli sohalarda NVR arxiv yozuvlari saqlangan. <span className="text-slate-400 font-bold">KULRANG</span> joylar esa zapis bo'lmagan oraliqlar.
-                        </div>
-                        {timelineRanges.length > 0 && (
-                          <button
-                            onClick={() => {
-                              setPlaybackSec(timelineRanges[0].startSec);
-                              setIsPlaying(true);
-                              resetOverlayTimer();
-                            }}
-                            className="mt-4 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-police-blue hover:from-blue-500 hover:to-blue-600 text-white font-mono text-xs font-bold shadow-lg shadow-blue-500/30 transition-all flex items-center gap-2 active:scale-95"
-                          >
-                            <Play className="w-4 h-4 fill-current" /> Eng yaqin yozuvga o'tish ({formatSecToTime(timelineRanges[0].startSec)})
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
+
 
                 {/* 1-REJIM: FRONTAL WEBCAM (FACE ID / RASPBERRY PI USB KAMERA) */}
                 {cameraSource === 'FRONTAL' && (
@@ -2728,28 +2185,10 @@ export const HUDView: React.FC = () => {
                 CAM-{activeCam.toUpperCase()} • {formatNvrTimestamp(nowTime)}
               </div>
 
-              {/* REJIM TANLASH: LIVE (Jonli) vs QAYTA KO'RISH (Playback) */}
-              <div className="flex items-center gap-1 bg-tactical-900/90 p-0.5 rounded-lg border border-tactical-700 shadow-lg backdrop-blur-md">
-                <button
-                  onClick={() => { setViewMode('live'); setIsPlaying(false); resetOverlayTimer(); }}
-                  className={`px-2.5 py-1 rounded-md text-xs font-bold flex items-center gap-1.5 transition-colors ${
-                    viewMode === 'live'
-                      ? 'bg-police-red text-white shadow-[0_0_12px_rgba(255,42,42,0.4)]'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <Radio className="w-3.5 h-3.5 animate-pulse" /> JONLI (LIVE)
-                </button>
-                <button
-                  onClick={() => { setViewMode('playback'); resetOverlayTimer(); }}
-                  className={`px-2.5 py-1 rounded-md text-xs font-bold flex items-center gap-1.5 transition-colors ${
-                    viewMode === 'playback'
-                      ? 'bg-police-blue text-white shadow-[0_0_12px_rgba(0,102,255,0.4)]'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <Film className="w-3.5 h-3.5" /> QAYTA KO'RISH
-                </button>
+              {/* LIVE INDIKATOR */}
+              <div className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-police-red/20 border border-police-red/50 text-police-red text-xs font-bold font-mono">
+                <span className="w-2 h-2 rounded-full bg-police-red animate-pulse" />
+                JONLI (LIVE)
               </div>
 
               {/* ZOOM VA FULLSCREEN BUTTONLARI */}
@@ -2798,211 +2237,27 @@ export const HUDView: React.FC = () => {
               </div>
             </div>
 
-            {/* QAYTA KO'RISH (PLAYBACK) REJIMI: VIDEONI TO'XTATISH, 10S OLDINGA/ORQAGA, TEZLIK, SCROLLBAR, KALENDAR */}
-            {viewMode === 'playback' && (
-              <div
-                onClick={(e) => { e.stopPropagation(); resetOverlayTimer(); }}
-                className={`flex flex-col gap-2 p-2.5 rounded-xl bg-tactical-950/90 border border-tactical-700 shadow-2xl backdrop-blur-md transition-all duration-300 ${
-                  showOverlay ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-2 pointer-events-none'
-                }`}
-              >
-                {/* 1-qator: Kalendar, Vaqt ko'rsatkichi, Tezlik */}
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  {/* Kalendar orqali kunni tanlash */}
-                  <div className="flex items-center gap-1.5 bg-tactical-900 px-2.5 py-1 rounded-lg border border-tactical-700 text-xs">
-                    <Calendar className="w-3.5 h-3.5 text-police-cyan" />
-                    <span className="text-[11px] text-slate-400">Kun:</span>
-                    <input
-                      type="date"
-                      value={playbackDate}
-                      onChange={(e) => { setPlaybackDate(e.target.value); resetOverlayTimer(); }}
-                      className="bg-transparent text-white font-mono text-xs focus:outline-none cursor-pointer"
-                    />
-                  </div>
-
-                  {/* Vaqt ko'rsatkichi va NVR holati */}
-                  <div className="text-xs font-mono font-bold text-police-cyan flex items-center gap-1.5">
-                    <Film className="w-3.5 h-3.5" />
-                    ARXIV: <span>{playbackDate} {formatSecToTime(playbackSec)}</span>
-                  </div>
-
-                  {/* Video tezligini tanlash (0.5x, 1x, 2x, 4x, 8x) */}
-                  <div className="flex items-center gap-1 bg-tactical-900 p-1 rounded-lg border border-tactical-700">
-                    <span className="text-[10px] text-slate-400 pl-1">Tezlik:</span>
-                    {([0.5, 1, 2, 4, 8] as const).map((spd) => (
-                      <button
-                        key={spd}
-                        onClick={() => { setPlaybackSpeed(spd); resetOverlayTimer(); }}
-                        className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold transition-colors ${
-                          playbackSpeed === spd
-                            ? 'bg-police-blue text-white shadow-xs'
-                            : 'text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        {spd}x
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* 2-qator: Scrollbar (Vaqt chizig'i / Timeline scrubber) */}
-                <div className="relative w-full flex flex-col gap-1 py-1">
-                  <div className="relative w-full flex items-center h-6">
-                    {/* Fon: KULRANG (Zapis bo'lmagan barcha vaqtlar) */}
-                    <div className="absolute inset-x-0 h-3 bg-slate-700/90 rounded overflow-hidden border border-slate-600/60 shadow-inner">
-                      {/* KO'K BLOKLAR: Faqat yozib olingan (zapis bo'lgan) vaqt oraliqlari */}
-                      {timelineRanges.map((rng, idx) => {
-                        const leftPercent = (rng.startSec / 86400) * 100;
-                        const widthPercent = Math.max(0.6, ((rng.endSec - rng.startSec) / 86400) * 100);
-                        return (
-                          <div
-                            key={idx}
-                            className="absolute top-0 bottom-0 bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.8)] cursor-pointer hover:bg-blue-400 transition-colors"
-                            style={{
-                              left: `${leftPercent}%`,
-                              width: `${widthPercent}%`
-                            }}
-                            title={`Zapis bor: ${formatSecToTime(rng.startSec)} - ${formatSecToTime(rng.endSec)}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setPlaybackSec(rng.startSec);
-                              resetOverlayTimer();
-                            }}
-                          />
-                        );
-                      })}
-                    </div>
-
-                    {/* Interaktiv scrollbar slider */}
-                    <input
-                      type="range"
-                      min={0}
-                      max={86400}
-                      step={1}
-                      value={playbackSec}
-                      onChange={(e) => {
-                        setPlaybackSec(Number(e.target.value));
-                        resetOverlayTimer();
-                      }}
-                      className="relative w-full h-4 bg-transparent appearance-none cursor-pointer accent-police-cyan z-20"
-                    />
-                  </div>
-
-                  {/* 24 soatlik belgilar */}
-                  <div className="flex justify-between text-[9px] font-mono text-slate-400 px-0.5">
-                    <span>00:00</span>
-                    <span>04:00</span>
-                    <span>08:00</span>
-                    <span>12:00 (Tush)</span>
-                    <span>16:00</span>
-                    <span>20:00</span>
-                    <span>23:59</span>
-                  </div>
-
-                  {/* Legend va 100 MB xotira statistikasi */}
-                  <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 px-1 pt-0.5">
-                    <div className="flex items-center gap-3">
-                      <span className="flex items-center gap-1.5 text-slate-200">
-                        <span className="w-2.5 h-2.5 rounded-sm bg-blue-500 shadow-[0_0_6px_#3b82f6] inline-block" /> Zapis bor (Ko'k)
-                      </span>
-                      <span className="flex items-center gap-1.5 text-slate-400">
-                        <span className="w-2.5 h-2.5 rounded-sm bg-slate-700 border border-slate-600 inline-block" /> Zapis yo'q (Kulrang)
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 text-police-cyan font-semibold">
-                      {nvrDisk.recording && (
-                        <span className="flex items-center gap-1 text-rose-400">
-                          <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse inline-block" /> REC
-                        </span>
-                      )}
-                      <span>
-                        {nvrDisk.mode === 'disk' ? `Disk (${nvrDisk.folderName})` : 'Brauzer xotirasi'}:{' '}
-                        {(storageStats.usedBytes / (1024 * 1024)).toFixed(1)} MB / {Math.round(storageStats.maxBytes / (1024 * 1024))} MB
-                      </span>
-                      <span className="text-slate-500">({storageStats.percentUsed}%)</span>
-                      {nvrDisk.supported && (
-                        <button
-                          onClick={async (e) => {
-                            e.stopPropagation();
-                            if (nvrDisk.needsPermission) await nvrRecordingService.resumeDiskAccess();
-                            else await nvrRecordingService.chooseDiskFolder();
-                            resetOverlayTimer();
-                          }}
-                          title="Yozuvlar saqlanadigan papkani tanlang, masalan D:\QALQON_NVR (1 GB, eng eski yozuv avtomatik o'chadi)"
-                          className={`px-2 py-0.5 rounded-md border text-[10px] font-semibold transition-colors ${
-                            nvrDisk.needsPermission
-                              ? 'bg-amber-500/20 border-amber-500/60 text-amber-300 animate-pulse'
-                              : 'bg-tactical-850 border-tactical-700 text-slate-200 hover:bg-tactical-800'
-                          }`}
-                        >
-                          {nvrDisk.needsPermission ? 'Diskka yozishni tiklash' : nvrDisk.mode === 'disk' ? 'Papkani almashtirish' : 'D diskka saqlash (1 GB)'}
-                        </button>
-                      )}
-                    </div>
-                    {nvrDisk.lastError && <span className="text-rose-400">{nvrDisk.lastError}</span>}
-                  </div>
-                </div>
-
-                {/* 3-qator: Ijro boshqaruvi (Play/Pause, 10s orqaga, 10s oldinga) */}
-                <div className="flex items-center justify-center gap-3 pt-1 border-t border-tactical-800">
-                  {/* 10 soniya orqaga */}
-                  <button
-                    onClick={() => { setPlaybackSec((s) => Math.max(0, s - 10)); resetOverlayTimer(); }}
-                    title="10 soniya orqaga"
-                    className="px-3 py-1.5 rounded-lg bg-tactical-850 hover:bg-tactical-800 border border-tactical-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition-colors"
-                  >
-                    <Rewind className="w-4 h-4 text-police-cyan" /> -10s
-                  </button>
-
-                  {/* Videoni to'xtatish / boshlash (Play/Pause) */}
-                  <button
-                    onClick={() => { setIsPlaying((p) => !p); resetOverlayTimer(); }}
-                    title={isPlaying ? "To'xtatish" : "Ijro etish"}
-                    className={`px-5 py-2 rounded-lg font-bold text-xs flex items-center gap-2 transition-all active:scale-95 ${
-                      isPlaying
-                        ? 'bg-police-amber text-tactical-950 shadow-[0_0_15px_rgba(255,170,0,0.3)]'
-                        : 'bg-police-blue text-white shadow-[0_0_15px_rgba(0,102,255,0.4)]'
-                    }`}
-                  >
-                    {isPlaying ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current" />}
-                    {isPlaying ? "TO'XTATISH" : "DAVOM ETTIRISH"}
-                  </button>
-
-                  {/* 10 soniya oldinga */}
-                  <button
-                    onClick={() => { setPlaybackSec((s) => Math.min(86400, s + 10)); resetOverlayTimer(); }}
-                    title="10 soniya oldinga"
-                    className="px-3 py-1.5 rounded-lg bg-tactical-850 hover:bg-tactical-800 border border-tactical-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition-colors"
-                  >
-                    +10s <FastForward className="w-4 h-4 text-police-cyan" />
-                  </button>
-                </div>
-              </div>
-            )}
-
             {/* LIVE REJIMDA: PASTKI STATISTIKA */}
-            {viewMode === 'live' && (
-              <div
-                onClick={(e) => { e.stopPropagation(); resetOverlayTimer(); }}
-                className={`flex items-center justify-between text-[11px] font-mono px-3 py-1.5 rounded-lg bg-black/60 backdrop-blur-md border border-white/10 transition-all duration-300 ${
-                  showOverlay ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-2 pointer-events-none'
-                }`}
-              >
-                <div className="flex items-center gap-2 text-police-cyan">
-                  <span className="w-2 h-2 rounded-full bg-police-red animate-ping" />
-                  <span className="font-bold">NVR LOCAL REC: 1080P 30FPS</span>
-                  <span className="text-slate-400">| QALQON DISK: 128GB (94.2GB BO'SH)</span>
-                </div>
-                {activeCam !== 'face' && (
-                  <button
-                    onClick={() => setActiveCam('face')}
-                    className="px-2 py-0.5 rounded bg-police-blue text-white text-[10px] font-bold"
-                  >
-                    Face ID ga qaytish
-                  </button>
-                )}
+            <div
+              onClick={(e) => { e.stopPropagation(); resetOverlayTimer(); }}
+              className={`flex items-center justify-between text-[11px] font-mono px-3 py-1.5 rounded-lg bg-black/60 backdrop-blur-md border border-white/10 transition-all duration-300 ${
+                showOverlay ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-2 pointer-events-none'
+              }`}
+            >
+              <div className="flex items-center gap-2 text-police-cyan">
+                <span className="w-2 h-2 rounded-full bg-police-green animate-pulse" />
+                <span className="font-bold">JONLI OQIM: {activeCam.toUpperCase()}</span>
+                <span className="text-slate-400">| QALQON IIV PATRUL</span>
               </div>
-            )}
+              {activeCam !== 'face' && (
+                <button
+                  onClick={() => setActiveCam('face')}
+                  className="px-2 py-0.5 rounded bg-police-blue text-white text-[10px] font-bold"
+                >
+                  Face ID ga qaytish
+                </button>
+              )}
+            </div>
           </div>
 
           {/* TAKTIL CHIZIQ AVTOPILOTINING DOIMIY KOMPAKT HOLAT PANELI */}
@@ -3476,7 +2731,7 @@ export const HUDView: React.FC = () => {
               <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
                 <dt className="text-slate-400">Model</dt>
                 <dd className="text-right text-slate-100">
-                  {aiModelLoaded ? 'COCO-SSD + yuz tayyor' : aiModelLoading ? 'Yuklanmoqda (birinchi marta 10-40 s)' : 'Detektor'}
+                  {aiModelLoaded ? 'Yuz tanish tayyor' : aiModelLoading ? 'Yuklanmoqda...' : 'Detektor'}
                 </dd>
                 <dt className="text-slate-400">Yuz</dt>
                 <dd className={`text-right ${faceStatus === 'error' ? 'text-police-red' : faceInfo.count > 0 ? 'text-police-green' : 'text-police-amber'}`}>
@@ -3497,22 +2752,13 @@ export const HUDView: React.FC = () => {
                 <dd className="text-right text-slate-100">{detectedCounts.total}</dd>
               </dl>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div>
                 <button
                   onClick={() => setShowFaceDbModal(true)}
-                  className="px-2.5 py-1.5 rounded-lg border border-tactical-700 bg-tactical-850 text-slate-200 hover:bg-tactical-800 font-medium flex items-center justify-center gap-1.5"
+                  className="w-full px-2.5 py-1.5 rounded-lg border border-tactical-700 bg-tactical-850 text-slate-200 hover:bg-tactical-800 font-medium flex items-center justify-center gap-1.5"
                 >
                   <Users className="w-3.5 h-3.5 text-police-green" />
                   Yuzlar bazasi ({knownPersons.length})
-                </button>
-                <button
-                  onClick={() => setShowCalibration(true)}
-                  className={`px-2.5 py-1.5 rounded-lg border bg-tactical-850 hover:bg-tactical-800 font-medium flex items-center justify-center gap-1.5 ${
-                    calibrated ? 'border-tactical-700 text-police-green' : 'border-police-amber/60 text-police-amber'
-                  }`}
-                >
-                  <Ruler className="w-3.5 h-3.5" />
-                  {calibrated ? 'Kalibrovka tayyor' : 'Kalibrovka'}
                 </button>
               </div>
 
@@ -3694,95 +2940,7 @@ export const HUDView: React.FC = () => {
         </div>
       </div>
 
-      {/* MASOFA KALIBROVKASI MODAL OYNASI */}
-      {showCalibration && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-tactical-950 border border-tactical-700 rounded-xl max-w-md w-full p-4 flex flex-col gap-3 shadow-2xl font-mono text-xs">
-            <div className="flex items-center justify-between border-b border-tactical-800 pb-3">
-              <div className="flex items-center space-x-2">
-                <Ruler className="w-5 h-5 text-police-cyan" />
-                <h3 className="font-bold text-white text-sm">Masofa kalibrovkasi</h3>
-              </div>
-              <button
-                onClick={() => setShowCalibration(false)}
-                className="p-1 rounded text-slate-400 hover:text-white bg-tactical-900"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
 
-            <ol className="list-decimal list-inside text-slate-300 space-y-1">
-              <li>Kameradan aniq 50 sm (0.5 m) o'lchab, yuzingiz shu masofada tursin.</li>
-              <li>Yuzingiz kadrda to'liq va aniq ko'rinsin (ramka paydo bo'lsin).</li>
-              <li>Pastdagi masofani kiriting va "Kalibrovka qilish"ni bosing.</li>
-            </ol>
-
-            <label className="flex items-center justify-between gap-2 text-slate-300">
-              <span>Haqiqiy masofa (metr):</span>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={calibDistance}
-                onChange={(e) => setCalibDistance(e.target.value)}
-                className="w-24 bg-tactical-900 border border-tactical-700 rounded px-2 py-1 text-white text-right focus:outline-none focus:border-police-cyan"
-              />
-            </label>
-
-            {/* Kalibrovka datchigi: sariq = ma'lumot yig'ilmoqda, yashil = yetarli */}
-            <div
-              className={`rounded border p-2.5 flex flex-col gap-1.5 transition-colors ${
-                calibReady ? 'border-emerald-500 bg-emerald-950/40' : 'border-amber-500 bg-amber-950/30'
-              }`}
-            >
-              <div className="flex items-center space-x-2">
-                <span className="relative flex h-3 w-3">
-                  {!calibReady && (
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
-                  )}
-                  <span
-                    className={`relative inline-flex rounded-full h-3 w-3 ${calibReady ? 'bg-emerald-400' : 'bg-amber-400'}`}
-                  />
-                </span>
-                <span className={`font-bold ${calibReady ? 'text-emerald-300' : 'text-amber-300'}`}>
-                  {calibReady ? "DATCHIK TAYYOR: ma'lumot yetarli" : "DATCHIK: ma'lumot yig'ilmoqda"}
-                </span>
-              </div>
-              <div className="h-1.5 rounded bg-tactical-900 overflow-hidden">
-                <div
-                  className={`h-full transition-all ${calibReady ? 'bg-emerald-400' : 'bg-amber-400'}`}
-                  style={{ width: `${Math.min(100, (faceInfo.calibCount / CALIB_MIN_SAMPLES) * 100)}%` }}
-                />
-              </div>
-              <div className="text-[10px] text-slate-300">{calibHint}</div>
-            </div>
-
-            <div className="text-[10px] text-slate-500">
-              Holat: {calibrated ? 'kalibrovka qilingan' : "kalibrovka yo'q, standart ko'rish burchagi (45°) ishlatilmoqda"}.
-              Kamera yoki video o'lchami o'zgarsa, qayta kalibrovka qiling.
-            </div>
-
-            <div className="flex items-center justify-between gap-2">
-              <button
-                onClick={handleResetCalibration}
-                className="px-3 py-1.5 rounded bg-tactical-900 border border-tactical-700 text-slate-300 hover:text-white"
-              >
-                Tiklash
-              </button>
-              <button
-                onClick={handleCalibrate}
-                disabled={!calibReady}
-                className={`px-4 py-1.5 rounded font-bold shadow ${
-                  calibReady
-                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                    : 'bg-tactical-800 text-slate-500 cursor-not-allowed'
-                }`}
-              >
-                Kalibrovka qilish
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* YUZLAR BAZASINI BOSHQARISH MODAL OYNASI */}
       {showFaceDbModal && (

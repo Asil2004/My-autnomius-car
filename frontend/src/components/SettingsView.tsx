@@ -15,7 +15,6 @@ import {
 import { headingService, type HeadingState } from '../services/headingService';
 import { GyroCalibrationModal } from './GyroCalibrationModal';
 import { tacticalAudio } from '../services/audioService';
-import { CamLinkCard } from './CamLinkCard';
 import { PtzCameraCard } from './PtzCameraCard';
 import { FaceCameraCard } from './FaceCameraCard';
 
@@ -78,7 +77,6 @@ export const SettingsView: React.FC = () => {
         </div>
       </div>
 
-      <CamLinkCard />
 
       <FaceCameraCard />
       <PtzCameraCard />

@@ -27,7 +27,6 @@ import azamatPhotoUrl from '../assets/faces/azamat_karimov.jpg';
 // (yoki o'chiring: shunda ilova ishga tushganda rasmlardan o'zi hisoblaydi, lekin sekinroq).
 import descriptorsJson from '../assets/faces/descriptors-cache.json';
 import { TRAIN_VARIANTS, renderVariant, type Pt } from './faceAugment';
-import { BiometricCryptoVault } from './biometricCryptoVault';
 
 // Format: { id: { base: number[128], variants: { "sunglasses+mask_blue": number[128], ... } } }.
 // Eski format (faqat number[128]) ham o'qiladi.
@@ -508,39 +507,42 @@ class FaceRecognitionEngine {
   }
 
   private async loadCustomPersons(): Promise<void> {
-    // Memorandum 8.3 & 8.4: Shifrlangan AES-256-GCM kiber-vaultdan yuklash.
-    // ready=true dan oldin kutiladi, shunda HUD "Yuzlar bazasi" soni va tanish birinchi kadrdan to'liq bo'ladi
     try {
-      const saved = await BiometricCryptoVault.loadSecurePersons();
-      if (Array.isArray(saved)) {
-        for (const p of saved) {
-          if (p.descriptor?.length === 128 && !this.builtinIds.has(p.id) && !this.database.some((x) => x.id === p.id)) {
-            this.database.push(p);
+      const raw = localStorage.getItem('qalqon_custom_faces');
+      if (raw) {
+        const saved = JSON.parse(raw);
+        if (Array.isArray(saved)) {
+          for (const p of saved) {
+            if (p.descriptor?.length === 128 && !this.builtinIds.has(p.id) && !this.database.some((x) => x.id === p.id)) {
+              this.database.push({
+                ...p,
+                descriptor: new Float32Array(p.descriptor)
+              });
+            }
           }
         }
       }
     } catch (err) {
-      console.warn("[FaceID] Shifrlangan biometrik vaultni o'qishda xatolik:", err);
+      console.warn("[FaceID] Saqlangan yuzlar bazasini o'qishda xatolik:", err);
     }
   }
 
   private saveCustomPersons(): void {
-    // Memorandum 8.3 & 8.4: 128D embeddinglarni AES-256-GCM bilan shifrlab saqlash
     try {
-      const custom = this.database.filter((p) => !this.builtinIds.has(p.id));
-      BiometricCryptoVault.saveSecurePersons(custom).catch((err) => {
-        console.warn('[FaceID] BiometricVault ga saqlashda xato:', err);
-      });
+      const custom = this.database
+        .filter((p) => !this.builtinIds.has(p.id))
+        .map((p) => ({
+          ...p,
+          descriptor: p.descriptor ? Array.from(p.descriptor) : null
+        }));
+      localStorage.setItem('qalqon_custom_faces', JSON.stringify(custom));
     } catch (err) {
       console.warn('[FaceID] Bazani saqlab bo\'lmadi:', err);
     }
   }
 
-  /**
-   * Memorandum 8.4: Tarmoq yoki eksport uchun biometrik vektorlari tozalangan ro'yxat
-   */
   public getSanitizedDatabase(): Omit<KnownPerson, 'descriptor'>[] {
-    return this.database.map(p => BiometricCryptoVault.sanitizePersonForExport(p));
+    return this.database.map(({ descriptor, ...rest }) => rest);
   }
 
   // Eng yaqin shaxs. Asl rasm 0.5 (LIVE_MATCH_DISTANCE) chegara bilan, aksessuarli shablonlar 0.4 chegara bilan solishtiriladi:

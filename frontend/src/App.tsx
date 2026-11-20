@@ -1,12 +1,10 @@
-import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { autopilotService } from './services/autopilotService';
 import { situationService } from './services/situationService';
 import { RobotProvider, useRobot } from './context/RobotContext';
 import { Navbar } from './components/Navbar';
 import { TabNavigation } from './components/TabNavigation';
 import { HUDView } from './components/HUDView';
-import { RobotFaceView } from './components/RobotFaceView';
-import { OperatorAuthModal } from './components/OperatorAuthModal';
 
 // Kamdan-kam ochiladigan bo'limlar alohida fayllarda: faqat ochilganda yuklanadi (xarita kutubxonasi va h.k.)
 const AIAutonomousView = lazy(() => import('./components/AIAutonomousView').then((m) => ({ default: m.AIAutonomousView })));
@@ -24,7 +22,7 @@ const ViewLoading: React.FC = () => (
   <div className="flex-1 flex items-center justify-center text-slate-500 font-mono text-xs">Yuklanmoqda…</div>
 );
 import type { RemoteLink } from './services/remoteClient';
-import { robotCamBroadcaster, fleetWatcher, AUTOPILOT_REMOTE_EVENT } from './services/robotCamLink';
+import { robotCamBroadcaster, fleetWatcher } from './services/robotCamLink';
 import { robotCall, operatorCalls } from './services/voiceCall';
 import { IncomingCallOverlay } from './components/IncomingCallOverlay';
 import { navigationService } from './services/navigationService';
@@ -112,32 +110,6 @@ const AppShell: React.FC = () => {
   }, []);
   const [role, setRole] = useState(() => camLinkSettings.get().role);
   const callOverlay = role === 'operator' ? <IncomingCallOverlay /> : null;
-  const [isUnlocked, setIsUnlocked] = useState(() =>
-    window.location.hash === '#hud' || localStorage.getItem('qalqon_auto_unlock') === 'true'
-  );
-  // Operator masofadan GPS avtopilotni yoqsa va robot yuz ekranida bo'lsa: boshqaruv paneli ochiladi (unda kamera
-  // to'siq tahlili doim ishlaydi, qaysi bo'lim ochiqligidan qat'i nazar). Avtopilot tugagach yuz ekraniga qaytadi
-  const relockAfterAutopilotRef = useRef(false);
-  useEffect(() => {
-    const onRemote = () => {
-      setIsUnlocked((was) => {
-        if (!was) relockAfterAutopilotRef.current = true;
-        return true;
-      });
-    };
-    window.addEventListener(AUTOPILOT_REMOTE_EVENT, onRemote);
-    const unsub = autopilotService.subscribe((s) => {
-      if (!s.active && relockAfterAutopilotRef.current) {
-        relockAfterAutopilotRef.current = false;
-        setIsUnlocked(false);
-      }
-    });
-    return () => {
-      window.removeEventListener(AUTOPILOT_REMOTE_EVENT, onRemote);
-      unsub();
-    };
-  }, []);
-  const [authModalOpen, setAuthModalOpen] = useState(false);
   // Masofaviy admin: ikkinchi planshet saytni #admin bilan ochsa, kirish oynasi darhol chiqadi
   const [adminLoginOpen, setAdminLoginOpen] = useState(() => window.location.hash === '#admin');
   const [adminLink, setAdminLink] = useState<RemoteLink | null>(null);
@@ -154,8 +126,6 @@ const AppShell: React.FC = () => {
         setVrOpen(true);
       } else if (window.location.hash === '#admin') {
         setAdminLoginOpen(true);
-      } else if (window.location.hash === '#hud') {
-        setIsUnlocked(true);
       }
     };
     window.addEventListener('hashchange', handleHash);
@@ -168,7 +138,6 @@ const AppShell: React.FC = () => {
         <VRControlView
           onExit={() => {
             setVrOpen(false);
-            setIsUnlocked(true);
             history.replaceState(null, '', `${window.location.pathname}#hud`);
           }}
         />
@@ -199,50 +168,26 @@ const AppShell: React.FC = () => {
     );
   }
 
-  // DEFAULT VIEW: Robot yuzi (2D ko'zlar, kamera yoqilgach odamni kuzatadi)
-  if (!isUnlocked) {
-    return (
-      <div className="relative app-viewport bg-tactical-950 overflow-hidden select-none">
-        <RobotFaceView
-          onUnlockRequest={() => setAuthModalOpen(true)}
-          onAdminRequest={() => setAdminLoginOpen(true)}
-          onControllerRequest={() => setControllerOpen(true)}
-        />
-        {adminLoginOpen && (
-          <Suspense fallback={null}>
-            <AdminLoginModal
-              onClose={() => setAdminLoginOpen(false)}
-              onConnected={(link) => {
-                setAdminLoginOpen(false);
-                setAdminLink(link);
-              }}
-            />
-          </Suspense>
-        )}
-        {callOverlay}
-        <OperatorAuthModal
-          isOpen={authModalOpen}
-          onClose={() => setAuthModalOpen(false)}
-          onSuccess={() => {
-            localStorage.setItem('qalqon_auto_unlock', 'true');
-            setAuthModalOpen(false);
-            setIsUnlocked(true);
-          }}
-        />
-      </div>
-    );
-  }
-
-  // UNLOCKED VIEW: Full Operator Command Center
+  // OPERATOR COMMAND CENTER
   return (
     <div className="flex flex-col app-viewport bg-tactical-950 text-slate-100 overflow-hidden font-sans select-none">
       <Navbar
-        onLockScreen={() => { localStorage.removeItem('qalqon_auto_unlock'); setIsUnlocked(false); }}
         onOpenController={() => setControllerOpen(true)}
         onOpenVR={() => { history.replaceState(null, '', `${window.location.pathname}#vr`); setVrOpen(true); }}
       />
       <MainContent />
       <TabNavigation />
+      {adminLoginOpen && (
+        <Suspense fallback={null}>
+          <AdminLoginModal
+            onClose={() => setAdminLoginOpen(false)}
+            onConnected={(link) => {
+              setAdminLoginOpen(false);
+              setAdminLink(link);
+            }}
+          />
+        </Suspense>
+      )}
       {callOverlay}
     </div>
   );

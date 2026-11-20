@@ -772,7 +772,7 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const lidarObsSnap = lidarSerialService.getObstacleInfo();
   const isLidarFrontBlockedNow = lidarObsSnap.isBlocked && (Date.now() - lidarObsSnap.lastUpdated < 2500);
-  const isFrontBlocked = isLidarFrontBlockedNow || (sonars.front ?? Infinity) <= 28 || cameraObstacle.isBlocked;
+  const isFrontBlocked = isLidarFrontBlockedNow;
 
   // Mecanum Command Handler (ESP32 MQTT + Heartbeat + Local Fallback)
   const sendMecanumCommand = useCallback((cmd: MecanumCommand) => {
@@ -826,15 +826,13 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       addLog('SERIAL', 'info', `Buyruq uzatildi: ${cmdNames[cmd] || cmd}`);
     }
 
-    // Oldinga harakatda avtotormoz to'siq tekshiruvi (LiDAR va Sonar orqali)
+    // Oldinga harakatda avtotormoz to'siq tekshiruvi (faqat haqiqiy 360° LiDAR orqali)
     const isGoingForward = cmd === 'F' || cmd === 'G' || cmd === 'I' || cmd === 'Q' || cmd === 'E';
     const lidarObs = lidarSerialService.getObstacleInfo();
     const isLidarBlocked = lidarObs.isBlocked && (Date.now() - lidarObs.lastUpdated < 2500);
-    const isSonarBlocked = (sonars.front ?? Infinity) <= 25;
-    if (isGoingForward && (isSonarBlocked || isLidarBlocked)) {
+    if (isGoingForward && isLidarBlocked) {
       tacticalAudio.playObstacleAlert();
-      const distInfo = isLidarBlocked ? `LiDAR ${lidarObs.frontCm} sm` : `Sonar ${sonars.front} sm`;
-      addLog('AI', 'error', `🛑 AVTOTORMOZ: To'siq aniqlandi (${distInfo})! Oldinga harakat qulflandi!`);
+      addLog('AI', 'error', `🛑 LIDAR AVTOTORMOZ: To'siq aniqlandi (${lidarObs.frontCm} sm)! Oldinga harakat qulflandi!`);
       setLastCommand('S');
       setIsMoving(false);
       currentCmdRef.current = 'S';
@@ -867,7 +865,7 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         sendRawToESP32(espCmd);
       }, 250);
     }
-  }, [addLog, cameraObstacle.isBlocked, sendRawToESP32, sonars.front]);
+  }, [addLog, sendRawToESP32]);
 
   // Keyboard navigation listener (Multi-key W, A, S, D, Q, E, Space, 1, 2, 3)
   useEffect(() => {
@@ -1046,18 +1044,15 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     autopilotService.setDriver((cmd) => sendCmdRef.current(cmd));
     autopilotService.setObstacleProvider(() => {
-      const { sonars: s } = obstacleRef.current;
       const l = lidarSerialService.getObstacleInfo();
       const isLidarFresh = Date.now() - l.lastUpdated < 2500;
       const lidarDist = isLidarFresh && l.frontCm > 0 && l.frontCm < 490 ? l.frontCm : Infinity;
-      const sonarDist = !isLidarFresh && s.front ? s.front : Infinity;
-      const minDist = Math.min(lidarDist, sonarDist);
-      const activeBlocked = isLidarFresh ? l.isBlocked : sonarDist <= autopilotService.getStopCm();
+      const activeBlocked = isLidarFresh && l.isBlocked;
       return {
-        distanceCm: minDist,
-        label: activeBlocked ? `LiDAR (${l.frontCm} sm)` : isLidarFresh ? `LiDAR (${l.frontCm} sm)` : s.front ? `Kamera (${s.front} sm)` : 'Ochiq',
+        distanceCm: lidarDist,
+        label: activeBlocked ? `LiDAR (${l.frontCm} sm)` : isLidarFresh ? `LiDAR (${l.frontCm} sm)` : 'Ochiq',
         evasion: l.evasion,
-        sonarFrontCm: sonarDist,
+        sonarFrontCm: Infinity,
         lidarFrontCm: lidarDist,
         lidarActive: lidarSerialService.isOpen()
       };
