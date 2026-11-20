@@ -60,7 +60,7 @@ print("="*65)
 
 lidar = LidarModule()
 camera = MultiCameraManager()
-arduino = ArduinoBridge()
+arduino = ArduinoBridge(exclude_ports=[lidar.port] if lidar.port else [])
 watchdog = QalqonWatchdogDaemon(arduino_bridge=arduino, failsafe_timeout_sec=0.65)
 # Masofaviy admin boshqaruvi (internet/Cloudflare Tunnel orqali). Token: QALQON_ADMIN_TOKEN muhit o'zgaruvchisi
 remote = RemoteControl(arduino=arduino, watchdog=watchdog)

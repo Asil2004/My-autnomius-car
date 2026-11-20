@@ -31,9 +31,10 @@ except ImportError:
     HAS_SERIAL = False
 
 class ArduinoBridge:
-    def __init__(self, port: str = None, baudrate: int = 115200):
+    def __init__(self, port: str = None, baudrate: int = 115200, exclude_ports: list = None):
         self.port = port
         self.baudrate = baudrate
+        self.exclude_ports = [p for p in (exclude_ports or []) if p]
         self.ser = None
         self.is_hardware = False
         self.running = True
@@ -78,17 +79,21 @@ class ArduinoBridge:
         if not HAS_SERIAL:
             return None
         lidar_port = os.environ.get('LIDAR_PORT', '')
+        excludes = set(self.exclude_ports)
+        if lidar_port:
+            excludes.add(lidar_port)
+
         # Linux / RPi portlari (ACM avval tekshiriladi)
-        acm_ports = glob.glob('/dev/ttyACM*')
+        acm_ports = [p for p in glob.glob('/dev/ttyACM*') if p not in excludes]
         if acm_ports:
             return acm_ports[0]
-        usb_ports = [p for p in glob.glob('/dev/ttyUSB*') if p != lidar_port]
+        usb_ports = [p for p in glob.glob('/dev/ttyUSB*') if p not in excludes]
         if usb_ports:
             return usb_ports[0]
         # Windows portlari
         if list_ports:
             for p in list_ports.comports():
-                if lidar_port and p.device == lidar_port:
+                if p.device in excludes:
                     continue
                 desc = f"{p.description} {p.manufacturer or ''} {getattr(p, 'hwid', '')}".lower()
                 if any(k in desc for k in ("arduino", "ch340", "uno", "mega", "usb-serial", "usb serial", "ftdi")):

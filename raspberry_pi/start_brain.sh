@@ -31,6 +31,10 @@ echo "                           yoki http://$IP_ADDR:8080"
 echo "----------------------------------------------------------"
 echo ""
 
-# 4. Asosiy dasturni ishga tushirish
+# 4. Port 8000 va 8080 band bo'lsa eski jarayonlarni tozalash
+sudo fuser -k 8000/tcp 2>/dev/null || true
+sudo fuser -k 8080/tcp 2>/dev/null || true
+
+# 5. Asosiy dasturni ishga tushirish
 cd "$(dirname "$0")"
 python3 qalqon_brain.py
