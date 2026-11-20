@@ -127,16 +127,31 @@ class LidarModule:
             return None
         arduino_port = os.environ.get('ARDUINO_PORT', '')
         import glob
-        for p in glob.glob('/dev/ttyUSB*') + glob.glob('/dev/serial0') + glob.glob('/dev/ttyAMA0'):
-            if p != arduino_port:
-                return p
+        # 1. Haqiqiy LiDAR (STL-19P / LD19) ma'lumot berayotgan portni 230400 baudda qidirish
+        all_cand = glob.glob('/dev/ttyUSB*') + glob.glob('/dev/serial0') + glob.glob('/dev/ttyAMA0')
+        for p in all_cand:
+            if arduino_port and p == arduino_port:
+                continue
+            try:
+                s = serial.Serial(p, self.baudrate, timeout=0.35)
+                buf = s.read(150)
+                s.close()
+                if len(buf) >= 47 and b'\x54\x2c' in buf:
+                    return p
+            except Exception:
+                pass
+        
+        # 2. Agar hali paket aniqlanmagan bo'lsa (boshlang'ich quvvatlanish)
+        for p in all_cand:
+            if arduino_port and p == arduino_port:
+                continue
+            return p
         if list_ports:
             for p in list_ports.comports():
                 if arduino_port and p.device == arduino_port:
                     continue
                 desc = f"{p.description} {p.manufacturer or ''} {getattr(p, 'hwid', '')}".lower()
-                # LDROBOT STL-19P (CP2102: VID 10C4, PID EA60), RPLIDAR va boshqa USB-UART adapterlar
-                if any(k in desc for k in ("cp210", "ch340", "ftdi", "silicon labs", "usb-serial", "lidar", "stl-19", "ld19", "10c4:ea60", "stl19p", "rplidar")):
+                if any(k in desc for k in ("lidar", "stl-19", "ld19", "stl19p", "rplidar")):
                     return p.device
         return None
 

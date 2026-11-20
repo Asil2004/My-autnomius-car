@@ -58,9 +58,76 @@ print("\n" + "="*65)
 print("🛡️  QALQON v1.0 AMR — MIYA TIZIMI ISHGA TUSHMOQDA (Raspberry Pi 4)")
 print("="*65)
 
-lidar = LidarModule()
+def detect_hardware_ports():
+    """
+    Portlarni avtomatik aniqlash va xatoliklarni oldini olish:
+    - 230400 baudda tekshirib LiDAR (STL-19P / LD19) ni aniqlash
+    - 115200 baudda tekshirib ESP32 / Arduino ni aniqlash
+    """
+    env_lidar = os.environ.get('LIDAR_PORT')
+    env_arduino = os.environ.get('ARDUINO_PORT')
+    if env_lidar or env_arduino:
+        return env_lidar, env_arduino
+
+    all_ports = sorted(glob.glob("/dev/ttyUSB*") + glob.glob("/dev/ttyACM*"))
+    if not all_ports:
+        return None, None
+
+    lidar_p = None
+    arduino_p = None
+
+    try:
+        import serial
+        # 1. Avval barcha portlarni 230400 baudda tekshirib, haqiqiy LiDAR paketlari borligini topamiz
+        for p in all_ports:
+            try:
+                s = serial.Serial(p, 230400, timeout=0.35)
+                buf = s.read(150)
+                s.close()
+                if len(buf) >= 47 and b'\x54\x2c' in buf:
+                    lidar_p = p
+                    break
+            except Exception:
+                pass
+
+        # 2. LiDAR dan tashqari qolgan portlar orasidan ESP32 ni qidiramiz
+        remaining = [p for p in all_ports if p != lidar_p]
+        for p in remaining:
+            try:
+                s = serial.Serial(p, 115200, timeout=0.4)
+                time.sleep(0.15)
+                s.write(b"S\n")
+                rx = s.read(64).decode('utf-8', errors='ignore')
+                s.close()
+                arduino_p = p
+                break
+            except Exception:
+                pass
+
+        if not arduino_p and remaining:
+            arduino_p = remaining[0]
+
+        # Agar LiDAR aniqlanmagan bo'lsa, lekin 2 ta port bo'lsa:
+        if not lidar_p and len(all_ports) >= 2:
+            if arduino_p == all_ports[0]:
+                lidar_p = all_ports[1]
+            else:
+                lidar_p = all_ports[0]
+
+    except Exception as e:
+        print(f"[Port Detection] Ogohlantirish: {e}")
+
+    return lidar_p, arduino_p
+
+lidar_port_detected, arduino_port_detected = detect_hardware_ports()
+if lidar_port_detected:
+    print(f"[Tizim] 🛰️ Aniqlangan LiDAR Porti: {lidar_port_detected} (230400 baud)")
+if arduino_port_detected:
+    print(f"[Tizim] 🎮 Aniqlangan ESP32 Porti:  {arduino_port_detected} (115200 baud)")
+
+lidar = LidarModule(port=lidar_port_detected)
 camera = MultiCameraManager()
-arduino = ArduinoBridge(exclude_ports=[lidar.port] if lidar.port else [])
+arduino = ArduinoBridge(port=arduino_port_detected, exclude_ports=[lidar.port] if lidar.port else [])
 watchdog = QalqonWatchdogDaemon(arduino_bridge=arduino, failsafe_timeout_sec=0.65)
 # Masofaviy admin boshqaruvi (internet/Cloudflare Tunnel orqali). Token: QALQON_ADMIN_TOKEN muhit o'zgaruvchisi
 remote = RemoteControl(arduino=arduino, watchdog=watchdog)
