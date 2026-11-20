@@ -322,6 +322,15 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         fetch(`${base}/move?dir=${encodeURIComponent(cmdStr)}`, { mode: 'no-cors' }).catch(() => {});
       }
     }
+    // 2. Raspberry Pi UART ko'prigi orqali yuborish (/cmd?c=...)
+    try {
+      const piIp = typeof window !== 'undefined' ? localStorage.getItem('qalqon_pi_ip') : null;
+      const host = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : '';
+      const targetHost = piIp || (host && host !== 'localhost' && !host.includes('github.io') ? host : null);
+      if (targetHost) {
+        fetch(`http://${targetHost}:8000/cmd?c=${encodeURIComponent(cmdStr)}`, { mode: 'no-cors' }).catch(() => {});
+      }
+    } catch {}
   }, []);
 
   const toggleHorn = useCallback(() => {
