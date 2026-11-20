@@ -2076,6 +2076,73 @@ export const HUDView: React.FC = () => {
     };
   }, []);
 
+  // ============================================================================
+  // VR & GAMEPAD BOSHQARUV TIZIMI (Meta Quest, VR Controller, Gamepad API)
+  // Chap joystik: Robot harakati (360° analog joystik)
+  // O'ng joystik: PTZ kamera burilishi (Pan/Tilt)
+  // ============================================================================
+  useEffect(() => {
+    let animId: number;
+    let lastDriveSent = 0;
+    let lastPtzSent = 0;
+    let hadDrive = false;
+    let hadPtz = false;
+
+    const pollGamepads = () => {
+      const gamepads = typeof navigator.getGamepads === 'function' ? navigator.getGamepads() : [];
+      let activeGamepad: Gamepad | null = null;
+      for (let i = 0; i < gamepads.length; i++) {
+        const gp = gamepads[i];
+        if (gp && gp.connected) {
+          activeGamepad = gp;
+          break;
+        }
+      }
+
+      if (activeGamepad) {
+        const now = Date.now();
+        // 1. Robot harakati: chap joystik (Axes 0 = X, Axes 1 = Y)
+        const rawX = activeGamepad.axes[0] ?? 0;
+        const rawY = activeGamepad.axes[1] ?? 0;
+        const deadzone = 0.18;
+
+        const isDriveActive = Math.abs(rawX) > deadzone || Math.abs(rawY) > deadzone;
+        if (isDriveActive) {
+          hadDrive = true;
+          if (now - lastDriveSent >= 50) {
+            lastDriveSent = now;
+            const x = Math.round(rawX * 100);
+            const y = Math.round(-rawY * 100); // gamepad Y manfiy bo'lsa yuqoriga
+            sendJoystickCoordinates(x, y);
+          }
+        } else if (hadDrive) {
+          hadDrive = false;
+          sendJoystickCoordinates(0, 0);
+        }
+
+        // 2. PTZ burilishi: o'ng joystik (Axes 2 = X, Axes 3 = Y)
+        const ptzX = activeGamepad.axes[2] ?? 0;
+        const ptzY = activeGamepad.axes[3] ?? 0;
+        const isPtzActive = Math.abs(ptzX) > deadzone || Math.abs(ptzY) > deadzone;
+        if (isPtzActive) {
+          hadPtz = true;
+          if (now - lastPtzSent >= 80) {
+            lastPtzSent = now;
+            ptzCameraService.move(CAMERA_ROTATED_180 ? -ptzX : ptzX, -ptzY);
+          }
+        } else if (hadPtz) {
+          hadPtz = false;
+          ptzCameraService.stop();
+        }
+      }
+
+      animId = requestAnimationFrame(pollGamepads);
+    };
+
+    animId = requestAnimationFrame(pollGamepads);
+    return () => cancelAnimationFrame(animId);
+  }, [sendJoystickCoordinates]);
+
   const smallCameras = ALL_CAMERAS.filter((c) => c.id !== activeCam);
   // PTZ aktiv bo'lganda (joystik chiqqanda) Face ID o'ng tomondagi bo'sh joyga o'tadi, O'ng va Chap chapda qoladi
   const leftCameras = activeCam === 'ptz' ? smallCameras.filter((c) => c.id !== 'face') : smallCameras;
