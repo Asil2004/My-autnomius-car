@@ -36,6 +36,53 @@ except ImportError:
     HAS_OPENCV = False
 
 
+# Raspberry Pi 5 da /dev/video0..7 (rp1-cfe, CSI) va /dev/video19..35 (pispbe ISP, hevc) plataning o'z tugunlari:
+# ulardan kadr o'qib bo'lmaydi. USB web-kamera odatda /dev/video8 va undan yuqorida bo'ladi.
+_SOC_VIDEO_NAMES = ("pispbe", "rp1-cfe", "bcm2835", "hevc", "codec", "unicam", "isp", "rpivid")
+
+
+def usb_video_devices() -> list:
+    """Linux: haqiqiy tasvir oladigan (USB/UVC) /dev/video* raqamlari, plata tugunlarisiz. Boshqa tizimda []."""
+    root = "/sys/class/video4linux"
+    if not sys.platform.startswith("linux") or not os.path.isdir(root):
+        return []
+    found = []
+    for path in glob.glob(os.path.join(root, "video*")):
+        num = os.path.basename(path)[len("video"):]
+        if not num.isdigit() or not os.path.exists(f"/dev/video{num}"):
+            continue
+        try:
+            with open(os.path.join(path, "name"), "r", encoding="utf-8", errors="ignore") as f:
+                name = f.read().strip().lower()
+        except Exception:
+            name = ""
+        if any(s in name for s in _SOC_VIDEO_NAMES):
+            continue
+        # UVC kamera ikkita tugun ochadi: index=0 tasvir, index=1 metama'lumot (undan kadr kelmaydi)
+        try:
+            with open(os.path.join(path, "index"), "r") as f:
+                if int(f.read().strip() or 0) != 0:
+                    continue
+        except Exception:
+            pass
+        found.append(int(num))
+    return sorted(found)
+
+
+def resolve_video_device(source):
+    """
+    Mantiqiy kamera raqami (0, 1, 2...) -> haqiqiy /dev/video raqami.
+    USB kameralar topilsa: 0 = birinchi USB kamera, 1 = ikkinchisi...; yo'q bo'lsa raqam o'zgarmaydi (Pi 4, kompyuter).
+    None: bunday kamera yo'q.
+    """
+    if not isinstance(source, int):
+        return source
+    devs = usb_video_devices()
+    if devs:
+        return devs[source] if 0 <= source < len(devs) else None
+    return source
+
+
 class CameraModule:
     """Yagona kamera manbasini (USB/V4L2/Sintetik) boshqarish klassi"""
     def __init__(self, source=0, width: int = 640, height: int = 480, name: str = "Kamera"):
@@ -58,12 +105,11 @@ class CameraModule:
         self.lane_status = "YO'L QIDIRILMOQDA"
         self.line_found = False
         
-        # Odam / Yuz deteksiyasi
+        # Odam / Yuz deteksiyasi (sukut bo'yicha CPU yukini tejash uchun o'chiq, chunki Planshet buni ancha tez qiladi)
         self.detected_persons = []
         self.latest_alert = None
         self.face_cascade = None
-        if HAS_OPENCV:
-            self._init_face_detector()
+        self.enable_face_detection = False
         
         # Kamera drayverini ochish
         self.cap = None
@@ -104,7 +150,21 @@ class CameraModule:
                 if not self.cap.isOpened():
                     self.cap = cv2.VideoCapture(self.source)
             else:
-                self.cap = cv2.VideoCapture(self.source)
+                dev = resolve_video_device(self.source)
+                if dev is None:
+                    raise RuntimeError("bunday USB kamera ulanmagan")
+                if isinstance(dev, int):
+                    self.cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
+                    if not self.cap.isOpened():
+                        self.cap = cv2.VideoCapture(dev)
+                    # USB web-kameralar MJPG da yuqori FPS beradi (YUYV da 640x480 ham sekin bo'lishi mumkin)
+                    try:
+                        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+                    except Exception:
+                        pass
+                    print(f"[Kamera #{self.source}] /dev/video{dev} ochilmoqda")
+                else:
+                    self.cap = cv2.VideoCapture(dev)
 
             if self.cap and self.cap.isOpened():
                 self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
@@ -159,43 +219,69 @@ class CameraModule:
         if not HAS_OPENCV or cv2 is None or frame is None:
             return frame
         h, w = frame.shape[:2]
-        roi_top = int(h * 0.55)
+        roi_top = int(h * 0.45) # Pastki 55% ni tahlil qilish
         roi = frame[roi_top:h, 0:w]
+        roi_h = roi.shape[0]
 
-        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        edges = cv2.Canny(blur, 50, 150)
+        # 1. Rang bo'yicha tahlil (HSV): Sariq taktil yo'lak (ko'zi ojizlar yo'lagi) uchun
+        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        
+        # Sariq rang (QULAY MAKON taktil plitka)
+        lower_yellow = np.array([14, 50, 60])
+        upper_yellow = np.array([38, 255, 255])
+        mask_yellow = cv2.inRange(hsv, lower_yellow, upper_yellow)
 
-        M = cv2.moments(edges)
+        # Agar sariq piksellar yetarli bo'lsa sariq maskani ishlatamiz, aks holda umumiy kontrast (oq/qora)
+        yellow_count = cv2.countNonZero(mask_yellow)
+        if yellow_count > 250:
+            mask = mask_yellow
+            self.lane_color = "SARIQ TAKTIL"
+        else:
+            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            blur = cv2.GaussianBlur(gray, (5, 5), 0)
+            mask = cv2.Canny(blur, 50, 150)
+            self.lane_color = "STANDART"
+
+        # T-chorraha va gorizontal yo'laklarni filtrlash uchun eng yaqin pastki qismga ko'proq og'irlik beramiz
+        near_roi = mask[int(roi_h * 0.3):roi_h, :]
+        M = cv2.moments(near_roi)
         frame_center = w // 2
         deviation = 0
 
-        if M["m00"] > 400:
+        if M["m00"] > 300:
             cx = int(M["m10"] / M["m00"])
-            cy = int(M["m01"] / M["m00"]) + roi_top
+            cy = int(M["m01"] / M["m00"]) + int(roi_h * 0.3) + roi_top
             deviation = cx - frame_center
             self.line_found = True
 
-            cv2.circle(frame, (cx, cy), 8, (0, 0, 255), -1)
-            cv2.line(frame, (frame_center, h), (cx, cy), (0, 255, 0), 2)
+            # Vizual ko'rsatkichlar (Yashil yo'nalish chizig'i va nishon)
+            cv2.circle(frame, (cx, cy), 10, (0, 255, 0), -1)
+            cv2.circle(frame, (cx, cy), 14, (0, 229, 255), 2)
+            cv2.line(frame, (frame_center, h), (cx, cy), (0, 255, 0), 3)
 
-            if deviation < -45:
+            # Rul burchagi chegaralari (Deadband: +-35px)
+            if deviation < -35:
                 direction = "CHAPGA (L)"
                 cmd = 'L'
-            elif deviation > 45:
+            elif deviation > 35:
                 direction = "O'NGGA (R)"
                 cmd = 'R'
             else:
                 direction = "TO'G'RI (F)"
                 cmd = 'F'
         else:
-            direction = "YO'L YO'Q"
+            direction = "YO'L QIDIRILMOQDA"
             cmd = 'S'
             self.line_found = False
 
         self.lane_deviation = deviation
         self.recommended_cmd = cmd
         self.lane_status = direction
+
+        # Vizual ma'lumot kadrga yoziladi
+        status_color = (0, 255, 0) if cmd == 'F' else ((0, 229, 255) if cmd in ('L', 'R') else (0, 0, 255))
+        cv2.putText(frame, f"YO'L: {direction} (og'ish: {deviation:+d}px)", (15, h - 25),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, status_color, 2)
         return frame
 
     def _process_faces(self, frame):
@@ -252,15 +338,21 @@ class CameraModule:
                 frame = self._generate_synthetic_frame(sim_t)
 
             if frame is not None and HAS_OPENCV:
-                frame = self._process_lane(frame)
-                if fps_counter % 3 == 0:
-                    frame = self._process_faces(frame)
-                else:
-                    for p in self.detected_persons:
-                        b = p["box"]
-                        cv2.rectangle(frame, (b["x"], b["y"]), (b["x"] + b["w"], b["y"] + b["h"]), (0, 230, 118), 2)
+                # Faqat avtonom yo'lak rejimi yoqilgan bo'lsa yo'lni tahlil qilish
+                if self.auto_lane:
+                    frame = self._process_lane(frame)
+
+                # Agar maxsus yoqilgan bo'lsa yuzlarni aniqlash (aks holda CPU tejaladi)
+                if self.enable_face_detection and self.face_cascade is not None:
+                    if fps_counter % 5 == 0:
+                        frame = self._process_faces(frame)
+                    else:
+                        for p in self.detected_persons:
+                            b = p["box"]
+                            cv2.rectangle(frame, (b["x"], b["y"]), (b["x"] + b["w"], b["y"] + b["h"]), (0, 230, 118), 2)
+
                 frame = self._draw_hud_overlays(frame)
-                _, jpeg_buf = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+                _, jpeg_buf = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 65])
                 jpeg_bytes = jpeg_buf.tobytes()
             else:
                 jpeg_bytes = b""
@@ -505,7 +597,12 @@ class MultiCameraManager:
                     if not test_cap.isOpened():
                         test_cap = cv2.VideoCapture(idx)
                 else:
-                    test_cap = cv2.VideoCapture(idx)
+                    dev = resolve_video_device(idx)
+                    if dev is None:
+                        continue
+                    test_cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
+                    if not test_cap.isOpened():
+                        test_cap = cv2.VideoCapture(dev)
 
                 if test_cap and test_cap.isOpened():
                     ret, frame = test_cap.read()

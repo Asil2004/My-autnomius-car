@@ -22,6 +22,7 @@ import os
 import sys
 import time
 import json
+import glob
 import socket
 import asyncio
 import threading
@@ -58,9 +59,76 @@ print("\n" + "="*65)
 print("🛡️  QALQON v1.0 AMR — MIYA TIZIMI ISHGA TUSHMOQDA (Raspberry Pi 4)")
 print("="*65)
 
-lidar = LidarModule()
+def detect_hardware_ports():
+    """
+    Portlarni avtomatik aniqlash va xatoliklarni oldini olish:
+    - 230400 baudda tekshirib LiDAR (STL-19P / LD19) ni aniqlash
+    - 115200 baudda tekshirib ESP32 / Arduino ni aniqlash
+    """
+    env_lidar = os.environ.get('LIDAR_PORT')
+    env_arduino = os.environ.get('ARDUINO_PORT')
+    if env_lidar or env_arduino:
+        return env_lidar, env_arduino
+
+    all_ports = sorted(glob.glob("/dev/ttyUSB*") + glob.glob("/dev/ttyACM*"))
+    if not all_ports:
+        return None, None
+
+    lidar_p = None
+    arduino_p = None
+
+    try:
+        import serial
+        # 1. Avval barcha portlarni 230400 baudda tekshirib, haqiqiy LiDAR paketlari borligini topamiz
+        for p in all_ports:
+            try:
+                s = serial.Serial(p, 230400, timeout=0.35)
+                buf = s.read(150)
+                s.close()
+                if len(buf) >= 47 and b'\x54\x2c' in buf:
+                    lidar_p = p
+                    break
+            except Exception:
+                pass
+
+        # 2. LiDAR dan tashqari qolgan portlar orasidan ESP32 ni qidiramiz
+        remaining = [p for p in all_ports if p != lidar_p]
+        for p in remaining:
+            try:
+                s = serial.Serial(p, 115200, timeout=0.4)
+                time.sleep(0.15)
+                s.write(b"S\n")
+                rx = s.read(64).decode('utf-8', errors='ignore')
+                s.close()
+                arduino_p = p
+                break
+            except Exception:
+                pass
+
+        if not arduino_p and remaining:
+            arduino_p = remaining[0]
+
+        # Agar LiDAR aniqlanmagan bo'lsa, lekin 2 ta port bo'lsa:
+        if not lidar_p and len(all_ports) >= 2:
+            if arduino_p == all_ports[0]:
+                lidar_p = all_ports[1]
+            else:
+                lidar_p = all_ports[0]
+
+    except Exception as e:
+        print(f"[Port Detection] Ogohlantirish: {e}")
+
+    return lidar_p, arduino_p
+
+lidar_port_detected, arduino_port_detected = detect_hardware_ports()
+if lidar_port_detected:
+    print(f"[Tizim] 🛰️ Aniqlangan LiDAR Porti: {lidar_port_detected} (230400 baud)")
+if arduino_port_detected:
+    print(f"[Tizim] 🎮 Aniqlangan ESP32 Porti:  {arduino_port_detected} (115200 baud)")
+
+lidar = LidarModule(port=lidar_port_detected)
 camera = MultiCameraManager()
-arduino = ArduinoBridge()
+arduino = ArduinoBridge(port=arduino_port_detected, exclude_ports=[lidar.port] if lidar.port else [])
 watchdog = QalqonWatchdogDaemon(arduino_bridge=arduino, failsafe_timeout_sec=0.65)
 # Masofaviy admin boshqaruvi (internet/Cloudflare Tunnel orqali). Token: QALQON_ADMIN_TOKEN muhit o'zgaruvchisi
 remote = RemoteControl(arduino=arduino, watchdog=watchdog)
@@ -133,13 +201,23 @@ def safety_supervisor_loop():
             arduino.set_sim_obstacle(is_hazard)
 
         # Agar oldinga ketayotgan paytda to'siq chiqsa -> Favqulodda tormoz!
-        if is_hazard and arduino.last_cmd == 'F':
+        if is_hazard and arduino.last_cmd in ('F', 'G', 'I'):
             arduino.send_command('S')
             sonar_val = arduino.get_sonars().get("front", 18)
             arduino._add_log(f"🚨 TAZYIQ: Oldinda to'siq ({sonar_val} sm)! Avto-tormoz ishga tushdi.")
             print(f"[Xavfsizlik Nazorati] 🚨 To'siq aniqlandi ({sonar_val} sm)! Oldinga harakat to'xtatildi.")
 
-        time.sleep(0.05)
+        # Avto-yo'lak (Chiziq / Taktil sariq yo'lak bo'ylab avtonom harakat)
+        elif camera.main_camera.auto_lane and patrol_mode == "LANE":
+            if not is_hazard:
+                lane_cmd = camera.main_camera.recommended_cmd
+                if lane_cmd in ('F', 'L', 'R', 'S'):
+                    arduino.send_command(lane_cmd)
+                    watchdog.feed_heartbeat("LANE_AUTOPILOT")
+            else:
+                arduino.send_command('S')
+
+        time.sleep(0.08)
 
 threading.Thread(target=safety_supervisor_loop, daemon=True).start()
 
@@ -304,6 +382,36 @@ def toggle_siren():
     siren_active = not siren_active
     arduino._add_log(f"Sirena: {'YOQILDI' if siren_active else 'O`CHIRILDI'}")
     return {"status": "ok", "siren": siren_active}
+
+@app.get("/api/lane/toggle")
+def toggle_lane_follower():
+    """Chiziq / Taktil sariq yo'lak bo'ylab avtonom harakatni yoqish / o'chirish"""
+    global patrol_mode
+    new_state = not camera.main_camera.auto_lane
+    camera.main_camera.auto_lane = new_state
+    patrol_mode = "LANE" if new_state else "MANUAL"
+    if not new_state:
+        arduino.send_command('S')
+    arduino._add_log(f"Avto-yo'lak: {'YOQILDI (SARIQ TAKTIL)' if new_state else 'O`CHIRILDI (QO`LDA)'}")
+    return {
+        "status": "ok",
+        "auto_lane": new_state,
+        "mode": patrol_mode,
+        "lane_status": camera.main_camera.lane_status,
+        "deviation": camera.main_camera.lane_deviation
+    }
+
+@app.get("/api/lane/status")
+def lane_status():
+    """Avto-yo'lak holati va dreyf ma'lumotlari"""
+    return {
+        "auto_lane": camera.main_camera.auto_lane,
+        "mode": patrol_mode,
+        "lane_status": camera.main_camera.lane_status,
+        "deviation": camera.main_camera.lane_deviation,
+        "recommended_cmd": camera.main_camera.recommended_cmd,
+        "line_found": camera.main_camera.line_found
+    }
 
 @app.get("/api/health")
 def health_check():
@@ -653,6 +761,11 @@ COCKPIT_HTML = """<!DOCTYPE html>
           <button class="btn-test" style="flex:1.2; background:rgba(16,185,129,0.25); border-color:#10b981; color:#34d399;" onclick="autoDiscoverWifiCamera()" id="btnAutoDisc">🔍 Wi-Fi Avto-Ulanish</button>
         </div>
 
+        <!-- Avto-Yo'lak (Chiziq bo'ylab yurish) boshqaruv tugmasi -->
+        <button id="btnLaneFollow" class="btn-test" style="width:100%; margin-bottom:8px; padding:10px; background:#1b253b; border:1px solid #ffc107; color:#ffc107; font-weight:bold; font-size:0.82rem; border-radius:8px;" onclick="toggleLaneFollow()">
+          🟡 AVTO-YO'LAK (CHIZIQ BO'YLAB YURISH): O'CHIQ
+        </button>
+
         <div class="video-box">
           <img id="streamImg" src="/stream.mjpg" alt="Video stream" />
           <div class="video-overlay">
@@ -752,6 +865,30 @@ COCKPIT_HTML = """<!DOCTYPE html>
         osc.start();
         osc.stop(audioCtx.currentTime + duration);
       } catch(e) {}
+    }
+
+    function toggleLaneFollow() {
+      fetch('/api/lane/toggle')
+        .then(r => r.json())
+        .then(d => {
+          const btn = document.getElementById('btnLaneFollow');
+          if (btn) {
+            if (d.auto_lane) {
+              btn.style.background = '#00e676';
+              btn.style.color = '#000';
+              btn.style.borderColor = '#00e676';
+              btn.innerHTML = "🟢 AVTO-YO'LAK: FAOL (SARIQ TAKTIL YURISH)";
+              playBeep(880, 0.2);
+            } else {
+              btn.style.background = '#1b253b';
+              btn.style.color = '#ffc107';
+              btn.style.borderColor = '#ffc107';
+              btn.innerHTML = "🟡 AVTO-YO'LAK (CHIZIQ BO'YLAB YURISH): O'CHIQ";
+              playBeep(440, 0.15);
+            }
+          }
+        })
+        .catch(() => {});
     }
 
     function sendCmd(c) {
@@ -1048,13 +1185,43 @@ def tablet_face_ui():
 # --------------------------------------------------------------------------
 # Serverni ishga tushirish (Dual-Port: 8000 va 8080)
 # --------------------------------------------------------------------------
-def run_server_on_port(port: int):
+def free_port(port: int):
+    """Portni band qilib turgan eski jarayonlarni tozalash"""
     try:
-        config = uvicorn.Config(app=app, host="0.0.0.0", port=port, log_level="warning")
-        server = uvicorn.Server(config)
-        server.run()
-    except Exception as e:
-        print(f"[Server Error] Port {port} da ishga tushirib bo'lmadi: {e}")
+        import subprocess
+        subprocess.run(["fuser", "-k", "-9", f"{port}/tcp"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+    try:
+        import subprocess
+        res = subprocess.run(["lsof", "-ti", f":{port}"], capture_output=True, text=True)
+        my_pid = str(os.getpid())
+        for pid_str in res.stdout.strip().split():
+            if pid_str and pid_str != my_pid:
+                try:
+                    os.kill(int(pid_str), 9)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+def run_server_on_port(port: int):
+    free_port(port)
+    time.sleep(0.3)
+    for attempt in range(3):
+        try:
+            config = uvicorn.Config(app=app, host="0.0.0.0", port=port, log_level="warning")
+            server = uvicorn.Server(config)
+            server.run()
+            break
+        except Exception as e:
+            if "98" in str(e) or "already in use" in str(e) or "Address already in use" in str(e):
+                print(f"[Server] Port {port} band, tozalanmoqda (urinish {attempt+1}/3)...")
+                free_port(port)
+                time.sleep(1.0)
+            else:
+                print(f"[Server Error] Port {port} da ishga tushirib bo'lmadi: {e}")
+                break
 
 if __name__ == '__main__':
     print("\n" + "="*65)

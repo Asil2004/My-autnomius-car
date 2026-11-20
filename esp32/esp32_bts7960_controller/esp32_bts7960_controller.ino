@@ -441,8 +441,13 @@ void buyruqniBajar(char xarf) {
     case 'H': orqagaYur(yarimKuch, tezlik); break;      // Orqaga-chapga: chap 50% orqaga, o'ng 100% orqaga
     case 'J': orqagaYur(tezlik, yarimKuch); break;      // Orqaga-o'ngga: chap 100% orqaga, o'ng 50% orqaga
     case 'S': toxta(); break;                           // To'xtash
+    case '1': tezlik = 130; break;                      // 1-tezlik (sekin)
+    case '2': tezlik = 190; break;                      // 2-tezlik (o'rtacha)
+    case '3': tezlik = 255; break;                      // 3-tezlik (maksimal)
     default:  toxta(); break;
   }
+  Serial.print("ACK:");
+  Serial.println(xarf);
 }
 
 // ==============================================================================
@@ -1243,6 +1248,13 @@ void loop() {
 
   // 1.1 LG290P GNSS RTK datchigini o'qish va Trackk Cloud Hub'ga uzatish
   yangilashGpsHardware();
+
+  // 1.2 UART (USB Serial) orqali Raspberry Pi dan kelgan buyruqlarni qabul qilish (115200 bod)
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    if (c == '\r' || c == '\n' || c == ' ') continue;
+    buyruqniBajar(c);
+  }
 
   // 2. HTTP so'rovlarni qabul qilish
   server.handleClient();

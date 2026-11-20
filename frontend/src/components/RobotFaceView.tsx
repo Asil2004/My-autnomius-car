@@ -6,6 +6,7 @@ import { aiDialogService } from '../services/aiDialogService';
 import { tacticalAudio } from '../services/audioService';
 import { LolaWaveCanvas, type LolaWaveState } from './LolaWaveCanvas';
 import { robotCamBroadcaster } from '../services/robotCamLink';
+import { faceCameraSettings } from '../services/faceCameraSettings';
 
 interface RobotFaceViewProps {
   onUnlockRequest: () => void;
@@ -29,6 +30,8 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
   // ---- 3. FACE ID ON-DEMAND (Faqat yoqilganda ishlaydi, CPU 0%) ----
   const [faceIdActive, setFaceIdActive] = useState<boolean>(false);
   const [detectedPerson, setDetectedPerson] = useState<string | null>(null);
+  /** Face ID ochilmasa sababi (ekranda ko'rsatiladi) */
+  const [faceIdError, setFaceIdError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const faceIntervalRef = useRef<number | null>(null);
   const faceStreamRef = useRef<MediaStream | null>(null);
@@ -382,13 +385,40 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
 
     let isBusy = false;
 
+    let cancelled = false;
     const startFaceScanner = async () => {
+      setFaceIdError(null);
+      // Kamera faqat xavfsiz sahifada (https yoki localhost) ochiladi: http://<IP> da brauzer kamerani bermaydi
+      if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+        setFaceIdError(
+          `Kamera bu manzilda ochilmaydi (${location.protocol}//${location.host}): saytni https orqali oching (GitHub Pages)`
+        );
+        setFaceIdActive(false);
+        return;
+      }
+      let stream: MediaStream;
       try {
-        await faceRecognitionService.prepare();
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
-          audio: false
-        });
+        // Sozlamalarda tanlangan Face ID kamerasi (USB web-kamera yoki frontal), 640x480 — CPU tejash
+        stream = await faceCameraSettings.open({ width: 640, height: 480 });
+      } catch (e) {
+        const name = e instanceof DOMException ? e.name : '';
+        setFaceIdError(
+          name === 'NotAllowedError'
+            ? "Kameraga ruxsat berilmagan: brauzer manzil satridagi qulf belgisi → Kamera → Ruxsat"
+            : name === 'NotFoundError' || name === 'OverconstrainedError'
+            ? 'Kamera topilmadi: USB web-kamera ulanganini tekshiring'
+            : name === 'NotReadableError'
+            ? 'Kamera boshqa ilova yoki sahifa tomonidan band'
+            : `Kamerani ochib bo'lmadi: ${e instanceof Error ? e.message : String(e)}`
+        );
+        setFaceIdActive(false);
+        return;
+      }
+      if (cancelled) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      try {
         faceStreamRef.current = stream;
 
         if (videoRef.current) {
@@ -398,6 +428,15 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
 
         // Operatorlarga kamera tasvirini uzatish (yozmasdan!)
         robotCamBroadcaster.setSource(stream);
+
+        // Yuz modeli kamera ochilgandan keyin yuklanadi: model yuklanmasa ham tasvir ko'rinadi
+        try {
+          await faceRecognitionService.prepare();
+        } catch (e) {
+          setFaceIdError(`Yuz tanish modeli yuklanmadi: ${e instanceof Error ? e.message : String(e)}`);
+          return;
+        }
+        if (cancelled) return;
 
         // Har 1500 ms da bir marta yuzni tekshirish (120ms emas - CPU 90% tejaladi!)
         faceIntervalRef.current = window.setInterval(async () => {
@@ -427,20 +466,22 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
             isBusy = false;
           }
         }, 1500);
-      } catch {
-        setFaceIdActive(false);
+      } catch (e) {
+        setFaceIdError(`Face ID xatosi: ${e instanceof Error ? e.message : String(e)}`);
       }
     };
 
     void startFaceScanner();
 
     return () => {
+      cancelled = true;
       if (faceIntervalRef.current) clearInterval(faceIntervalRef.current);
-      if (faceStreamRef.current) {
-        faceStreamRef.current.getTracks().forEach((t) => t.stop());
+      const s = faceStreamRef.current;
+      if (s) {
+        robotCamBroadcaster.clearSource(s);
+        s.getTracks().forEach((t) => t.stop());
         faceStreamRef.current = null;
       }
-      robotCamBroadcaster.clearSource(faceStreamRef.current);
       setDetectedPerson(null);
     };
   }, [faceIdActive]);
@@ -502,6 +543,17 @@ export const RobotFaceView: React.FC<RobotFaceViewProps> = ({ onUnlockRequest })
               <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
               <span>{detectedPerson}</span>
             </div>
+          )}
+
+          {/* Kamera ochilmasa sababi */}
+          {faceIdError && (
+            <button
+              onClick={() => setFaceIdError(null)}
+              title="Yopish"
+              className="max-w-md px-3 py-1.5 rounded-xl bg-rose-950/85 border border-rose-500/60 text-rose-200 text-xs font-medium text-left shadow-md backdrop-blur-md"
+            >
+              {faceIdError}
+            </button>
           )}
         </div>
 

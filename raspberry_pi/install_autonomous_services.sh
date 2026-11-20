@@ -30,8 +30,17 @@ echo "  - Foydalanuvchi: $REAL_USER"
 echo "  - Repozitoriya:  $REPO_DIR"
 echo "  - Skript papka:   $SCRIPT_DIR"
 
-# 2. Log papkalarini yaratish
-echo -e "${YELLOW}[2/6] Log tizimi sozlanmoqda (/var/log/qalqon)...${NC}"
+# 2. Python kutubxonalarini tekshirish va o'rnatish
+echo -e "${YELLOW}[2/7] Python kutubxonalari o'rnatilmoqda (FastAPI, OpenCV, PySerial)...${NC}"
+apt-get update -y
+apt-get install -y python3-pip python3-serial python3-numpy python3-opencv python3-requests python3-websockets python3-fastapi python3-uvicorn 2>/dev/null || true
+python3 -c "import fastapi, uvicorn" 2>/dev/null || {
+    pip3 install --break-system-packages fastapi uvicorn websockets pyserial opencv-python numpy || \
+    pip3 install fastapi uvicorn websockets pyserial numpy || true
+}
+
+# 3. Log papkalarini yaratish
+echo -e "${YELLOW}[3/7] Log tizimi sozlanmoqda (/var/log/qalqon)...${NC}"
 mkdir -p /var/log/qalqon
 chown -R "$REAL_USER:$REAL_USER" /var/log/qalqon
 chmod 755 /var/log/qalqon

@@ -31,9 +31,10 @@ except ImportError:
     HAS_SERIAL = False
 
 class ArduinoBridge:
-    def __init__(self, port: str = None, baudrate: int = 115200):
+    def __init__(self, port: str = None, baudrate: int = 115200, exclude_ports: list = None):
         self.port = port
         self.baudrate = baudrate
+        self.exclude_ports = [p for p in (exclude_ports or []) if p]
         self.ser = None
         self.is_hardware = False
         self.running = True
@@ -78,17 +79,30 @@ class ArduinoBridge:
         if not HAS_SERIAL:
             return None
         lidar_port = os.environ.get('LIDAR_PORT', '')
+        excludes = set(self.exclude_ports)
+        if lidar_port:
+            excludes.add(lidar_port)
+
         # Linux / RPi portlari (ACM avval tekshiriladi)
-        acm_ports = glob.glob('/dev/ttyACM*')
+        acm_ports = [p for p in glob.glob('/dev/ttyACM*') if p not in excludes]
         if acm_ports:
             return acm_ports[0]
-        usb_ports = [p for p in glob.glob('/dev/ttyUSB*') if p != lidar_port]
-        if usb_ports:
-            return usb_ports[0]
+        usb_ports = [p for p in glob.glob('/dev/ttyUSB*') if p not in excludes]
+        for p in usb_ports:
+            # Agar bu portdan LiDAR b'\x54\x2c' kelayotgan bo'lsa, bu LiDAR! Arduino emas!
+            try:
+                s = serial.Serial(p, 230400, timeout=0.25)
+                buf = s.read(100)
+                s.close()
+                if len(buf) >= 47 and b'\x54\x2c' in buf:
+                    continue # LiDAR ni o'tkazib yuborish
+            except Exception:
+                pass
+            return p
         # Windows portlari
         if list_ports:
             for p in list_ports.comports():
-                if lidar_port and p.device == lidar_port:
+                if p.device in excludes:
                     continue
                 desc = f"{p.description} {p.manufacturer or ''} {getattr(p, 'hwid', '')}".lower()
                 if any(k in desc for k in ("arduino", "ch340", "uno", "mega", "usb-serial", "usb serial", "ftdi")):
@@ -120,6 +134,10 @@ class ArduinoBridge:
             try:
                 line = self.ser.readline().decode('utf-8', errors='ignore').strip()
                 if line:
+                    # Agar binary axlat yoki LiDAR ma'lumoti kelayotgan bo'lsa (o'qib bo'lmaydigan belgilar)
+                    printable_chars = sum(1 for c in line if 32 <= ord(c) <= 126 or c in ('\r', '\n', '\t'))
+                    if len(line) > 0 and (printable_chars / len(line)) < 0.75:
+                        continue # Binary xabarlarni tashlab yuborish
                     with self.lock:
                         self.last_rx_msg = line
                         self._add_log(f"Arduino: {line}")
