@@ -18,6 +18,7 @@ const SettingsView = lazy(() => import('./components/SettingsView').then((m) => 
 const AdminLoginModal = lazy(() => import('./components/AdminLoginModal').then((m) => ({ default: m.AdminLoginModal })));
 const AdminPanelView = lazy(() => import('./components/AdminPanelView').then((m) => ({ default: m.AdminPanelView })));
 const ESP32RemoteView = lazy(() => import('./components/ESP32RemoteView').then((m) => ({ default: m.ESP32RemoteView })));
+const VRControlView = lazy(() => import('./components/VRControlView').then((m) => ({ default: m.VRControlView })));
 
 const ViewLoading: React.FC = () => (
   <div className="flex-1 flex items-center justify-center text-slate-500 font-mono text-xs">Yuklanmoqda…</div>
@@ -143,11 +144,14 @@ const AppShell: React.FC = () => {
   const [controllerOpen, setControllerOpen] = useState(() =>
     ['#controller', '#esp32', '#remote'].includes(window.location.hash)
   );
+  const [vrOpen, setVrOpen] = useState(() => window.location.hash === '#vr');
 
   useEffect(() => {
     const handleHash = () => {
       if (['#controller', '#esp32', '#remote'].includes(window.location.hash)) {
         setControllerOpen(true);
+      } else if (window.location.hash === '#vr') {
+        setVrOpen(true);
       } else if (window.location.hash === '#admin') {
         setAdminLoginOpen(true);
       } else if (window.location.hash === '#hud') {
@@ -157,6 +161,20 @@ const AppShell: React.FC = () => {
     window.addEventListener('hashchange', handleHash);
     return () => window.removeEventListener('hashchange', handleHash);
   }, []);
+
+  if (vrOpen) {
+    return (
+      <Suspense fallback={<ViewLoading />}>
+        <VRControlView
+          onExit={() => {
+            setVrOpen(false);
+            setIsUnlocked(true);
+            history.replaceState(null, '', `${window.location.pathname}#hud`);
+          }}
+        />
+      </Suspense>
+    );
+  }
 
   if (controllerOpen) {
     return (
@@ -218,7 +236,11 @@ const AppShell: React.FC = () => {
   // UNLOCKED VIEW: Full Operator Command Center
   return (
     <div className="flex flex-col app-viewport bg-tactical-950 text-slate-100 overflow-hidden font-sans select-none">
-      <Navbar onLockScreen={() => { localStorage.removeItem('qalqon_auto_unlock'); setIsUnlocked(false); }} onOpenController={() => setControllerOpen(true)} />
+      <Navbar
+        onLockScreen={() => { localStorage.removeItem('qalqon_auto_unlock'); setIsUnlocked(false); }}
+        onOpenController={() => setControllerOpen(true)}
+        onOpenVR={() => { history.replaceState(null, '', `${window.location.pathname}#vr`); setVrOpen(true); }}
+      />
       <MainContent />
       <TabNavigation />
       {callOverlay}

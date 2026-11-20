@@ -17,10 +17,21 @@ export const CAMERA_ROTATED_180 = true;
 export const LENS = { ptz: 0, right: 1, left: 2 } as const;
 
 const BASE_KEY = 'qalqon.ptzCameraBase.v1';
-export const DEFAULT_PTZ_BASE =
-  typeof window !== 'undefined' && window.location.protocol === 'http:' && window.location.hostname
-    ? `http://${window.location.hostname}:8090/camera`
-    : 'http://localhost:8090/camera';
+export const DEFAULT_PTZ_BASE = (() => {
+  if (typeof window === 'undefined' || !window.location.hostname) return 'http://localhost:8090/camera';
+  const { protocol, hostname, port, origin } = window.location;
+  if (port === '5173' || port === '4173') {
+    return `http://${hostname}:8090/camera`;
+  }
+  if (hostname.endsWith('.github.io')) {
+    return 'http://localhost:8090/camera';
+  }
+  // VPS HTTPS domen (https://qalqon.uz/camera) va Pi 5 Yagona Gateway (:8000/camera)
+  if (protocol === 'https:' || protocol === 'http:') {
+    return `${origin}/camera`;
+  }
+  return 'http://localhost:8090/camera';
+})();
 
 export interface PtzCameraStatus {
   reachable: boolean;
@@ -55,7 +66,18 @@ class PtzCameraService {
     } catch {
       /* standart manzil */
     }
-    this.base = saved ? normalizeBase(saved) : DEFAULT_PTZ_BASE;
+    const candidate = saved ? normalizeBase(saved) : DEFAULT_PTZ_BASE;
+    // HTTPS VPS domenida eski lokal http:// IP saqlanib qolgan bo'lsa (Mixed Content), avtomatik joriy HTTPS /camera ga o'tadi
+    if (
+      typeof window !== 'undefined' &&
+      window.location.protocol === 'https:' &&
+      !window.location.hostname.endsWith('.github.io') &&
+      candidate.startsWith('http://')
+    ) {
+      this.base = DEFAULT_PTZ_BASE;
+    } else {
+      this.base = candidate;
+    }
   }
 
   getBase() {
@@ -147,22 +169,30 @@ class PtzCameraService {
     const t = Math.max(-1, Math.min(1, tilt));
     const now = Date.now();
     const changed = Math.abs(p - this.lastMove.pan) > 0.15 || Math.abs(t - this.lastMove.tilt) > 0.15;
-    if (!changed && now - this.lastMove.t < 300) return;
+    if (!changed && now - this.lastMove.t < 250) return;
     this.lastMove = { pan: p, tilt: t, t: now };
     this.moving = true;
-    if (this.remote) this.remote({ op: 'move', pan: +p.toFixed(2), tilt: +t.toFixed(2) });
-    else this.moveLocal(p, t);
+    // VPS yoki Pi 5 Yagona Gateway (/camera) ochiq bo'lsa, to'g'ridan-to'g'ri yuboramiz (operator rejimida ham ishlaydi!)
+    if (this.status.reachable || !this.remote) {
+      this.moveLocal(p, t);
+    }
+    if (this.remote && !this.status.reachable) {
+      this.remote({ op: 'move', pan: +p.toFixed(2), tilt: +t.toFixed(2) });
+    }
   }
 
   stop() {
     if (!this.moving) return;
     this.moving = false;
     this.lastMove = { pan: 0, tilt: 0, t: 0 };
-    if (this.remote) {
+    if (this.status.reachable || !this.remote) {
+      this.stopLocal();
+    }
+    if (this.remote && !this.status.reachable) {
       // To'xtash muhim: MQTT da bitta xabar yo'qolsa ham kamera to'xtashi uchun ikki marta
       this.remote({ op: 'stop' });
       window.setTimeout(() => this.remote?.({ op: 'stop' }), 250);
-    } else this.stopLocal();
+    }
   }
 
   /**

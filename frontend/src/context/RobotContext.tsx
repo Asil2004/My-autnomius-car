@@ -263,11 +263,69 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     addLog('SERIAL', 'info', `ESP32 to'g'ridan-to'g'ri aloqa: ${enabled ? 'YOQILDI' : 'O`CHIRILDI'}`);
   };
 
-  // Lokal Wi-Fi (HTTP) orqali ESP32 telemetriyasini qabul qilish (MQTT bo'lmaganda yoki parallel)
+  // Same-origin VPS / Pi 5 Gateway bazasini aniqlash (GitHub Pages da bo'sh)
+  const getGatewayBase = useCallback((): string => {
+    if (typeof window === 'undefined') return '';
+    const { protocol, hostname, port, origin } = window.location;
+    if (!hostname || hostname.endsWith('.github.io')) return '';
+    if (port === '5173' || port === '4173') return `http://${hostname}:8000`;
+    if (protocol === 'https:' || protocol === 'http:') return origin;
+    return '';
+  }, []);
+
+  // VPS Cloud Hub / Pi 5 Gateway WebSocket (/ws) ga avtomatik ulanish (LiDAR + past kechikishli VR/HUD boshqaruvi)
+  useEffect(() => {
+    const base = getGatewayBase();
+    if (!base) return;
+    let cancelled = false;
+
+    const ensureWs = async () => {
+      if (cancelled || lidarSerialService.hasDirectLink()) return;
+      try {
+        await lidarSerialService.connectWebSocket();
+      } catch {
+        // Server hali tayyor bo'lmasa keyingi siklda qayta urinamiz
+      }
+    };
+    void ensureWs();
+    const timer = window.setInterval(() => {
+      void ensureWs();
+    }, 6000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [getGatewayBase]);
+
+  // Lokal Wi-Fi (HTTP) yoki VPS Cloud Hub orqali ESP32 holatini kuzatish
   useEffect(() => {
     let active = true;
+    const isHttpsPage = typeof window !== 'undefined' && window.location.protocol === 'https:';
     const interval = setInterval(async () => {
-      if (!active || !esp32Enabled) return;
+      if (!active) return;
+
+      // 1. VPS / Pi Gateway (/api/status) orqali robot onlaynligini tekshirish
+      const gw = getGatewayBase();
+      if (gw) {
+        try {
+          const r = await fetch(`${gw}/api/status`, { signal: AbortSignal.timeout(2500), cache: 'no-store' });
+          if (r.ok && active) {
+            const j = await r.json();
+            if (j?.cloud_relay && j?.robot_online) {
+              setEsp32Connected(true);
+              setEsp32Status(`VPS ONLINE (${j.robot_id || 'QALQON-01'})`);
+            } else if (!j?.cloud_relay && j?.esp32?.serial_connected) {
+              setEsp32Connected(true);
+              setEsp32Status('ONLINE (PI USB)');
+            }
+          }
+        } catch {}
+      }
+
+      // 2. Lokal ESP32 HTTP (faqat HTTP sahifada — HTTPS da Mixed Content bo'lmasligi uchun)
+      if (!esp32Enabled) return;
+      const ip = esp32Service.getIp();
+      if (isHttpsPage && ip.startsWith('http://')) return;
       try {
         const data = await esp32Service.fetchStatus();
         if (data && active) {
@@ -280,34 +338,72 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           }
         }
       } catch {}
-    }, 800);
+    }, 2000);
 
     return () => {
       active = false;
       clearInterval(interval);
     };
-  }, [esp32Enabled, esp32Connected]);
+  }, [esp32Enabled, esp32Connected, getGatewayBase]);
 
   // 360° Analog Joystik koordinatalari (-100 dan +100 gacha)
   const sendJoystickCoordinates = useCallback((x: number, y: number) => {
-    if (x === 0 && y === 0) {
+    const rx = Math.round(Math.max(-100, Math.min(100, x)));
+    const ry = Math.round(Math.max(-100, Math.min(100, y)));
+    if (rx === 0 && ry === 0) {
       setIsMoving(false);
       setLastCommand('S');
     } else {
       setIsMoving(true);
     }
-    // 1. esp32Service orqali lokal Wi-Fi HTTP ga tezkor yuborish
-    esp32Service.sendJoystick(x, y);
-    // 2. MQTT orqali ham joystik vektorini yuborish ("J:x,y")
+
+    // 1. VPS / Pi Gateway WebSocket (/ws) — eng tez (20ms, HTTPS/WSS orqali VR uchun ideal!)
+    const sentWs = lidarSerialService.sendWsJson({ type: 'joystick', x: rx, y: ry });
+
+    // 2. Agar WS hali ulanmagan bo'lsa, same-origin HTTPS/HTTP POST (/api/esp32/joystick)
+    if (!sentWs) {
+      const gw = getGatewayBase();
+      if (gw) {
+        fetch(`${gw}/api/esp32/joystick`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ x: rx, y: ry }),
+        }).catch(() => {});
+      }
+    }
+
+    // 3. MQTT orqali ham joystik vektorini yuborish ("J:x,y")
     const topic = localStorage.getItem('qalqon_mqtt_topic') || 'qalqon/robot/cmd';
     if (mqttClientRef.current && mqttClientRef.current.connected) {
       try {
-        mqttClientRef.current.publish(topic, `J:${x},${y}`);
+        mqttClientRef.current.publish(topic, rx === 0 && ry === 0 ? 'S' : `J:${rx},${ry}`);
       } catch {}
     }
-  }, []);
+
+    // 4. Lokal ESP32 Wi-Fi HTTP (faqat HTTP sahifada — HTTPS Mixed Content oldini olish)
+    const isHttpsPage = typeof window !== 'undefined' && window.location.protocol === 'https:';
+    if (!isHttpsPage || esp32Service.getIp().startsWith('https://')) {
+      esp32Service.sendJoystick(rx, ry);
+    }
+  }, [getGatewayBase]);
 
   const sendRawToESP32 = useCallback((cmdStr: string) => {
+    // 1. VPS / Pi Gateway WebSocket (/ws) orqali eng tez yuborish
+    const sentWs = lidarSerialService.sendWsJson({ type: 'cmd', cmd: cmdStr });
+
+    // 2. Same-origin VPS / Pi Gateway HTTPS/HTTP (/api/esp32/cmd)
+    if (!sentWs) {
+      const gw = getGatewayBase();
+      if (gw) {
+        fetch(`${gw}/api/esp32/cmd`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cmd: cmdStr }),
+        }).catch(() => {});
+      }
+    }
+
+    // 3. MQTT orqali zaxira uzatish
     const topic = localStorage.getItem('qalqon_mqtt_topic') || 'qalqon/robot/cmd';
     if (mqttClientRef.current && mqttClientRef.current.connected) {
       try {
@@ -316,22 +412,16 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         console.error('MQTT publish error:', e);
       }
     }
+
+    // 4. Lokal ESP32 HTTP (faqat HTTP sahifada)
+    const isHttpsPage = typeof window !== 'undefined' && window.location.protocol === 'https:';
     if (esp32Service.getEnabled()) {
       const base = esp32Service.getIp();
-      if (base && /^https?:\/\//i.test(base)) {
+      if (base && /^https?:\/\//i.test(base) && (!isHttpsPage || base.startsWith('https://'))) {
         fetch(`${base}/move?dir=${encodeURIComponent(cmdStr)}`, { mode: 'no-cors' }).catch(() => {});
       }
     }
-    // 2. Raspberry Pi UART ko'prigi orqali yuborish (/cmd?c=...)
-    try {
-      const piIp = typeof window !== 'undefined' ? localStorage.getItem('qalqon_pi_ip') : null;
-      const host = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : '';
-      const targetHost = piIp || (host && host !== 'localhost' && !host.includes('github.io') ? host : null);
-      if (targetHost) {
-        fetch(`http://${targetHost}:8000/cmd?c=${encodeURIComponent(cmdStr)}`, { mode: 'no-cors' }).catch(() => {});
-      }
-    } catch {}
-  }, []);
+  }, [getGatewayBase]);
 
   const toggleHorn = useCallback(() => {
     setHornActive((prev) => {

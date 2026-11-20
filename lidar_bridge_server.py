@@ -29,7 +29,16 @@ import glob
 import json
 import asyncio
 import threading
+import urllib.request
+import urllib.parse
 from typing import List, Dict, Any, Optional
+
+try:
+    import httpx
+    HAS_HTTPX = True
+except ImportError:
+    httpx = None
+    HAS_HTTPX = False
 
 try:
     import serial
@@ -627,15 +636,210 @@ class PiWebcamReader:
         }
 
 
-# Global Reader, MQTT Bridge & USB Webcam Reader
+# ---------------------------------------------------------------------------
+# ESP32 Motor & Boshqaruv Ko'prigi (USB Serial + MQTT + Lokal HTTP)
+# ---------------------------------------------------------------------------
+class Esp32CommandBridge:
+    """
+    Operator (VR / HUD / VPS) dan kelgan harakat buyruqlarini ESP32 motor
+    drayveriga uchta kanal orqali ishonchli yetkazadi:
+      1. USB Serial (115200 baud) — agar ESP32 Raspberry Pi ga USB bilan ulangan bo'lsa
+      2. MQTT (qalqon/robot/cmd) — agar paho-mqtt o'rnatilgan va internet bor bo'lsa
+      3. Lokal HTTP (ESP32_IP) — agar ESP32 Pi bilan bitta lokal tarmoqda bo'lsa
+    900 ms ichida yangi buyruq kelmasa, avtotormoz (S) yuboriladi (Deadman Failsafe).
+    """
+
+    def __init__(self, lidar_ref: LidarHardwareReader):
+        self.lidar_ref = lidar_ref
+        self.serial_port: Optional[str] = os.environ.get("ESP32_SERIAL_PORT", "").strip() or None
+        self.serial_baud = int(os.environ.get("ESP32_BAUD", "115200"))
+        self.esp32_http = os.environ.get("ESP32_IP", "").strip().rstrip("/")
+        if self.esp32_http and not self.esp32_http.startswith(("http://", "https://")):
+            self.esp32_http = f"http://{self.esp32_http}"
+
+        self.mqtt_broker = os.environ.get("QALQON_MQTT_BROKER", "broker.hivemq.com")
+        self.mqtt_port = int(os.environ.get("QALQON_MQTT_PORT", "1883"))
+        self.mqtt_topic = os.environ.get("QALQON_MQTT_TOPIC", "qalqon/robot/cmd")
+
+        self._ser = None
+        self._ser_lock = threading.Lock()
+        self._mqtt_client = None
+        self._mqtt_connected = False
+        self.last_cmd = "S"
+        self.last_cmd_at = 0.0
+        self.is_moving = False
+        self.running = True
+
+        threading.Thread(target=self._init_channels_loop, daemon=True).start()
+        threading.Thread(target=self._deadman_loop, daemon=True).start()
+
+    def _find_esp32_serial(self) -> Optional[str]:
+        if self.serial_port and os.path.exists(self.serial_port):
+            return self.serial_port
+        lidar_port = self.lidar_ref.port if self.lidar_ref else ""
+        for p in list_ports.comports():
+            if p.device == lidar_port:
+                continue
+            text = f"{p.device} {p.description} {p.manufacturer or ''}".lower()
+            if any(k in text for k in ("esp32", "ch340", "cp210", "ftdi", "usb serial", "uart", "ttyacm", "ttyusb")):
+                return p.device
+        return None
+
+    def _init_channels_loop(self):
+        # 1. MQTT ulanish (ixtiyoriy — paho-mqtt bor bo'lsa)
+        try:
+            import paho.mqtt.client as mqtt
+            client = mqtt.Client()
+            client.connect(self.mqtt_broker, self.mqtt_port, 60)
+            client.loop_start()
+            self._mqtt_client = client
+            self._mqtt_connected = True
+            print(f"[ESP32-MQTT] Tayyor -> {self.mqtt_broker}:{self.mqtt_port} ({self.mqtt_topic})")
+        except Exception:
+            self._mqtt_connected = False
+
+        # 2. USB Serial ESP32 avtomatik topish (LiDAR portini chetlab o'tadi)
+        while self.running:
+            if self._ser is None:
+                port = self._find_esp32_serial()
+                if port and port != self.lidar_ref.port:
+                    try:
+                        s = serial.Serial(port, self.serial_baud, timeout=0.1)
+                        with self._ser_lock:
+                            self._ser = s
+                            self.serial_port = port
+                        print(f"[ESP32-USB] Ulandi: {port} @ {self.serial_baud} baud")
+                    except Exception:
+                        pass
+            time.sleep(4.0)
+
+    def _deadman_loop(self):
+        while self.running:
+            if self.is_moving and self.last_cmd_at > 0 and (time.time() - self.last_cmd_at) > 0.9:
+                self.send_cmd("S")
+            time.sleep(0.15)
+
+    def _write_serial(self, char_cmd: str):
+        if not char_cmd:
+            return
+        with self._ser_lock:
+            if self._ser is not None:
+                try:
+                    self._ser.write((char_cmd[0] + "\n").encode("ascii", errors="ignore"))
+                except Exception:
+                    try:
+                        self._ser.close()
+                    except Exception:
+                        pass
+                    self._ser = None
+
+    def _publish_mqtt(self, payload: str):
+        if self._mqtt_client and self._mqtt_connected:
+            try:
+                self._mqtt_client.publish(self.mqtt_topic, payload)
+            except Exception:
+                pass
+
+    def _send_http_async(self, path_query: str):
+        if not self.esp32_http:
+            return
+        url = f"{self.esp32_http}{path_query}"
+
+        def _worker():
+            try:
+                urllib.request.urlopen(url, timeout=0.4)
+            except Exception:
+                pass
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def send_cmd(self, cmd: str) -> str:
+        c = (cmd or "S").strip().upper()
+        if not c:
+            c = "S"
+        self.last_cmd = c
+        self.last_cmd_at = time.time()
+        self.is_moving = c not in ("S", "0", "HORN_ON", "HORN_OFF", "LIGHT_ON", "LIGHT_OFF", "1", "2", "3")
+
+        # 1. USB Serial (faqat 1-belgili motor buyrug'i)
+        if len(c) == 1:
+            self._write_serial(c)
+        # 2. MQTT
+        self._publish_mqtt(c)
+        # 3. Lokal HTTP
+        self._send_http_async(f"/move?dir={urllib.parse.quote(c)}")
+        return c
+
+    def send_joystick(self, x: int, y: int) -> Dict[str, Any]:
+        jx = max(-100, min(100, int(round(x))))
+        jy = max(-100, min(100, int(round(y))))
+        if abs(jx) < 8 and abs(jy) < 8:
+            jx, jy = 0, 0
+
+        self.last_cmd_at = time.time()
+        self.is_moving = not (jx == 0 and jy == 0)
+
+        # Analog vektor -> diskret serial belgisi (USB Serial uchun)
+        if jx == 0 and jy == 0:
+            discrete = "S"
+        else:
+            deg = math.degrees(math.atan2(-jy, jx))
+            if -112.5 <= deg < -67.5:
+                discrete = "F"
+            elif -67.5 <= deg < -22.5:
+                discrete = "I"
+            elif -22.5 <= deg < 22.5:
+                discrete = "R"
+            elif 22.5 <= deg < 67.5:
+                discrete = "J"
+            elif 67.5 <= deg < 112.5:
+                discrete = "B"
+            elif 112.5 <= deg < 157.5:
+                discrete = "H"
+            elif deg >= 157.5 or deg < -157.5:
+                discrete = "L"
+            else:
+                discrete = "G"
+
+        self.last_cmd = discrete
+        self._write_serial(discrete)
+        self._publish_mqtt("S" if (jx == 0 and jy == 0) else f"J:{jx},{jy}")
+        self._send_http_async(f"/move?x={jx}&y={jy}")
+        return {"ok": True, "x": jx, "y": jy, "cmd": discrete}
+
+    def send_speed(self, val: int) -> Dict[str, Any]:
+        v = max(1, min(255, int(val)))
+        if v in (1, 2, 3):
+            self._write_serial(str(v))
+            pwm = {1: 130, 2: 190, 3: 255}[v]
+            self._publish_mqtt(f"V:{pwm}")
+        else:
+            self._publish_mqtt(f"V:{v}")
+        self._send_http_async(f"/speed?val={v}")
+        return {"ok": True, "speed": v}
+
+    def get_status(self) -> Dict[str, Any]:
+        return {
+            "serial_connected": self._ser is not None,
+            "serial_port": self.serial_port if self._ser is not None else None,
+            "mqtt_connected": self._mqtt_connected,
+            "http_target": self.esp32_http or None,
+            "last_cmd": self.last_cmd,
+            "moving": self.is_moving,
+        }
+
+
+# Global Reader, MQTT Bridge, USB Webcam Reader & ESP32 Bridge
 lidar_reader = LidarHardwareReader()
 mqtt_lidar_bridge = MqttLidarBridge(lidar_reader)
 webcam_reader = PiWebcamReader()
+esp32_bridge = Esp32CommandBridge(lidar_reader)
+PTZ_SERVER_URL = os.environ.get("PTZ_SERVER_URL", "http://127.0.0.1:8090").rstrip("/")
 
 # ---------------------------------------------------------------------------
-# FastAPI & WebSocket Server
+# FastAPI & WebSocket Server (Yagona Gateway: 8000-port)
 # ---------------------------------------------------------------------------
-app = FastAPI(title="QALQON STL-19P LiDAR & USB Kamera Server", version="2.2")
+app = FastAPI(title="QALQON Yagona Gateway (LiDAR + USB Kamera + PTZ + ESP32)", version="3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -657,28 +861,89 @@ async def private_network_access(request: Request, call_next):
 
 connected_clients: List[WebSocket] = []
 
+
+async def _forward_ptz_post(path: str, body: Dict[str, Any]):
+    url = f"{PTZ_SERVER_URL}/camera{path}"
+    if HAS_HTTPX:
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                await client.post(url, json=body)
+        except Exception:
+            pass
+    else:
+        def _sync():
+            try:
+                req = urllib.request.Request(
+                    url,
+                    data=json.dumps(body).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                urllib.request.urlopen(req, timeout=2.0)
+            except Exception:
+                pass
+        await asyncio.to_thread(_sync)
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    """Ikki tomonlama WebSocket: 10Hz LiDAR yuboradi va VR/HUD buyruqlarini qabul qiladi."""
     await websocket.accept()
     connected_clients.append(websocket)
     print(f"[WebSocket] Yangi mijoz ulandi. Jami faol: {len(connected_clients)}")
-    try:
+
+    async def sender_loop():
         while True:
-            # Har 100 ms (10 Hz) da to'liq LiDAR telemetriyasini uzatish
             payload = lidar_reader.get_telemetry_payload()
             await websocket.send_text(json.dumps(payload))
             await asyncio.sleep(0.1)
-    except WebSocketDisconnect:
+
+    async def receiver_loop():
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                msg = json.loads(raw)
+                mtype = msg.get("type")
+                if mtype == "joystick":
+                    esp32_bridge.send_joystick(msg.get("x", 0), msg.get("y", 0))
+                elif mtype == "cmd":
+                    esp32_bridge.send_cmd(str(msg.get("cmd", "S")))
+                elif mtype == "speed":
+                    esp32_bridge.send_speed(int(msg.get("speed", 2)))
+                elif mtype == "ptz_move":
+                    await _forward_ptz_post("/ptz/move", {
+                        "pan": float(msg.get("pan", 0)),
+                        "tilt": float(msg.get("tilt", 0)),
+                        "zoom": float(msg.get("zoom", 0)),
+                        "duration": float(msg.get("duration", 0.6)),
+                    })
+                elif mtype == "ptz_stop":
+                    await _forward_ptz_post("/ptz/stop", {})
+            except Exception:
+                pass
+
+    send_task = asyncio.create_task(sender_loop())
+    recv_task = asyncio.create_task(receiver_loop())
+    try:
+        done, pending = await asyncio.wait(
+            [send_task, recv_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+    except (WebSocketDisconnect, Exception):
+        send_task.cancel()
+        recv_task.cancel()
+    finally:
         if websocket in connected_clients:
             connected_clients.remove(websocket)
         print(f"[WebSocket] Mijoz uzildi. Qolganlar: {len(connected_clients)}")
-    except Exception:
-        if websocket in connected_clients:
-            connected_clients.remove(websocket)
+
 
 @app.get("/api/lidar")
 def get_lidar_telemetry():
     return lidar_reader.get_telemetry_payload()
+
 
 @app.get("/api/status")
 def get_status():
@@ -689,7 +954,103 @@ def get_status():
         "rate_hz": lidar_reader.rate_hz,
         "packets": lidar_reader.packets_count,
         "webcam": webcam_reader.get_status(),
+        "esp32": esp32_bridge.get_status(),
     }
+
+
+# --- ESP32 Boshqaruv Endpointlari (Lokal + VPS Uplink + VR) ---
+@app.get("/cmd")
+def esp32_cmd_get(c: str = "S"):
+    res = esp32_bridge.send_cmd(c)
+    return {"ok": True, "cmd": res}
+
+
+@app.get("/move")
+def esp32_move_get(dir: Optional[str] = None, x: Optional[int] = None, y: Optional[int] = None):
+    if x is not None or y is not None:
+        return esp32_bridge.send_joystick(x or 0, y or 0)
+    return {"ok": True, "cmd": esp32_bridge.send_cmd(dir or "S")}
+
+
+@app.post("/api/esp32/cmd")
+async def esp32_cmd_post(request: Request):
+    body = await request.json()
+    res = esp32_bridge.send_cmd(str(body.get("cmd", "S")))
+    return {"ok": True, "cmd": res}
+
+
+@app.post("/api/esp32/joystick")
+async def esp32_joystick_post(request: Request):
+    body = await request.json()
+    return esp32_bridge.send_joystick(int(body.get("x", 0)), int(body.get("y", 0)))
+
+
+@app.post("/api/esp32/speed")
+async def esp32_speed_post(request: Request):
+    body = await request.json()
+    return esp32_bridge.send_speed(int(body.get("speed", 2)))
+
+
+# --- PTZ Kamera Ichki Proksi (/camera/* -> localhost:8090/camera/*) ---
+@app.api_route("/camera/{subpath:path}", methods=["GET", "POST", "OPTIONS"])
+async def proxy_ptz_camera(subpath: str, request: Request):
+    """
+    8090-portdagi CP-159-1 PTZ serverini 8000-port ichida bitta manzilga birlashtiradi.
+    Shunda 1 ta HTTPS domen/tunnel orqali ham frontal kamera, ham 3-linzali PTZ + burish ishlaydi.
+    """
+    if request.method == "OPTIONS":
+        return Response(status_code=204, headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+        })
+
+    qs = request.url.query
+    target_url = f"{PTZ_SERVER_URL}/camera/{subpath}" + (f"?{qs}" if qs else "")
+
+    if not HAS_HTTPX:
+        return JSONResponse(status_code=503, content={"error": "httpx o'rnatilmagan (pip install httpx)"})
+
+    # Jonli MJPEG oqimi (uzluksiz stream)
+    if subpath.strip("/") == "stream":
+        async def stream_proxy():
+            try:
+                async with httpx.AsyncClient(timeout=None) as client:
+                    async with client.stream("GET", target_url) as resp:
+                        async for chunk in resp.aiter_bytes(chunk_size=16384):
+                            if await request.is_disconnected():
+                                break
+                            if chunk:
+                                yield chunk
+            except (asyncio.CancelledError, GeneratorExit):
+                pass
+            except Exception:
+                pass
+
+        return StreamingResponse(
+            stream_proxy(),
+            media_type="multipart/x-mixed-replace; boundary=frame",
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Access-Control-Allow-Origin": "*",
+            },
+        )
+
+    # Oddiy JSON/Snapshot/PTZ POST so'rovlari
+    try:
+        body = await request.body() if request.method == "POST" else None
+        headers = {"Content-Type": request.headers.get("content-type", "application/json")} if body else {}
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.request(request.method, target_url, content=body, headers=headers)
+            return Response(
+                content=resp.content,
+                status_code=resp.status_code,
+                media_type=resp.headers.get("content-type", "application/json"),
+                headers={"Cache-Control": "no-store", "Access-Control-Allow-Origin": "*"},
+            )
+    except Exception as e:
+        return JSONResponse(status_code=502, content={"error": f"PTZ serverga (:8090) ulanib bo'lmadi: {e}"})
 
 
 @app.get("/api/webcam/status")
@@ -758,6 +1119,13 @@ for folder in ("assets", "images", "models", "faces", "audio"):
     if os.path.isdir(folder_path):
         app.mount(f"/{folder}", StaticFiles(directory=folder_path), name=folder)
 
+for static_file in ("favicon.svg", "shield.svg", "icons.svg"):
+    sf_path = os.path.join(static_dir, static_file)
+    if os.path.isfile(sf_path):
+        def _make_static(p=sf_path):
+            return lambda: FileResponse(p)
+        app.add_api_route(f"/{static_file}", _make_static(), methods=["GET"])
+
 @app.get("/")
 def serve_index():
     index_file = os.path.join(static_dir, "index.html")
@@ -768,11 +1136,13 @@ def serve_index():
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 8000))
     print("\n" + "="*65)
-    print("🛡️  QALQON — STL-19P LIDAR + USB FRONTAL KAMERA SERVERI")
+    print("🛡️  QALQON — YAGONA GATEWAY (LIDAR + USB KAMERA + PTZ + ESP32)")
     print(f"📡  LiDAR Porti: {lidar_reader.port} @ 230400 baud")
     print(f"📷  USB Frontal Kamera: http://localhost:{port}/api/webcam/stream")
-    print(f"🌐  Veb Interfeys: http://localhost:{port}/#hud")
-    print(f"🔌  WebSocket Telemetriya: ws://localhost:{port}/ws")
+    print(f"🎥  PTZ 3-Linza Proksi: http://localhost:{port}/camera/stream -> {PTZ_SERVER_URL}")
+    print(f"🥽  Meta Quest 2 VR:    http://localhost:{port}/#vr")
+    print(f"🌐  Veb Interfeys:      http://localhost:{port}/#hud")
+    print(f"🔌  WebSocket (2-way):  ws://localhost:{port}/ws")
     print("="*65 + "\n")
 
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")

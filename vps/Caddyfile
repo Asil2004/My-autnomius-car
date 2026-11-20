@@ -1,0 +1,7 @@
+{$QALQON_DOMAIN:localhost} {
+    # MJPEG video oqimlari buferlanmasdan real vaqtda o'tishi uchun flush_interval -1
+    reverse_proxy qalqon-hub:8000 {
+        flush_interval -1
+        header_up X-Real-IP {remote_host}
+    }
+}

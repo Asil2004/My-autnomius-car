@@ -2077,7 +2077,7 @@ export const HUDView: React.FC = () => {
   }, []);
 
   // ============================================================================
-  // VR & GAMEPAD BOSHQARUV TIZIMI (Meta Quest, VR Controller, Gamepad API)
+  // VR & GAMEPAD BOSHQARUV TIZIMI (Meta Quest 2, VR Controller, Bluetooth Gamepad)
   // Chap joystik: Robot harakati (360° analog joystik)
   // O'ng joystik: PTZ kamera burilishi (Pan/Tilt)
   // ============================================================================
@@ -2088,31 +2088,49 @@ export const HUDView: React.FC = () => {
     let hadDrive = false;
     let hadPtz = false;
 
-    const pollGamepads = () => {
-      const gamepads = typeof navigator.getGamepads === 'function' ? navigator.getGamepads() : [];
-      let activeGamepad: Gamepad | null = null;
-      for (let i = 0; i < gamepads.length; i++) {
-        const gp = gamepads[i];
-        if (gp && gp.connected) {
-          activeGamepad = gp;
-          break;
-        }
+    const readStick = (gp: Gamepad, preferXrThumb: boolean): [number, number] => {
+      if (preferXrThumb && gp.axes.length >= 4) {
+        const ax2 = gp.axes[2] ?? 0;
+        const ax3 = gp.axes[3] ?? 0;
+        if (Math.abs(ax2) > 0.05 || Math.abs(ax3) > 0.05) return [ax2, ax3];
       }
+      return [gp.axes[0] ?? 0, gp.axes[1] ?? 0];
+    };
 
-      if (activeGamepad) {
+    const pollGamepads = () => {
+      const list = typeof navigator.getGamepads === 'function' ? Array.from(navigator.getGamepads()).filter((g): g is Gamepad => Boolean(g && g.connected)) : [];
+
+      if (list.length > 0) {
         const now = Date.now();
-        // 1. Robot harakati: chap joystik (Axes 0 = X, Axes 1 = Y)
-        const rawX = activeGamepad.axes[0] ?? 0;
-        const rawY = activeGamepad.axes[1] ?? 0;
         const deadzone = 0.18;
+        let rawX = 0;
+        let rawY = 0;
+        let ptzX = 0;
+        let ptzY = 0;
 
+        // Meta Quest 2 / ikki qo'lli VR kontrollerlari (har qo'l alohida gamepad)
+        const leftGp = list.find((g) => /left/i.test(g.id));
+        const rightGp = list.find((g) => /right/i.test(g.id));
+        if (leftGp || rightGp) {
+          if (leftGp) [rawX, rawY] = readStick(leftGp, true);
+          if (rightGp) [ptzX, ptzY] = readStick(rightGp, true);
+        } else {
+          // Standart Xbox / PS / Bluetooth gamepad (1 ta pultda 2 ta stik)
+          const gp = list[0];
+          rawX = gp.axes[0] ?? 0;
+          rawY = gp.axes[1] ?? 0;
+          ptzX = gp.axes[2] ?? 0;
+          ptzY = gp.axes[3] ?? 0;
+        }
+
+        // 1. Robot harakati
         const isDriveActive = Math.abs(rawX) > deadzone || Math.abs(rawY) > deadzone;
         if (isDriveActive) {
           hadDrive = true;
           if (now - lastDriveSent >= 50) {
             lastDriveSent = now;
             const x = Math.round(rawX * 100);
-            const y = Math.round(-rawY * 100); // gamepad Y manfiy bo'lsa yuqoriga
+            const y = Math.round(-rawY * 100);
             sendJoystickCoordinates(x, y);
           }
         } else if (hadDrive) {
@@ -2120,15 +2138,13 @@ export const HUDView: React.FC = () => {
           sendJoystickCoordinates(0, 0);
         }
 
-        // 2. PTZ burilishi: o'ng joystik (Axes 2 = X, Axes 3 = Y)
-        const ptzX = activeGamepad.axes[2] ?? 0;
-        const ptzY = activeGamepad.axes[3] ?? 0;
+        // 2. PTZ kamera burilishi (180° teskari o'rnatish hisobga olingan)
         const isPtzActive = Math.abs(ptzX) > deadzone || Math.abs(ptzY) > deadzone;
         if (isPtzActive) {
           hadPtz = true;
           if (now - lastPtzSent >= 80) {
             lastPtzSent = now;
-            ptzCameraService.move(CAMERA_ROTATED_180 ? -ptzX : ptzX, -ptzY);
+            ptzCameraService.move(CAMERA_ROTATED_180 ? -ptzX : ptzX, CAMERA_ROTATED_180 ? ptzY : -ptzY);
           }
         } else if (hadPtz) {
           hadPtz = false;

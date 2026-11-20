@@ -34,11 +34,18 @@ function read(): FaceCameraChoice {
 
 export function getDefaultPiWebcamBase(): string {
   if (typeof window === 'undefined') return 'http://localhost:8000';
-  if (window.location.protocol === 'http:' && window.location.hostname) {
-    if (window.location.port === '5173' || window.location.port === '4173') {
-      return `http://${window.location.hostname}:8000`;
-    }
-    return window.location.origin;
+  const { protocol, hostname, port, origin } = window.location;
+  if (!hostname) return '';
+  if (port === '5173' || port === '4173') {
+    return `http://${hostname}:8000`;
+  }
+  // GitHub Pages statik host: backend yo'q, foydalanuvchi manzil kiritadi
+  if (hostname.endsWith('.github.io')) {
+    return '';
+  }
+  // VPS HTTPS domen (https://qalqon.uz) yoki Pi 5 lokal (:8000): xuddi shu origin!
+  if (protocol === 'https:' || protocol === 'http:') {
+    return origin;
   }
   return '';
 }
@@ -54,7 +61,19 @@ function normalizePiBase(raw: string): string {
 function readPiBase(): string {
   try {
     const saved = localStorage.getItem(PI_BASE_KEY);
-    if (saved && saved.trim()) return normalizePiBase(saved);
+    if (saved && saved.trim()) {
+      const norm = normalizePiBase(saved);
+      // HTTPS VPS saytda eski lokal http:// IP saqlanib qolgan bo'lsa (Mixed Content), joriy HTTPS origin ga o'tamiz
+      if (
+        typeof window !== 'undefined' &&
+        window.location.protocol === 'https:' &&
+        !window.location.hostname.endsWith('.github.io') &&
+        norm.startsWith('http://')
+      ) {
+        return getDefaultPiWebcamBase();
+      }
+      return norm;
+    }
   } catch {
     /* xotira yo'q */
   }

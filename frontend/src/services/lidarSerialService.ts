@@ -163,6 +163,11 @@ class LidarSerialService {
     return this.isReading || this.isWsConnected || (Date.now() - this.lastMqttAt < 3000);
   }
 
+  /** WebSocket (/ws) yoki lokal USB/Serial port ochiqmi (MQTT hisobga olinmaydi) */
+  public hasDirectLink(): boolean {
+    return this.isReading || this.isWsConnected;
+  }
+
   public getPortName(): string {
     if (this.currentPortName) return this.currentPortName;
     if (Date.now() - this.lastMqttAt < 3000) return 'Cloud MQTT LiDAR Ko‘prigi';
@@ -284,23 +289,46 @@ class LidarSerialService {
   }
 
   /**
-   * 1. WebSocket Ko'prigi (Raspberry Pi 5 yoki PC orqali planshetda ishlash)
+   * Aktiv WebSocket (/ws) orqali robotga tezkor JSON buyruq (joystik/PTZ/cmd) yuborish
+   */
+  public sendWsJson(payload: Record<string, unknown>): boolean {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+    try {
+      this.ws.send(JSON.stringify(payload));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 1. WebSocket Ko'prigi (VPS Cloud Hub wss://DOMAIN/ws yoki Raspberry Pi 5 ws://IP:8000/ws)
    */
   public async connectWebSocket(customUrl?: string): Promise<{ portName: string }> {
     await this.closePort();
 
-    const defaultHost = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
-    const storedWs = typeof window !== 'undefined' ? localStorage.getItem('qalqon_lidar_ws') : null;
-    const storedPiIp = typeof window !== 'undefined' ? localStorage.getItem('qalqon_pi_ip') : null;
+    const isBrowser = typeof window !== 'undefined';
+    const isHttps = isBrowser && window.location.protocol === 'https:';
+    const host = isBrowser ? window.location.host : 'localhost:8000';
+    const hostname = isBrowser ? window.location.hostname : 'localhost';
+    const port = isBrowser ? window.location.port : '8000';
+    const isGithubPages = hostname.endsWith('.github.io');
+    const storedWs = isBrowser ? localStorage.getItem('qalqon_lidar_ws') : null;
+    const storedPiIp = isBrowser ? localStorage.getItem('qalqon_pi_ip') : null;
 
     let url = customUrl;
     if (!url) {
-      if (storedWs) {
+      if (isHttps && !isGithubPages && host) {
+        // VPS HTTPS domenda doim shifrlangan same-origin wss://DOMAIN/ws ishlatiladi (Mixed Content siz!)
+        url = storedWs && storedWs.startsWith('wss://') ? storedWs : `wss://${host}/ws`;
+      } else if (storedWs && (!isHttps || storedWs.startsWith('wss://'))) {
         url = storedWs;
-      } else if (storedPiIp) {
+      } else if (storedPiIp && !isHttps) {
         url = `ws://${storedPiIp}:8000/ws`;
-      } else if (defaultHost && defaultHost !== 'localhost') {
-        url = `ws://${defaultHost}:8000/ws`;
+      } else if (port === '5173' || port === '4173') {
+        url = `ws://${hostname}:8000/ws`;
+      } else if (host && !isGithubPages) {
+        url = `${isHttps ? 'wss' : 'ws'}://${host}/ws`;
       } else {
         url = 'ws://localhost:8000/ws';
       }

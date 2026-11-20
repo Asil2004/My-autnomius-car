@@ -12,16 +12,18 @@ import {
   BatteryMedium,
   OctagonAlert,
   LogOut,
-  Gamepad2
+  Gamepad2,
+  Glasses
 } from 'lucide-react';
 import { tacticalAudio, SIREN_TONE_NAMES, type SirenTone } from '../services/audioService';
 
 interface NavbarProps {
   onLockScreen?: () => void;
   onOpenController?: () => void;
+  onOpenVR?: () => void;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ onLockScreen, onOpenController }) => {
+export const Navbar: React.FC<NavbarProps> = ({ onLockScreen, onOpenController, onOpenVR }) => {
   const {
     battery,
     strobeActive,
@@ -169,6 +171,21 @@ export const Navbar: React.FC<NavbarProps> = ({ onLockScreen, onOpenController }
           >
             <Gamepad2 className="w-4 h-4" />
             <span className="hidden md:inline">PULT</span>
+          </button>
+        )}
+
+        {/* Meta Quest 2 VR Kokpit */}
+        {onOpenVR && (
+          <button
+            onClick={() => {
+              tacticalAudio.playClick();
+              onOpenVR();
+            }}
+            title="Meta Quest 2 VR Kokpit (#vr)"
+            className="px-2.5 py-1.5 rounded bg-cyan-900/40 hover:bg-cyan-800/60 border border-cyan-400/60 text-cyan-200 font-mono text-xs flex items-center space-x-1 transition-all"
+          >
+            <Glasses className="w-4 h-4" />
+            <span className="hidden md:inline">VR</span>
           </button>
         )}
 

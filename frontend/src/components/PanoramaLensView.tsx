@@ -20,15 +20,20 @@ export const PanoramaLensView: React.FC<{
   label: string;
   className?: string;
 }> = ({ variant, label, className = '' }) => {
-  const [remote] = useState(() => camLinkSettings.get().role === 'operator');
-  const hub = remote ? remoteLens : lensHub;
-  const statusSrc = remote ? remoteLens : ptzCameraService;
-  const [status, setStatus] = useState<PtzCameraStatus>(() => statusSrc.getStatus());
+  // VPS / Pi 5 (/camera) to'g'ridan-to'g'ri ulansa lensHub ishlatiladi; aks holda operator WebRTC (remoteLens)
+  const [roleOperator, setRoleOperator] = useState(() => camLinkSettings.get().role === 'operator');
+  const [directStatus, setDirectStatus] = useState<PtzCameraStatus>(() => ptzCameraService.getStatus());
+  const [remoteStatus, setRemoteStatus] = useState<PtzCameraStatus>(() => remoteLens.getStatus());
+  const useRemote = roleOperator && !directStatus.reachable && !directStatus.video;
+  const hub = useRemote ? remoteLens : lensHub;
+  const status = useRemote ? remoteStatus : directStatus;
   const [ok, setOk] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => statusSrc.subscribe(setStatus), [statusSrc]);
+  useEffect(() => camLinkSettings.subscribe((s) => setRoleOperator(s.role === 'operator')), []);
+  useEffect(() => ptzCameraService.subscribe(setDirectStatus), []);
+  useEffect(() => remoteLens.subscribe(setRemoteStatus), []);
   useEffect(() => hub.acquire(), [hub]);
 
   useEffect(() => {
@@ -132,7 +137,7 @@ export const PanoramaLensView: React.FC<{
               {label}: {reason}
             </div>
             <div className="text-xs text-slate-400 max-w-md leading-relaxed">
-              {remote
+              {useRemote
                 ? "Robotga PTZ kamera moduli ulanib, robot planshetida kamera serveri tasviri ochilganda shu yerda ko'rinadi."
                 : status.reachable
                 ? "Kamera quvvati va LAN kabelini, V380 ilovasida ONVIF yoqilganini tekshiring."

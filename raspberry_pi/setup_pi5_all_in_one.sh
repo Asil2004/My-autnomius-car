@@ -30,7 +30,7 @@ if [ ! -d "$REPO_DIR/venv" ]; then
 fi
 
 sudo -u "$ACTUAL_USER" "$REPO_DIR/venv/bin/pip" install --upgrade pip
-sudo -u "$ACTUAL_USER" "$REPO_DIR/venv/bin/pip" install fastapi uvicorn websockets pyserial requests opencv-python-headless python-dotenv httpx
+sudo -u "$ACTUAL_USER" "$REPO_DIR/venv/bin/pip" install fastapi uvicorn websockets pyserial requests opencv-python-headless python-dotenv httpx paho-mqtt
 
 echo "🔌 [3/5] Udev qoidalari o'rnatilmoqda (LiDAR va GPS portlari adashmasligi uchun)..."
 tee /etc/udev/rules.d/99-qalqon-devices.rules > /dev/null << 'EOF'
