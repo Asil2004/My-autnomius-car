@@ -1185,13 +1185,43 @@ def tablet_face_ui():
 # --------------------------------------------------------------------------
 # Serverni ishga tushirish (Dual-Port: 8000 va 8080)
 # --------------------------------------------------------------------------
-def run_server_on_port(port: int):
+def free_port(port: int):
+    """Portni band qilib turgan eski jarayonlarni tozalash"""
     try:
-        config = uvicorn.Config(app=app, host="0.0.0.0", port=port, log_level="warning")
-        server = uvicorn.Server(config)
-        server.run()
-    except Exception as e:
-        print(f"[Server Error] Port {port} da ishga tushirib bo'lmadi: {e}")
+        import subprocess
+        subprocess.run(["fuser", "-k", "-9", f"{port}/tcp"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+    try:
+        import subprocess
+        res = subprocess.run(["lsof", "-ti", f":{port}"], capture_output=True, text=True)
+        my_pid = str(os.getpid())
+        for pid_str in res.stdout.strip().split():
+            if pid_str and pid_str != my_pid:
+                try:
+                    os.kill(int(pid_str), 9)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+def run_server_on_port(port: int):
+    free_port(port)
+    time.sleep(0.3)
+    for attempt in range(3):
+        try:
+            config = uvicorn.Config(app=app, host="0.0.0.0", port=port, log_level="warning")
+            server = uvicorn.Server(config)
+            server.run()
+            break
+        except Exception as e:
+            if "98" in str(e) or "already in use" in str(e) or "Address already in use" in str(e):
+                print(f"[Server] Port {port} band, tozalanmoqda (urinish {attempt+1}/3)...")
+                free_port(port)
+                time.sleep(1.0)
+            else:
+                print(f"[Server Error] Port {port} da ishga tushirib bo'lmadi: {e}")
+                break
 
 if __name__ == '__main__':
     print("\n" + "="*65)

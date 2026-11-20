@@ -7,19 +7,18 @@ echo "=========================================================="
 echo "🛡️ QALQON AMR — RASPBERRY PI 4 TIZIMI ISHGA TUSHMOQDA..."
 echo "=========================================================="
 
-# 1. Serial va Kamera qurilmalariga kirish huquqlarini ochish
-sudo chmod 666 /dev/ttyACM* 2>/dev/null || true
-sudo chmod 666 /dev/ttyUSB* 2>/dev/null || true
-sudo chmod 666 /dev/video* 2>/dev/null || true
+# 1. Eski barcha jarayonlarni qat'iy to'xtatish (8000 va 8080 portlarni 100% bo'shatish)
+echo "[1/3] Eski jarayonlar va portlar tozalanmoqda..."
+pkill -9 -f "qalqon_brain" 2>/dev/null || true
+pkill -9 -f "uvicorn" 2>/dev/null || true
+pkill -9 -f "python3.*qalqon" 2>/dev/null || true
+fuser -k -9 8000/tcp 8080/tcp 2>/dev/null || true
+lsof -ti:8000 | xargs -r kill -9 2>/dev/null || true
+lsof -ti:8080 | xargs -r kill -9 2>/dev/null || true
+sleep 1
 
-# 2. Python kutubxonalarini tekshirish
-python3 -c "import fastapi, uvicorn, cv2, serial" 2>/dev/null
-if [ $? -ne 0 ]; then
-    echo "[!] Kerakli kutubxonalar yetishmayapti. O'rnatilmoqda..."
-    sudo apt-get update -y && sudo apt-get install -y python3-pip python3-fastapi python3-uvicorn python3-serial python3-opencv python3-numpy python3-websockets 2>/dev/null || \
-    pip3 install --break-system-packages fastapi uvicorn opencv-python pyserial numpy websockets || \
-    pip3 install fastapi uvicorn opencv-python pyserial numpy websockets
-fi
+# 2. Qurilmalarga ruxsat berish (agar kerak bo'lsa)
+chmod 666 /dev/ttyACM* /dev/ttyUSB* /dev/video* 2>/dev/null || true
 
 # 3. IP manzilni aniqlash
 IP_ADDR=$(hostname -I | awk '{print $1}')
@@ -31,12 +30,6 @@ echo "                           yoki http://$IP_ADDR:8080"
 echo "----------------------------------------------------------"
 echo ""
 
-# 4. Port 8000 va 8080 hamda Serial / Video portlarni band qilgan eski jarayonlarni tozalash
-sudo fuser -k 8000/tcp 8080/tcp 2>/dev/null || true
-sudo fuser -k /dev/ttyUSB* /dev/ttyACM* /dev/video* 2>/dev/null || true
-pkill -f "qalqon_brain.py" 2>/dev/null || true
-sleep 1
-
-# 5. Asosiy dasturni ishga tushirish
+# 4. Asosiy dasturni ishga tushirish
 cd "$(dirname "$0")"
 python3 qalqon_brain.py
