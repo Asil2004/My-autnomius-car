@@ -16,6 +16,7 @@ sudo chmod 666 /dev/video* 2>/dev/null || true
 python3 -c "import fastapi, uvicorn, cv2, serial" 2>/dev/null
 if [ $? -ne 0 ]; then
     echo "[!] Kerakli kutubxonalar yetishmayapti. O'rnatilmoqda..."
+    sudo apt-get update -y && sudo apt-get install -y python3-pip python3-fastapi python3-uvicorn python3-serial python3-opencv python3-numpy python3-websockets 2>/dev/null || \
     pip3 install --break-system-packages fastapi uvicorn opencv-python pyserial numpy websockets || \
     pip3 install fastapi uvicorn opencv-python pyserial numpy websockets
 fi
