@@ -1,234 +1,222 @@
-# 🛡️ "QALQON v1.0" IIV Avtonom Patrul Roboti: Yagona Jamlangan Texnik Qo'llanma
+# 🛡️ "QALQON" — IIV Avtonom Patrul va Jamoat Xavfsizligi Roboti
 
 ![Qalqon v1.0 Dizayn Posteri](docs/images/qalqon_v1_poster.jpg)
 
-> 📌 **Jamoaning Rasmiy Hisobot va Ijro Hujjatlari:**  
-> 1. **Mexatronika & Apparat Konstruksiyasi (Asilbek):** 👉 [`MEXATRONIKA_HISOBOT_VA_REJA.md`](MEXATRONIKA_HISOBOT_VA_REJA.md)  
-> 2. **UI / Frontend & Planshet Interfeysi (Sarvar):** 👉 [`UI_uchun_bajarilgan_ishlar.md`](UI_uchun_bajarilgan_ishlar.md)  
-> 3. **"Miya" (RPi 4) Dasturiy Ta'minot & Tizim Integratsiyasi (Boburjon):** 👉 [`MIYA_UCHUN_BAJARILGAN_ISHLAR.md`](MIYA_UCHUN_BAJARILGAN_ISHLAR.md)
+> 📌 **Loyiha maqsadi:** Piyodalar yo‘laklari, istirohat bog‘lari, xiyobonlar va ta’lim maskanlarida jamoat tartibini saqlash, patrullik qilish, sariq taktil yo‘laklar bo‘ylab avtonom harakatlanish, to‘siqlarni chetlab o‘tish hamda **Meta Quest 2 VR** orqali masofadan (4G/5G va Wi-Fi orqali) to‘liq immersiv boshqarish.
 
 ---
 
-## MUNDARIJA
+## 📑 Mundarija
 
-1. **Loyiha Konsepsiyasi va Vazifasi**
-2. **Mexanik Konstruksiya (Talaba / DIY Amortizatorsiz Shassi)**
-3. **Elektronika va Uskunalar Arxitekturasi**
-4. **Dasturiy Ta'minot va Sinov Qadamlari (Arduino + Raspberry Pi)**
-5. **Kamera orqali Masofani O'lchash va Yo'lni Ko'rish Metodlari**
-6. **4 ta Global Loyiha Tahlili va "Qalqon"ga Integratsiyasi**
-7. **Bosqichma-bosqich Amaliy Yo'l Xaritasi (Roadmap)**
-
----
-
-## 1. Loyiha Konsepsiyasi va Vazifasi
-
-* **Nomi:** "Qalqon" Avtonom Patrul va Jamoat Xavfsizligi Roboti.
-* **Maqsadi:** Piyodalar yo'laklari, istirohat bog'lari, xiyobonlar va ta'lim maskanlarida patrullik qilish, yo'l qoidalariga rioya etilishini kuzatish, to'siqlarni chetlab o'tish va favqulodda vaziyatlarda fuqarolarga **"SOS 102"** tezkor yordam aloqasini taqdim etish.
-* **Form-faktori:** Vertikal kuzatuv minorasi (balandligi ~1.15 m, asosi 45x45 sm), kiber-ko'rinishdagi jiddiy va sergak dizayn.
+1. [Asosiy Imkoniyatlar](#-asosiy-imkoniyatlar)
+2. [Tizim Arxitekturasi](#-tizim-arxitekturasi)
+3. [VR Cockpit (Meta Quest 2)](#-vr-cockpit-meta-quest-2)
+4. [VPS Cloud Relay & Masofaviy Boshqaruv (4G/5G)](#-vps-cloud-relay--masofaviy-boshqaruv-4g5g)
+5. [Tezkor Ishga Tushirish (Quickstart)](#-tezkor-ishga-tushirish-quickstart)
+   - [A. VPS Serverni ishga tushirish (Sheriklar uchun)](#a-vps-serverni-ishga-tushirish-sheriklar-uchun)
+   - [B. Raspberry Pi 5 ni ulash (Robot ichida)](#b-raspberry-pi-5-ni-ulash-robot-ichida)
+   - [C. Meta Quest 2 dan boshqarish](#c-meta-quest-2-dan-boshqarish)
+6. [Apparat va Elektronika Komponentlari](#-apparat-va-elektronika-komponentlari)
+7. [Veb-Interfeys Marshrutlari](#-veb-interfeys-marshrutlari)
+8. [Jamoa Hujjatlari va Qo‘llanmalar](#-jamoa-hujjatlari-va-qollanmalar)
 
 ---
 
-## 2. Mexanik Konstruksiya (Talaba / DIY Amortizatorsiz Shassi)
+## 🌟 Asosiy Imkoniyatlar
 
-Talaba yoki laboratoriya sharoitida murakkab va qimmatbaho podveska (amortizatorlar) ishlatmasdan, qattiq karkasda ishonchli ishlash uchun quyidagi yechim tanlandi:
+- 🥽 **Meta Quest 2 VR Cockpit (WebXR):**
+  - WebGL2 asosidagi 112° kavisli IMAX ekran (stereo immersiv rejim).
+  - **Oculus Touch** joystiklari orqali real-vaqtda boshqaruv (Mecanum 360° + PTZ kamera Pan/Tilt).
+  - Istalgan tarmoqdan (turli Wi-Fi yoki mobil internet orqali) xavfsiz boshqarish.
+
+- 🌐 **VPS Cloud Relay Hub (FastAPI + Caddy SSL):**
+  - Yagona maxsus HTTPS domen orqali barcha video (MJPEG), telemetriya va buyruqlarni birlashtiradi.
+  - Brauzerlarda **Mixed Content** bloklanishining oldini oladi (faqat 80 va 443 portlar).
+  - Robotga oq (statik) IP yoki port yo‘naltirish (port forwarding) talab qilinmaydi.
+
+- 📡 **4G/5G Masofaviy Uplink (Pi 5 -> VPS):**
+  - Raspberry Pi 5 chiquvchi `wss://<DOMEN>/ws/robot` orqali VPS ga ulanadi.
+  - Video oqimlari (Frontal USB + PTZ 3-linza) tarmoq kengligiga qarab avtomatik optimallashtiriladi.
+
+- 👁️ **Ko‘p Kamerali Tizim:**
+  - **Frontal USB Kamera:** Boshqaruv HUD va taktil yo‘lakni kuzatish uchun.
+  - **CP-159-1 ONVIF PTZ Kamera:** 3 ta linzali (keng burchakli panorama + harakatlanuvchi PTZ zoom).
+  - **Face ID & AI Deteksiya:** Odamlar, yuzlar va to‘siqlarni aniqlash.
+
+- 🛰️ **LiDAR 360° Skanerlash (STL-19P / LD19):**
+  - Real vaqtda 10-12 Hz chastotada xaritani skanerlash va to‘siqlarni aniqlash.
+  - Taktil yo‘lak va to‘siqlar mavjud bo‘lganda avtonom xavfsizlik to‘xtatish.
+
+- 🏎️ **Mecanum 4WD Shassi va ESP32 Nazorati:**
+  - Joyida 360° burilish va yonlama (strafe) harakatlanish imkoniyati.
+  - ESP32 orqali MQTT, USB Serial yoki HTTP buyruqlar uzatish.
+
+---
+
+## 🏗️ Tizim Arxitekturasi
 
 ```mermaid
 graph TD
-    subgraph Yuqori Minora [Surveillance Tower]
-        LIDAR[360° LD19 / RPLiDAR Skaner]
-        PTZ[360° PTZ Gumbaz Kamera]
-        STROBE[Politsiya Stroboskop Chiroqlari: Qizil/Ko'k]
-        TABLET[8.7 Dyuymli Planshet: Bronlangan Polikarbonat ortida]
+    subgraph OPERATOR_ZONASI [Operator va VR Ziyolisi]
+        QUEST[🥽 Meta Quest 2 Browser / PC]
+        MOBILE[📱 Android Smartfon / Planshet]
     end
 
-    subgraph Minora Karkasi [2020 Alyuminiy Ekstruziya]
-        FRAME[4 ta Vertikal 2020 Profil: 750 mm]
-        SKIN[Qoplama: 3mm Qora Kompozit / Akril Panellar]
+    subgraph BULUT [VPS Cloud Hub: https://sizning-domeningiz.uz]
+        CADDY[Caddy / Nginx: Avto Let's Encrypt HTTPS 443]
+        HUB[vps/vps_hub.py: FastAPI + WebSocket Relay]
+        STATIC[Frontend SPA: /#hud, /#vr, /#radar, /#autonomous]
+        CADDY --> HUB
+        CADDY --> STATIC
     end
 
-    subgraph Qattiq Shassi [Mecanum 4WD Platforma]
-        BASE[Qattiq Asos Plitasi: 450 x 420 mm]
-        MOTORS[4 ta DC Reduktorli Motor: L-Kronshteynlar bilan boltga qotirilgan]
-        WHEELS[4 ta 97-130mm Mecanum G'ildirak]
-        BATTERY[12V LiFePO4 Akkumulyator: Eng pastda og'irlik markazini tushiradi]
-        SONAR[4 ta HC-SR04 Ultratovush: Old, Orqa, Chap, O'ng]
+    subgraph ROBOT [QALQON Roboti — 4G SIM / Wi-Fi]
+        UPLINK[raspberry_pi/vps_uplink.py: Chiquvchi WSS Uplink]
+        PI5[Raspberry Pi 5: Boshqaruv Miyasi]
+        LIDAR_SRV[lidar_bridge_server.py: Port 8000]
+        CAM_SRV[camera_server/main.py: Port 8090 - PTZ Hub]
+        
+        USB_CAM[USB Frontal Kamera]
+        PTZ_CAM[CP-159-1 3-Linzali PTZ Kamera]
+        LIDAR[STL-19P 360° LiDAR]
+        ESP32[ESP32 Mecanum Motor Kontrolleri]
+        MOTORS[4x Mecanum Motorlar]
     end
 
-    LIDAR --> FRAME
-    PTZ --> FRAME
-    STROBE --> FRAME
-    TABLET --> FRAME
-    FRAME --> BASE
-    BASE --> MOTORS
-    MOTORS --> WHEELS
-    BASE --> SONAR
-    BATTERY -. Pastki muvozanat .-> BASE
+    QUEST -->|HTTPS / WSS| CADDY
+    MOBILE -->|HTTPS / WSS| CADDY
+    
+    UPLINK -->|WSS Tunnel: /ws/robot?token=...| HUB
+    PI5 --> UPLINK
+    
+    USB_CAM --> LIDAR_SRV
+    LIDAR --> LIDAR_SRV
+    PTZ_CAM --> CAM_SRV
+    
+    LIDAR_SRV --> UPLINK
+    CAM_SRV --> UPLINK
+    UPLINK -->|Buyruqlar| ESP32
+    ESP32 --> MOTORS
 ```
-
-### Muhim Mexanik Qoidalar:
-1. **Nega Amortizatorsiz?** Baland minora (1.15m) harakatlanganda va to'xtaganda prujinalar sabab chayqalib ketmaydi. LiDAR xaritasi va PTZ kamera gorizonti doimo barqaror turadi.
-2. **Mecanum g'ildiraklar:** Robot joyida 360° burilish va burilmasdan yonboshga (Strafe) harakatlanish imkoniyatiga ega. G'ildiraklar yuqoridan qaralganda roliklari **`X`** shaklini hosil qilishi shart.
-3. **Vandalga qarshi himoya:** Planshet tashqaridan emas, ichki tomondan 4 mm Lexan (polikarbonat) oyna ortiga o'rnatiladi. Tashqi korpusda yechiladigan ochiq vintlar bo'lmaydi.
 
 ---
 
-## 3. Elektronika va Uskunalar Arxitekturasi
+## 🥽 VR Cockpit (Meta Quest 2)
 
-Tizim ikki bosqichli "Miya + Refleks" arxitekturasida ishlaydi:
+Meta Quest 2 foydalanuvchilari uchun maxsus WebXR asosida ishlovchi immersiv boshqaruv paneli yaratilgan:
 
-```mermaid
-graph LR
-    subgraph MIYA [Raspberry Pi - Yuqori Bosqich]
-        CAM[USB Web-Kamera] --> RPI[Raspberry Pi 4 / 5]
-        WEB[Veb-Server: Port 8000] <--> RPI
-        AI[OpenCV / TFLite Modellar] --> RPI
-    end
+- **Kirish:** Meta Quest Browser da `https://sizning-domeningiz.uz/#vr` manziliga kiriladi.
+- **Oculus Touch Kontroller Boshqaruvi:**
+  - **Chap Stik (Thumbstick):** 360° Mekanum harakati (oldinga, orqaga, yonlarga siljish va burilish).
+  - **O‘ng Stik (Thumbstick):** 3-linzali PTZ kameraning Pan (gorizontal) va Tilt (vertikal) burilishi.
+  - **A tugmasi:** Kameralar o‘rtasida almashish (Frontal USB / PTZ 3-linza / Pi Cam).
+  - **B tugmasi:** Bosh harakatini (Head-Tracking) PTZ kameraga bog‘lash/uzish.
+  - **X tugmasi:** Harakat tezligi rejimini almashtirish (50% / 75% / 100%).
+  - **Y tugmasi:** Fara va stroboskop chiroqlarini yoqish/o‘chirish.
+  - **Chap Trigger / Grip:** Ovozli signal (Horn / Siren).
+  - **O‘ng Trigger / Grip:** Favqulodda to‘xtatish (**E-STOP**).
 
-    subgraph REFLEKS [Arduino Uno - Quyi Bosqich]
-        RPI -->|USB Serial Kabel 115200 Baud| ARDUINO[Arduino Uno]
-        US1[Old HC-SR04 A0/A1] --> ARDUINO
-        US2[Orqa HC-SR04 A2/A3] --> ARDUINO
-        ARDUINO --> SHIELD[L293D HW-130 Motor Shield]
-        SHIELD --> M1[M1: Old-Chap Motor]
-        SHIELD --> M2[M2: Orqa-Chap Motor]
-        SHIELD --> M3[M3: Orqa-O'ng Motor]
-        SHIELD --> M4[M4: Old-O'ng Motor]
-    end
+---
 
-    subgraph QUVVAT [Elektr Manbai]
-        BATT[12V / 7.4V Akkumulyator] -->|EXT_PWR ko'k klemmaga| SHIELD
-        BATT -->|5V UBEC orqali| RPI
-    end
+## 🌐 VPS Cloud Relay & Masofaviy Boshqaruv (4G/5G)
+
+Robot ko‘chada mobil internet (4G/5G SIM) orqali ishlaganda unga to‘g‘ridan-to‘g‘ri ulanib bo‘lmaydi (NAT va provayder cheklovlari sababli). Shuning uchun **Chiquvchi WSS Uplink** arxitekturasi joriy etilgan:
+
+1. Robot ichidagi Raspberry Pi 5 VPS dagi xavfsiz manzilga (`wss://<DOMEN>/ws/robot`) o‘zi ulanadi.
+2. VPS barcha videolarni, LiDAR skanlarini va sensor ma’lumotlarini qabul qilib, ulangan barcha foydalanuvchilarga (shu jumladan Meta Quest 2 ga) bitta HTTPS domenda tarqatadi.
+3. Foydalanuvchilar jo‘natgan barcha joystik va PTZ buyruqlari real vaqtda robotga yetkaziladi.
+
+---
+
+## 🚀 Tezkor Ishga Tushirish (Quickstart)
+
+### A. VPS Serverni ishga tushirish (Sheriklar uchun)
+
+VPS ga kiring va quyidagi buyruqlarni bajaring:
+
+```bash
+# 1. Loyihani yuklab olish
+git clone https://github.com/Asil2004/My-autnomius-car.git
+cd My-autnomius-car/vps
+
+# 2. Sozlamalar faylini tayyorlash
+cp .env.example .env
+nano .env
+# Fayl ichida QALQON_DOMAIN ga o'z domeningizni, QALQON_ROBOT_TOKEN ga maxfiy kalitni yozing!
+
+# 3. Docker orqali ishga tushirish (Caddy avtomatik bepul SSL oladi)
+docker compose up -d --build
 ```
 
-### Uskunalarni Ulagichlar Jadvali:
+Batafsil ma’lumot uchun: [`vps/README_VPS_DEPLOY.md`](vps/README_VPS_DEPLOY.md)
 
-| Uskuna / Modul | Ulanish Nuqtasi | Belgilanishi / Pin | Vazifasi |
+---
+
+### B. Raspberry Pi 5 ni ulash (Robot ichida)
+
+Raspberry Pi 5 da faqat **1 ta buyruq** beriladi:
+
+```bash
+cd ~/My-autnomius-car
+git pull origin main
+
+# Avtomatik servis yaratish va ulanish:
+sudo bash raspberry_pi/setup_vps_uplink.sh https://sizning-domeningiz.uz SIZNING_MAXFIY_TOKENINGIZ
+```
+
+Servis holatini tekshirish:
+```bash
+sudo systemctl status qalqon-uplink
+```
+
+---
+
+### C. Meta Quest 2 dan boshqarish
+
+1. Meta Quest 2 ko‘zoynagini taqing va **Meta Quest Browser** ni oching.
+2. Manzil qatoriga yozing:
+   ```text
+   https://sizning-domeningiz.uz/#vr
+   ```
+3. Ekranda **"VR KOKPITGA KIRISH (WEBXR)"** tugmasini bosing.
+4. Robot frontal yoki PTZ kamerasi ulkan 112° kavisli ekranda namoyon bo‘ladi va Touch pultlari orqali to‘liq boshqarish imkoniyati ochiladi.
+
+---
+
+## 🛠️ Apparat va Elektronika Komponentlari
+
+| Komponent | Model / Turi | Vazifasi | Ulanish Turi |
 | :--- | :--- | :--- | :--- |
-| **Arduino -> RPi** | USB-A dan USB-B kabel | `/dev/ttyACM0` (115200) | Buyruqlar va xavf signallari almashinuvi |
-| **Old HC-SR04** | L293D Shield A0 va A1 | `Trig = A0`, `Echo = A1` | Old to'siqni o'lchash (Favqulodda tormoz) |
-| **Orqa HC-SR04** | L293D Shield A2 va A3 | `Trig = A2`, `Echo = A3` | Orqaga harakatda to'siqni aniqlash |
-| **4 ta DC Motor** | L293D vintli klemmalari | `M1`, `M2`, `M3`, `M4` | 4WD Mecanum mustaqil harakatlantirish |
-| **Akkumulyator** | L293D `EXT_PWR` klemmasi | `+` va `-` (GND) | Motorlarga yuqori tok yetkazish |
-| **Sariq Jumper** | L293D ustidagi `PWR` | **SUG'URIB OLINADI** | Arduino va motor quvvatini ajratish |
+| **Bosh Boshqaruvchi** | Raspberry Pi 5 (8GB) | Veb-server, video oqim, LiDAR ishlov berish va VPS uplink | USB / Wi-Fi / 4G |
+| **Motor Kontrolleri** | ESP32 NodeMCU | 4WD Mecanum motorlarining tezligi va yo‘nalishini boshqarish | USB Serial / MQTT |
+| **LiDAR Skaner** | STL-19P / LD19 | 360° xaritani skanerlash va to‘siqlarni aniqlash | USB Serial (`/dev/ttyUSB0`) |
+| **Frontal Kamera** | USB HD Veb-Kamera | HUD ekrani va sariq taktil chiziqni aniqlash | USB (`/dev/video0`) |
+| **Gumbaz Kamera** | CP-159-1 (3 linzali) | 360° panoramali va optik kattalashtirishli kuzatuv | ONVIF / RTSP / LAN |
+| **Shassi va Motorlar** | 4WD Mecanum Platforma | Har qanday yo‘nalishga (strafe) harakatlanish | H-Bridge drayver |
+| **Quvvat Manbai** | 12V LiFePO4 / Lipo | Robot motorlari va bort elektronikasini quvvatlash | 5V UBEC konvertor |
 
 ---
 
-## 4. Dasturiy Ta'minot va Sinov Qadamlari
+## 🖥️ Veb-Interfeys Marshrutlari
 
-### A. Arduino Sketch: `arduino_l293d_patrol.ino`
-* Joylashuvi: [`d:\antigravity\qalqon\arduino_l293d_patrol\arduino_l293d_patrol.ino`](file:///d:/antigravity/qalqon/arduino_l293d_patrol/arduino_l293d_patrol.ino)
-* Vazifasi: `AFMotor.h` kutubxonasi orqali motorlarni boshqaradi.
-* Serial buyruqlar protokoli:
-  * `'F'` — Oldinga, `'B'` — Orqaga, `'L'` — Chapga, `'R'` — O'ngga
-  * `'Q'` — Chapga yonlama (Strafe), `'E'` — O'ngga yonlama (Strafe)
-  * `'S'` — To'xtash
-  * `'1'`, `'2'`, `'3'` — Tezlikni almashtirish (130, 190, 250 PWM)
-* Xavfsizlik sharti: Agar old masofa `< 22 sm` bo'lsa, harakat to'xtatiladi va `WARN:OBSTACLE_FRONT` signali qaytariladi.
-
-### B. Raspberry Pi Veb-Kontroller: `pi_patrol.py`
-* Joylashuvi: `~/qalqon/pi_patrol.py` (Raspberry Pi ichida)
-* Web-interfeys: `http://10.37.227.167:8000`
-* Imkoniyatlari:
-  * Jonli video stream (MJPEG).
-  * 9 ta virtual sensorli tugma (Mecanum barcha yo'nalishlari).
-  * Klaviatura tugmalari orqali boshqaruv (`W`, `A`, `S`, `D`, `Q`, `E`, `Space`).
-  * `AUTO_CAMERA` va `MANUAL` rejimlari orasida almashish.
+| Marshrut | Nomi | Vazifasi |
+| :--- | :--- | :--- |
+| `/#hud` | **Boshqaruv HUD** | Asosiy operator paneli: video oqim, klaviatura/joystik pulti, tezlik, Face ID |
+| `/#vr` | **VR Kokpit** | Meta Quest 2 uchun WebXR stereo 112° immersiv boshqaruv |
+| `/#radar` | **LiDAR Radar** | 360° LiDAR masofa nurlari va to‘siqlar xaritasi |
+| `/#autonomous`| **AI & Taktil Yo‘l** | Ko‘zi ojizlar taktil yo‘lagi (sariq chiziq) bo‘ylab avtonom patrul |
+| `/#settings` | **Sozlamalar** | IP kameralar, ESP32 porti, kompas va parametrlar kalibrovkasi |
 
 ---
 
-## 5. Kamera orqali Masofani O'lchash va Yo'lni Ko'rish
+## 📚 Jamoa Hujjatlari va Qo‘llanmalar
 
-Oddiy bitta (monokulyar) USB kamera orqali masofani aniqlashning 3 xil professional usuli:
-
-1. **Geometrik / Fokus formulasi (Known Object Size):**
-   $$\text{Masofa } (D) = \frac{\text{Haqiqiy Kenglik } (W) \times \text{Fokus Masofasi } (F)}{\text{Kadrda Egallagan Piksellar } (P)}$$
-   * Agar inson yuzi kadrda 150 piksel bo'lsa ~1 m, 50 piksel bo'lsa ~3 m.
-2. **ArUco / AprilTag markerlari:**
-   * Bazaga yoki to'siqqa maxsus 2D kvadrat kod yopishtiriladi. OpenCV uning burchaklaridan 1 sm aniqlikda masofani hisoblaydi.
-3. **Datchiklar Birlashmasi (Sensor Fusion - Eng to'g'ri yo'l):**
-   * Kamera yo'nalish va chiziqni topadi (Aql), ultratovush datchik esa oldidagi to'siqqacha aniq masofani o'lchab darhol to'xtatadi (Refleks).
+- 🌐 [VPS Deploy va Caddy/Nginx Qo‘llanmasi](vps/README_VPS_DEPLOY.md)
+- ⚙️ [Mexatronika va Konstruksiya Hisoboti](MEXATRONIKA_HISOBOT_VA_REJA.md)
+- 💻 [UI va Frontend Ishlanmalari](UI_uchun_bajarilgan_ishlar.md)
+- 🧠 [Raspberry Pi Tizim Integratsiyasi](MIYA_UCHUN_BAJARILGAN_ISHLAR.md)
+- 📋 [Jamoa Vazifalari va Rejasi](JAMOA_VAZIFALARI_VA_REJASI.md)
 
 ---
 
-## 6. To'rtta Global Loyiha Tahlili va "Qalqon"ga Moslashtirish
-
-Siz taqdim etgan va o'rganilgan barcha tizimlar taqqoslamasi:
-
-```mermaid
-graph TD
-    A[AVTONOM ROBOTOTEXNIKA YO'NALISHLARI]
-    A --> B[1. Hiwonder MentorPi]
-    A --> C[2. Multunus RC Car]
-    A --> D[3. F1TENTH UWaterloo]
-    A --> E[4. UIUC CS437 IoT Lab1]
-
-    B -->|ROS 2 + Mecanum + 3D Kamera| B1[To'liq Nav2 / SLAM ekotizimi]
-    C -->|Nol dan ANN Neyrotarmoq| C1[Odam haydashiga taqlid qilish]
-    D -->|C++ Matematika + LiDAR| D1[TTC Favqulodda Tormoz & Gap Follow]
-    E -->|TFLite Edge TPU + Servo Sonar| E1[STOP, Odam, Svetofor va Grid Map]
-```
-
-### 1. Hiwonder MentorPi M1 (ROS 2 / Raspberry Pi 5 / Mecanum)
-* **Xususiyati:** Sizning shassingiz bilan 100% bir xil Mecanum kinematikasi.
-* **Foydali tomoni:** Yuqori darajadagi SLAM (xaritalash) va Nav2 avtopiloti uchun tayyor namuna.
-
-### 2. Multunus Autonomous RC Car (End-to-End Artificial Neural Network)
-* **Xususiyati:** TensorFlow yoki PyTorch-siz, toza matematikada (bitta yashirin qatlamli neyrotarmoq) yozilgan.
-* **Foydali tomoni:** Robotni 5 daqiqa o'zingiz haydaysiz, u rasmlar va bosilgan tugmalarni yozib oladi va keyin xuddi sizdek mustaqil haydashni o'rganadi.
-
-### 3. F1TENTH (University of Waterloo, CL2 Lab)
-* **Xususiyati:** 25 km/soat tezlikda to'qnashuvsiz poyga qiluvchi ROS 2 paketi.
-* **Foydali tomoni:**
-  * **`safety_node` (TTC - Time to Collision):** Tezlik va masofa nisbati orqali avtomatik favqulodda tormoz.
-  * **`gap_follow` (Follow the Gap):** To'siqlar orasidagi eng katta bo'sh yo'lni topib, to'xtamasdan aylanib o'tish.
-
-### 4. UIUC CS 437 IoT Lab 1 (Tesla Model S miniatyurasi)
-* **Xususiyati:** Kichik `road_signs_quantized_edgetpu.tflite` modeli orqali:
-  * `Person` (Odam)
-  * `Stop` (STOP belgisi)
-  * `Red` / `Green` (Svetofor)
-  * `Limit 25` / `Limit 40` (Tezlik cheklovlari)
-* **Foydali tomoni:** Raspberry Pi-da soniyasiga 20–30 kadrda qotmasdan ishlaydi va kompyuteringizdagi `d:\antigravity\qalqon\cs437_iot_lab1` papkasida barcha modellari tayyor holda turibdi.
-
----
-
-## 7. Bosqichma-bosqich Amaliy Yo'l Xaritasi (Roadmap)
-
-```
-[1-BOSQICH (Hozirgi erishilgan natija)]
-   ✅ Mecanum shassi + L293D + Arduino Uno
-   ✅ Raspberry Pi veb-strimi (8000-port)
-   ✅ Klaviaturadan va tugmalardan boshqaruv
-   ✅ Ultratovushli xavfsizlik to'xtashi
-
-[2-BOSQICH (Eng yaqin qadam)]
-   🔹 Kamerani 35-40° burchak ostida polga qaratish
-   🔹 UIUC loyihasidagi 'road_signs_quantized.tflite' modelini ulash
-   🔹 Odam va qizil STOP belgisini ko'rganda avtomatik to'xtash
-
-[3-BOSQICH (O'rta bosqich)]
-   🔹 Multunus uslubida klaviaturadan ma'lumot yig'ish va o'rgatish
-   🔹 Servo motorga bitta ultratovushni o'rnatib mini-radar qilish
-
-[4-BOSQICH (Yakuniy IIV Patrul Minorasi)]
-   🔹 2020 Alyuminiy vertikal minora karkasini yig'ish
-   🔹 Planshet (102 SOS chaqiruv paneli) va politsiya stroboskopini integratsiya qilish
-   🔹 LD19 LiDAR qo'shib to'liq SLAM xaritasini ishga tushirish
-```
-
-
----
-
-## 8. Zamonaviy Taktik Frontend & Android Mobil APK
-
-Robotni boshqarish va uning telemetriyasini real-vaqtda kuzatish uchun maxsus **Mission Control Tactical UI** ishlab chiqildi:
-* **Texnologiyalar**: React 19, TypeScript, Tailwind CSS, Lucide Icons, Capacitor Android.
-* **Asosiy Modullar**:
-  * **Boshqaruv HUD**: 8 yo'nalishli Mecanum pulti (`W, A, S, D, Q, E, Space, 1-3`), 360° PTZ gumbaz kamera nazorati, 4x HC-SR04 sonarlar va avtotormoz (`WARN:OBSTACLE_FRONT`).
-  * **SOS 102 Terminali**: 8.7" bronlangan minora ekrani uchun gigant favqulodda chaqiruv, stroboskop va dispetcherlik interfeysi.
-  * **AI & Avtonom Patrul**: Edge TFLite ob'ektlar deteksiyasi (Odam, STOP, Svetofor, Tezlik belgilari), F1TENTH Gap-Follow va TTC (Time to Collision) hisoblagichi.
-  * **360° LiDAR Radar Canvas**: LD19 / RPLiDAR skaneri uchun real-vaqtdagi radar sweep vizualizatsiyasi.
-  * **Android APK**: `qalqon-patrol-v1.0.apk` sifatida to'liq yig'ilgan va smartfon/planshetlarga o'rnatishga tayyor.
-* **Batafsil Hisobot**: [UI_uchun_bajarilgan_ishlar.md](UI_uchun_bajarilgan_ishlar.md)
+© 2026 QALQON IIV Avtonom Patrul Roboti Loyihasi. Barcha huquqlar himoyalangan.
