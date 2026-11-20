@@ -36,6 +36,53 @@ except ImportError:
     HAS_OPENCV = False
 
 
+# Raspberry Pi 5 da /dev/video0..7 (rp1-cfe, CSI) va /dev/video19..35 (pispbe ISP, hevc) plataning o'z tugunlari:
+# ulardan kadr o'qib bo'lmaydi. USB web-kamera odatda /dev/video8 va undan yuqorida bo'ladi.
+_SOC_VIDEO_NAMES = ("pispbe", "rp1-cfe", "bcm2835", "hevc", "codec", "unicam", "isp", "rpivid")
+
+
+def usb_video_devices() -> list:
+    """Linux: haqiqiy tasvir oladigan (USB/UVC) /dev/video* raqamlari, plata tugunlarisiz. Boshqa tizimda []."""
+    root = "/sys/class/video4linux"
+    if not sys.platform.startswith("linux") or not os.path.isdir(root):
+        return []
+    found = []
+    for path in glob.glob(os.path.join(root, "video*")):
+        num = os.path.basename(path)[len("video"):]
+        if not num.isdigit() or not os.path.exists(f"/dev/video{num}"):
+            continue
+        try:
+            with open(os.path.join(path, "name"), "r", encoding="utf-8", errors="ignore") as f:
+                name = f.read().strip().lower()
+        except Exception:
+            name = ""
+        if any(s in name for s in _SOC_VIDEO_NAMES):
+            continue
+        # UVC kamera ikkita tugun ochadi: index=0 tasvir, index=1 metama'lumot (undan kadr kelmaydi)
+        try:
+            with open(os.path.join(path, "index"), "r") as f:
+                if int(f.read().strip() or 0) != 0:
+                    continue
+        except Exception:
+            pass
+        found.append(int(num))
+    return sorted(found)
+
+
+def resolve_video_device(source):
+    """
+    Mantiqiy kamera raqami (0, 1, 2...) -> haqiqiy /dev/video raqami.
+    USB kameralar topilsa: 0 = birinchi USB kamera, 1 = ikkinchisi...; yo'q bo'lsa raqam o'zgarmaydi (Pi 4, kompyuter).
+    None: bunday kamera yo'q.
+    """
+    if not isinstance(source, int):
+        return source
+    devs = usb_video_devices()
+    if devs:
+        return devs[source] if 0 <= source < len(devs) else None
+    return source
+
+
 class CameraModule:
     """Yagona kamera manbasini (USB/V4L2/Sintetik) boshqarish klassi"""
     def __init__(self, source=0, width: int = 640, height: int = 480, name: str = "Kamera"):
@@ -103,7 +150,21 @@ class CameraModule:
                 if not self.cap.isOpened():
                     self.cap = cv2.VideoCapture(self.source)
             else:
-                self.cap = cv2.VideoCapture(self.source)
+                dev = resolve_video_device(self.source)
+                if dev is None:
+                    raise RuntimeError("bunday USB kamera ulanmagan")
+                if isinstance(dev, int):
+                    self.cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
+                    if not self.cap.isOpened():
+                        self.cap = cv2.VideoCapture(dev)
+                    # USB web-kameralar MJPG da yuqori FPS beradi (YUYV da 640x480 ham sekin bo'lishi mumkin)
+                    try:
+                        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+                    except Exception:
+                        pass
+                    print(f"[Kamera #{self.source}] /dev/video{dev} ochilmoqda")
+                else:
+                    self.cap = cv2.VideoCapture(dev)
 
             if self.cap and self.cap.isOpened():
                 self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
@@ -536,7 +597,12 @@ class MultiCameraManager:
                     if not test_cap.isOpened():
                         test_cap = cv2.VideoCapture(idx)
                 else:
-                    test_cap = cv2.VideoCapture(idx)
+                    dev = resolve_video_device(idx)
+                    if dev is None:
+                        continue
+                    test_cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
+                    if not test_cap.isOpened():
+                        test_cap = cv2.VideoCapture(dev)
 
                 if test_cap and test_cap.isOpened():
                     ret, frame = test_cap.read()
