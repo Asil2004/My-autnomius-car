@@ -652,7 +652,7 @@ export const VRControlView: React.FC<VRControlViewProps> = ({ onExit }) => {
     if (!xr || !window.XRWebGLLayer) {
       setXrError(
         !isHttps
-          ? "WebXR faqat HTTPS domenda ishlaydi! VPS domeningizda (https://...) oching."
+          ? "WebXR xavfsizlik talabi: faqat HTTPS da ishlaydi! GitHub Pages (https://asil2004.github.io/My-autnomius-car/#vr) orqali oching yoki chrome://flags orqali 10.23.21.132:8000 ga ruxsat bering."
           : "Ushbu brauzerda WebXR topilmadi. Meta Quest 2 ichidagi Meta Quest Browser da oching."
       );
       return;
