@@ -39,9 +39,10 @@ export function getDefaultPiWebcamBase(): string {
   if (port === '5173' || port === '4173') {
     return `http://${hostname}:8000`;
   }
-  // GitHub Pages statik host: backend yo'q, foydalanuvchi manzil kiritadi
+  // GitHub Pages statik host: lokal Raspberry Pi IP (10.23.21.132:8000)
   if (hostname.endsWith('.github.io')) {
-    return '';
+    const savedIp = typeof window !== 'undefined' ? (localStorage.getItem('qalqon_pi_ip') || '10.23.21.132') : '10.23.21.132';
+    return `http://${savedIp}:8000`;
   }
   // VPS HTTPS domen (https://qalqon.uz) yoki Pi 5 lokal (:8000): xuddi shu origin!
   if (protocol === 'https:' || protocol === 'http:') {

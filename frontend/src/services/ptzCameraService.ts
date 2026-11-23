@@ -24,7 +24,8 @@ export const DEFAULT_PTZ_BASE = (() => {
     return `http://${hostname}:8090/camera`;
   }
   if (hostname.endsWith('.github.io')) {
-    return 'http://localhost:8090/camera';
+    const savedIp = typeof window !== 'undefined' ? (localStorage.getItem('qalqon_pi_ip') || '10.23.21.132') : '10.23.21.132';
+    return `http://${savedIp}:8000/camera`;
   }
   // VPS HTTPS domen (https://qalqon.uz/camera) va Pi 5 Yagona Gateway (:8000/camera)
   if (protocol === 'https:' || protocol === 'http:') {
