@@ -348,7 +348,8 @@ def mjpeg_frame_generator():
         jpeg = camera.get_jpeg()
         if jpeg:
             yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + jpeg + b'\r\n')
+                   b'Content-Type: image/jpeg\r\n'
+                   f'Content-Length: {len(jpeg)}\r\n\r\n'.encode('ascii') + jpeg + b'\r\n')
         time.sleep(0.04)
 
 # --------------------------------------------------------------------------
@@ -383,7 +384,8 @@ def video_feed_quad():
             jpeg = camera.get_quad_jpeg()
             if jpeg:
                 yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + jpeg + b'\r\n')
+                       b'Content-Type: image/jpeg\r\n'
+                       f'Content-Length: {len(jpeg)}\r\n\r\n'.encode('ascii') + jpeg + b'\r\n')
             time.sleep(0.05)
     return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame")
 
@@ -397,7 +399,8 @@ def video_feed_by_id(cam_id: int):
             jpeg = camera.get_jpeg_by_source(cam_id)
             if jpeg:
                 yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + jpeg + b'\r\n')
+                       b'Content-Type: image/jpeg\r\n'
+                       f'Content-Length: {len(jpeg)}\r\n\r\n'.encode('ascii') + jpeg + b'\r\n')
             time.sleep(0.04)
     return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame")
 

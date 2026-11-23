@@ -25,6 +25,9 @@ export interface LensFrame {
 
 const enc = new TextEncoder();
 const HEADER_END = enc.encode('\r\n\r\n');
+const FRAME_BOUNDARY = enc.encode('--frame');
+const JPEG_SOI = new Uint8Array([0xff, 0xd8]);
+const JPEG_EOI = new Uint8Array([0xff, 0xd9]);
 
 function indexOf(buf: Uint8Array, pat: Uint8Array, from = 0): number {
   outer: for (let i = from; i <= buf.length - pat.length; i++) {
@@ -124,25 +127,54 @@ export class LensHub {
       merged.set(value, buf.length);
       buf = merged;
 
-      // To'liq kadrlarni ajratish: "--frame\r\nContent-Type: ...\r\nContent-Length: N\r\n\r\n<JPEG N bayt>\r\n"
+      // To'liq kadrlarni ajratish: Content-Length mavjud bo'lsa yoki --frame / JPEG SOI/EOI orqali
       for (;;) {
         const hEnd = indexOf(buf, HEADER_END);
-        if (hEnd < 0) break;
+        if (hEnd < 0) {
+          if (buf.length > MAX_BUFFER) {
+            const soi = indexOf(buf, JPEG_SOI);
+            if (soi > 0) buf = buf.subarray(soi);
+            else buf = new Uint8Array(0);
+          }
+          break;
+        }
+
         const header = new TextDecoder().decode(buf.subarray(0, hEnd));
         const m = /content-length:\s*(\d+)/i.exec(header);
-        if (!m) {
-          buf = buf.subarray(hEnd + 4); // sarlavhasiz qism: o'tkazib yuboramiz
-          continue;
+
+        let jpeg: Uint8Array | null = null;
+        let nextStart = 0;
+
+        if (m) {
+          const len = Number(m[1]);
+          const start = hEnd + 4;
+          if (buf.length < start + len) break; // kadr hali to'liq kelmagan
+          jpeg = buf.slice(start, start + len);
+          nextStart = start + len;
+        } else {
+          // Content-Length bo'lmaganda: keyingi --frame yoki JPEG EOI (0xFF 0xD9)
+          const start = hEnd + 4;
+          const nextBoundary = indexOf(buf, FRAME_BOUNDARY, start);
+          if (nextBoundary > 0) {
+            jpeg = buf.slice(start, nextBoundary);
+            nextStart = nextBoundary;
+          } else {
+            const eoi = indexOf(buf, JPEG_EOI, start);
+            if (eoi > 0) {
+              jpeg = buf.slice(start, eoi + 2);
+              nextStart = eoi + 2;
+            } else {
+              break; // kadr hali to'liq kelmagan
+            }
+          }
         }
-        const len = Number(m[1]);
-        const start = hEnd + 4;
-        if (buf.length < start + len) break; // kadr hali to'liq kelmagan
-        const jpeg = buf.slice(start, start + len);
-        buf = buf.subarray(start + len);
+
+        buf = buf.subarray(nextStart);
+
         // Dekoder band bo'lsa oraliq kadr tashlab yuboriladi (kechikish yig'ilmaydi)
-        if (!decoding) {
+        if (jpeg && jpeg.length > 100 && !decoding) {
           decoding = true;
-          createImageBitmap(new Blob([jpeg], { type: 'image/jpeg' }))
+          createImageBitmap(new Blob([jpeg as any], { type: 'image/jpeg' }))
             .then((bmp) => {
               if (gen !== this.gen) {
                 bmp.close();

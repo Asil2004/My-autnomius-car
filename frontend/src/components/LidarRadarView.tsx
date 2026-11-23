@@ -53,12 +53,32 @@ export const LidarRadarView: React.FC = () => {
       return cleanGw.replace(/^https?:\/\//i, prefix).replace(/:8000\/?.*$/i, '') + '/ws';
     }
     const saved = typeof window !== 'undefined' ? localStorage.getItem('qalqon_lidar_ws') : null;
-    if (saved) return saved;
+    if (saved && !saved.includes('.trycloudflare.com')) return saved;
     const piIp = typeof window !== 'undefined' ? localStorage.getItem('qalqon_pi_ip') : null;
     if (piIp && !piIp.includes('.trycloudflare.com')) return `ws://${piIp}:8000/ws`;
     const host = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
     return `ws://${host}:8000/ws`;
   });
+
+  // Gateway yangilanganda wsUrl ni avtomatik sinxronlash
+  useEffect(() => {
+    const syncWithGateway = () => {
+      try {
+        const savedGw = typeof window !== 'undefined' ? localStorage.getItem('qalqon_gateway_url') : null;
+        if (savedGw && savedGw.trim().startsWith('http')) {
+          const cleanGw = savedGw.trim().replace(/\/+$/, '');
+          const prefix = cleanGw.startsWith('https://') ? 'wss://' : 'ws://';
+          const targetWs = cleanGw.replace(/^https?:\/\//i, prefix).replace(/:8000\/?.*$/i, '') + '/ws';
+          setWsUrl(targetWs);
+        }
+      } catch (_) {}
+    };
+    syncWithGateway();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('storage', syncWithGateway);
+      return () => window.removeEventListener('storage', syncWithGateway);
+    }
+  }, []);
 
   // Real-vaqt telemetriyasi
   const [liveRateHz, setLiveRateHz] = useState<number>(10.0);
@@ -180,21 +200,37 @@ export const LidarRadarView: React.FC = () => {
     }
   }, [addLog]);
 
-  // Raspberry Pi 5 LiDAR Serverini tekshirish (Ping)
+  const sanitizeUrl = (input: string): string => {
+    let clean = input.trim();
+    if (clean.includes('.trycloudflare.com')) {
+      clean = clean.replace(/:8000\/?.*$/i, '').replace(/^ws:\/\//i, 'wss://');
+      if (!clean.startsWith('wss://') && !clean.startsWith('https://')) {
+        clean = 'wss://' + clean.replace(/^\/+/, '');
+      }
+      if (!clean.endsWith('/ws')) {
+        clean = clean.replace(/\/+$/, '') + '/ws';
+      }
+    }
+    return clean;
+  };
+
+  // Raspberry Pi LiDAR Serverini tekshirish (Ping)
   const handlePingPi = useCallback(async () => {
     try {
       setIsPingingPi(true);
       setPiPingStatus(null);
-      const res = await lidarSerialService.pingPiStatus(wsUrl);
+      const cleanUrl = sanitizeUrl(wsUrl);
+      if (cleanUrl !== wsUrl) setWsUrl(cleanUrl);
+      const res = await lidarSerialService.pingPiStatus(cleanUrl);
       if (res.ok && res.status) {
         setPiPingStatus({
           ok: true,
-          text: `Pi 5 Aloqada! Sensor: ${res.status.port || '/dev/ttyUSB0'} (${res.status.status || 'ONLINE'}, ${res.status.rate_hz || 10} Hz)`
+          text: `Pi Aloqada! Sensor: ${res.status.port || '/dev/ttyUSB0'} (${res.status.status || 'ONLINE'}, ${res.status.rate_hz || 10} Hz)`
         });
       } else {
         setPiPingStatus({
           ok: false,
-          text: `Pi 5 bilan aloqa yo'q: ${res.error || 'Ulanib bo‘lmadi'}. Pi IP sini tekshiring va 'python lidar_bridge_server.py' ishga tushganligiga ishonch hosil qiling.`
+          text: `Pi bilan aloqa yo'q: ${res.error || 'Ulanib bo‘lmadi'}. Cloudflare havolasini tekshiring yoki terminaldagi yangi HTTPS havolani kiriting.`
         });
       }
     } catch (err: any) {
@@ -207,13 +243,15 @@ export const LidarRadarView: React.FC = () => {
     }
   }, [wsUrl]);
 
-  // WebSocket (Raspberry Pi 5 / PC) orqali ulanish
+  // WebSocket (Raspberry Pi / PC) orqali ulanish
   const handleConnectWs = useCallback(async () => {
     try {
       setIsOpening(true);
       setPortError(null);
+      const cleanUrl = sanitizeUrl(wsUrl);
+      if (cleanUrl !== wsUrl) setWsUrl(cleanUrl);
 
-      const res = await lidarSerialService.connectWebSocket(wsUrl);
+      const res = await lidarSerialService.connectWebSocket(cleanUrl);
       setIsPortOpen(true);
       setPortName(res.portName);
       addLog('SERIAL', 'success', `LiDAR WebSocket ko'prigiga ulandi: ${res.portName}`);
