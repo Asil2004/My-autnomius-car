@@ -301,6 +301,8 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const rawIp = clean.replace(/^https?:\/\//, '').split(':')[0];
         localStorage.setItem('qalqon_pi_ip', rawIp);
         localStorage.setItem('qalqon_gateway_url', clean);
+        faceCameraSettings.setPiWebcamBase(clean);
+        ptzCameraService.setBase(`${clean}/camera`);
         return clean;
       }
     } catch {}
