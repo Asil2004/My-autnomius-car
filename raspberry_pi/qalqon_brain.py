@@ -252,6 +252,96 @@ def safety_supervisor_loop():
 
 threading.Thread(target=safety_supervisor_loop, daemon=True).start()
 
+# --------------------------------------------------------------------------
+# Cloud MQTT Ko'prigi (GitHub Pages va Dunyo bo'ylab Masofaviy Boshqaruv)
+# --------------------------------------------------------------------------
+def start_mqtt_bridge():
+    """GitHub Pages (https) dan keladigan buyruqlarni MQTT orqali qabul qilish"""
+    try:
+        import paho.mqtt.client as mqtt
+    except ImportError:
+        print("⚠️ [MQTT] paho-mqtt o'rnatilmagan (GitHub Pages buyruqlari uchun kerak: pip install paho-mqtt)")
+        return
+
+    broker = os.environ.get("MQTT_BROKER", "broker.hivemq.com")
+    port = int(os.environ.get("MQTT_PORT", 1883))
+    cmd_topic = os.environ.get("MQTT_TOPIC_CMD", "qalqon/robot/cmd")
+    telemetry_topic = "qalqon/robot/telemetry"
+
+    # MQTT Client yaratish (v2 va v1 API larini qo'llab-quvvatlaydi)
+    try:
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id=f"qalqon_brain_{int(time.time())}")
+    except Exception:
+        client = mqtt.Client(client_id=f"qalqon_brain_{int(time.time())}")
+
+    def on_connect(c, userdata, flags, rc):
+        if rc == 0:
+            print(f"📡 [MQTT] HiveMQ brokerga ulandi! Obuna mavzulari: {cmd_topic}")
+            c.subscribe(cmd_topic)
+            c.subscribe("qalqon/robot/speed")
+            c.subscribe("qalqon/robot/gateway")
+        else:
+            print(f"⚠️ [MQTT] Ulanish xatosi (kod {rc})")
+
+    def on_message(c, userdata, msg):
+        try:
+            payload = msg.payload.decode("utf-8", errors="ignore").strip()
+            # print(f"📡 [MQTT BUYRUQ]: {payload} (Topic: {msg.topic})")
+            if msg.topic == cmd_topic:
+                if payload.startswith("J:"):
+                    # Analog joystik: "J:x,y"
+                    parts = payload[2:].split(",")
+                    if len(parts) == 2:
+                        jx, jy = int(parts[0]), int(parts[1])
+                        c_cmd = joystick_to_discrete(jx, jy)
+                        watchdog.feed_heartbeat(f"MQTT_JOY:{c_cmd}")
+                        arduino.send_command(c_cmd)
+                elif payload.startswith("V:"):
+                    # Tezlik / PWM
+                    val = int(payload[2:])
+                    spd = 3 if val > 200 else (2 if val > 150 else 1)
+                    arduino.set_speed(spd)
+                elif payload in ("HORN_ON", "HORN_OFF", "LIGHT_ON", "LIGHT_OFF"):
+                    arduino.send_command(payload)
+                else:
+                    # Standart 'F', 'B', 'L', 'R', 'S', 'G', 'I', 'H', 'J', 'Q', 'E'
+                    watchdog.feed_heartbeat(f"MQTT_CMD:{payload}")
+                    arduino.send_command(payload)
+            elif msg.topic == "qalqon/robot/speed":
+                arduino.set_speed(int(payload))
+        except Exception as e:
+            pass
+
+    client.on_connect = on_connect
+    client.on_message = on_message
+
+    def telemetry_publisher_loop():
+        while True:
+            try:
+                time.sleep(1.0)
+                if client.is_connected():
+                    lidar_sectors = lidar.get_sectors() if hasattr(lidar, "get_sectors") else {"front": 99.0}
+                    front_cm = int((lidar_sectors.get("front", 99.0)) * 100) if lidar_sectors.get("front", 99.0) < 50 else 999
+                    telem = {
+                        "online": True,
+                        "front_cm": front_cm,
+                        "is_blocked": front_cm < 45,
+                        "speed": getattr(arduino, "speed", 2),
+                        "uptime": int(time.time() - START_TIME)
+                    }
+                    client.publish(telemetry_topic, json.dumps(telem))
+            except Exception:
+                pass
+
+    try:
+        client.connect_async(broker, port, keepalive=60)
+        client.loop_start()
+        threading.Thread(target=telemetry_publisher_loop, daemon=True).start()
+    except Exception as e:
+        print(f"⚠️ [MQTT] Brokerga ulanishda xatolik: {e}")
+
+threading.Thread(target=start_mqtt_bridge, daemon=True).start()
+
 # MJPEG Generator
 def mjpeg_frame_generator():
     while True:
@@ -463,6 +553,19 @@ def get_webcam_stream():
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Access-Control-Allow-Origin": "*"}
     )
 
+@app.get("/api/webcam/status")
+def get_webcam_status():
+    """Webcam ulanish holatini qaytaradi"""
+    st = camera.get_status() if hasattr(camera, "get_status") else {}
+    return JSONResponse({
+        "reachable": True,
+        "connected": True,
+        "device": st.get("source", "/dev/video0"),
+        "width": st.get("width", 640),
+        "height": st.get("height", 480),
+        "fps": st.get("fps", 30)
+    }, headers={"Access-Control-Allow-Origin": "*"})
+
 @app.get("/api/webcam/snapshot")
 def get_webcam_snapshot():
     frame = camera.get_front_frame()
@@ -479,19 +582,54 @@ PTZ_SERVER_URL = os.environ.get("PTZ_SERVER_URL", "http://localhost:8090")
 
 @app.api_route("/camera/{subpath:path}", methods=["GET", "POST", "OPTIONS"])
 async def proxy_ptz_camera(subpath: str, request: Request):
-    """8090-portdagi CP-159-1 PTZ serverini 8000-portga birlashtirish (VR 360 va Burish uchun)"""
+    """8090-portdagi CP-159-1 PTZ serverini 8000-portga birlashtirish (VR 360 va Burish uchun). Agar 8090 ishlamasa, USB kameraga fallback qiladi."""
     if request.method == "OPTIONS":
         return Response(status_code=204, headers={
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type",
         })
+
+    clean_sub = subpath.strip("/")
+
+    # 1. 8090 serverning faolligini tekshirish
+    is_ptz_available = False
+    if HAS_HTTPX:
+        try:
+            async with httpx.AsyncClient(timeout=0.6) as test_client:
+                r = await test_client.get(f"{PTZ_SERVER_URL}/camera/status")
+                if r.status_code == 200:
+                    is_ptz_available = True
+        except Exception:
+            is_ptz_available = False
+
+    # 2. Agar 8090 ishlamayotgan bo'lsa, USB veb-kamera bilan zaxiralash (Fallback)
+    if not is_ptz_available:
+        if clean_sub == "stream":
+            return StreamingResponse(
+                mjpeg_frame_generator(),
+                media_type="multipart/x-mixed-replace; boundary=frame",
+                headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Access-Control-Allow-Origin": "*"}
+            )
+        elif clean_sub == "status":
+            return JSONResponse({
+                "reachable": True,
+                "video": True,
+                "ptz": False,
+                "lenses": 1,
+                "model": "USB Webcam Fallback",
+                "t": time.time()
+            }, headers={"Access-Control-Allow-Origin": "*"})
+        elif clean_sub in ("ptz/move", "ptz/stop"):
+            return JSONResponse({"ok": True, "status": "simulated"}, headers={"Access-Control-Allow-Origin": "*"})
+
+    # 3. 8090 PTZ server ishlayotgan bo'lsa, haqiqiy oqimni proksi qilish
     if not HAS_HTTPX:
         return JSONResponse(status_code=503, content={"error": "httpx kutubxonasi o'rnatilmagan"})
     qs = request.url.query
     target_url = f"{PTZ_SERVER_URL}/camera/{subpath}" + (f"?{qs}" if qs else "")
 
-    if subpath.strip("/") == "stream":
+    if clean_sub == "stream":
         async def stream_proxy():
             try:
                 async with httpx.AsyncClient(timeout=None) as client:
@@ -503,7 +641,7 @@ async def proxy_ptz_camera(subpath: str, request: Request):
                                 yield chunk
             except Exception:
                 pass
-        return StreamingResponse(stream_proxy(), media_type="multipart/x-mixed-replace; boundary=frame")
+        return StreamingResponse(stream_proxy(), media_type="multipart/x-mixed-replace; boundary=frame", headers={"Access-Control-Allow-Origin": "*"})
 
     try:
         body = await request.body() if request.method == "POST" else None

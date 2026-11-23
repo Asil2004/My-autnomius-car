@@ -14,6 +14,7 @@ import type {
 import { tacticalAudio, SIREN_TONE_NAMES, type SirenTone } from '../services/audioService';
 import { robotCall, operatorCalls, type RobotCommand } from '../services/voiceCall';
 import { ptzCameraService } from '../services/ptzCameraService';
+import { faceCameraSettings } from '../services/faceCameraSettings';
 import { playRadio } from '../services/radioVoice';
 import { camLinkSettings } from '../services/camLinkSettings';
 import { fleetWatcher, selectedRobotStore } from '../services/robotCamLink';
@@ -189,19 +190,40 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           setEsp32Status('ONLINE (MQTT)');
           addLogRef.current('SYSTEM', 'success', `ESP32 MQTT brokerga ulandi (${topic})`);
 
-          // Robot telemetriyasi va LiDAR oqimiga obuna bo'lish (MPU-6050 IMU + STL-19P LiDAR)
+          // Robot telemetriyasi, LiDAR oqimi va Cloudflare Gateway ga obuna bo'lish
           try {
             client.subscribe('qalqon/robot/telemetry');
             client.subscribe('qalqon/robot/lidar');
+            client.subscribe('qalqon/robot/gateway');
           } catch {}
         });
 
         client.on('message', (incomingTopic: string, payload: any) => {
-          if (incomingTopic === 'qalqon/robot/telemetry') {
+          if (incomingTopic === 'qalqon/robot/gateway') {
+            try {
+              const gw = payload.toString().trim();
+              if (gw.startsWith('http')) {
+                localStorage.setItem('qalqon_gateway_url', gw);
+                faceCameraSettings.setPiWebcamBase(gw);
+                ptzCameraService.setBase(`${gw}/camera`);
+                addLogRef.current('SYSTEM', 'success', `Cloudflare Gateway ulandi: ${gw}`);
+              }
+            } catch {}
+          } else if (incomingTopic === 'qalqon/robot/telemetry') {
             try {
               const text = payload.toString();
               const data = JSON.parse(text);
               headingService.ingestTelemetry(data);
+              if (data.front_cm !== undefined) {
+                lidarSerialService.ingestRemoteLidar({
+                  frontCm: data.front_cm,
+                  isBlocked: !!data.is_blocked,
+                  points: [],
+                  rateHz: 10,
+                  speedRpm: 600,
+                  sectors: { front: data.front_cm / 100, left: 2.0, right: 2.0, rear: 2.0 }
+                }, 'mqtt');
+              }
             } catch {}
           } else if (incomingTopic === 'qalqon/robot/lidar') {
             try {

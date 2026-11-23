@@ -372,6 +372,22 @@ export const VRControlView: React.FC<VRControlViewProps> = ({ onExit }) => {
     }
 
     if (!hasVideo) {
+      // 3-linzali PTZ topilmasa, mavjud USB frontal veb-kameraga avtomatik o'tish (Black screen bo'lib qolmasligi uchun)
+      const img = frontalImgRef.current;
+      if (img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
+        const scale = Math.min(w / img.naturalWidth, videoH / img.naturalHeight);
+        const dw = img.naturalWidth * scale;
+        const dh = img.naturalHeight * scale;
+        try {
+          ctx.drawImage(img, (w - dw) / 2, videoTop + (videoH - dh) / 2, dw, dh);
+          hasVideo = true;
+        } catch {
+          /* yuklanmagan */
+        }
+      }
+    }
+
+    if (!hasVideo) {
       ctx.fillStyle = '#0b1222';
       ctx.fillRect(0, videoTop, w, videoH);
       ctx.fillStyle = '#64748b';
@@ -1079,9 +1095,7 @@ export const VRControlView: React.FC<VRControlViewProps> = ({ onExit }) => {
                 ? 'WebXR tekshirilmoqda...'
                 : xrSupported
                 ? 'META QUEST 2 — VR GA KIRISH'
-                : isHttps
-                ? 'VR REJIM (WebXR)'
-                : 'VR REJIM (HTTPS VPS KERAK)'}
+                : 'VR REJIM (WebXR)'}
             </span>
           </button>
 
