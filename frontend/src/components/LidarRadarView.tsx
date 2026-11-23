@@ -46,10 +46,16 @@ export const LidarRadarView: React.FC = () => {
 
   // WebSocket URL (Raspberry Pi 5 yoki PC)
   const [wsUrl, setWsUrl] = useState<string>(() => {
+    const savedGw = typeof window !== 'undefined' ? localStorage.getItem('qalqon_gateway_url') : null;
+    if (savedGw && savedGw.trim().startsWith('http')) {
+      const cleanGw = savedGw.trim().replace(/\/+$/, '');
+      const prefix = cleanGw.startsWith('https://') ? 'wss://' : 'ws://';
+      return cleanGw.replace(/^https?:\/\//i, prefix).replace(/:8000\/?.*$/i, '') + '/ws';
+    }
     const saved = typeof window !== 'undefined' ? localStorage.getItem('qalqon_lidar_ws') : null;
     if (saved) return saved;
     const piIp = typeof window !== 'undefined' ? localStorage.getItem('qalqon_pi_ip') : null;
-    if (piIp) return `ws://${piIp}:8000/ws`;
+    if (piIp && !piIp.includes('.trycloudflare.com')) return `ws://${piIp}:8000/ws`;
     const host = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
     return `ws://${host}:8000/ws`;
   });

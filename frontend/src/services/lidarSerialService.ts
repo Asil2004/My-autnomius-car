@@ -237,15 +237,27 @@ class LidarSerialService {
    */
   public async pingPiStatus(baseUrl: string): Promise<{ ok: boolean; status?: any; error?: string }> {
     try {
-      const clean = baseUrl.trim().replace(/\/+$/, '');
+      let clean = baseUrl.trim().replace(/\/+$/, '');
+      // Cloudflare tunnel uchun port 8000 ni olib tashlash va HTTPS ga o'tkazish
+      if (clean.includes('.trycloudflare.com')) {
+        clean = clean.replace(/:8000\/?.*$/i, '');
+        clean = clean.replace(/^ws:\/\//i, 'wss://');
+      }
+      // HTTPS sahifada Mixed Content bo'lmasligi uchun wss/https qilish
+      if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+        if (clean.startsWith('http://')) clean = clean.replace(/^http:\/\//i, 'https://');
+        if (clean.startsWith('ws://')) clean = clean.replace(/^ws:\/\//i, 'wss://');
+      }
+
       const httpUrl = clean
         .replace(/^ws:\/\//i, 'http://')
         .replace(/^wss:\/\//i, 'https://')
         .replace(/\/ws$/i, '');
 
-      const urlToFetch = httpUrl.startsWith('http') ? `${httpUrl}/api/status` : `http://${httpUrl}/api/status`;
+      const urlToFetch = httpUrl.startsWith('http') ? `${httpUrl}/api/status` : `https://${httpUrl}/api/status`;
       const resp = await fetch(urlToFetch, {
-        signal: AbortSignal.timeout ? AbortSignal.timeout(3500) : undefined
+        signal: AbortSignal.timeout ? AbortSignal.timeout(4500) : undefined,
+        cache: 'no-store'
       });
       if (!resp.ok) {
         return { ok: false, error: `HTTP ${resp.status}: Server javob bermadi` };
@@ -318,12 +330,16 @@ class LidarSerialService {
 
     let url = customUrl;
     if (!url) {
-      if (isHttps && !isGithubPages && host) {
+      const storedGw = isBrowser ? localStorage.getItem('qalqon_gateway_url') : null;
+      if (storedGw && storedGw.trim().startsWith('http')) {
+        const cleanGw = storedGw.trim().replace(/\/+$/, '');
+        url = cleanGw.replace(/^https?:\/\//i, cleanGw.startsWith('https://') ? 'wss://' : 'ws://') + '/ws';
+      } else if (isHttps && !isGithubPages && host) {
         // VPS HTTPS domenda doim shifrlangan same-origin wss://DOMAIN/ws ishlatiladi (Mixed Content siz!)
         url = storedWs && storedWs.startsWith('wss://') ? storedWs : `wss://${host}/ws`;
       } else if (storedWs && (!isHttps || storedWs.startsWith('wss://'))) {
         url = storedWs;
-      } else if (storedPiIp && !isHttps) {
+      } else if (storedPiIp && !isHttps && !storedPiIp.includes('.trycloudflare.com')) {
         url = `ws://${storedPiIp}:8000/ws`;
       } else if (port === '5173' || port === '4173') {
         url = `ws://${hostname}:8000/ws`;
@@ -332,6 +348,12 @@ class LidarSerialService {
       } else {
         url = 'ws://localhost:8000/ws';
       }
+    }
+
+    if (url && url.includes('.trycloudflare.com')) {
+      url = url.replace(/:8000\/?.*$/i, '/ws');
+      url = url.replace(/^ws:\/\//i, 'wss://');
+      if (!url.endsWith('/ws')) url = url.replace(/\/+$/, '') + '/ws';
     }
 
     return new Promise((resolve, reject) => {
