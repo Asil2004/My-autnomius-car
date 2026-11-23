@@ -34,12 +34,35 @@ function read(): FaceCameraChoice {
 
 export function getDefaultPiWebcamBase(): string {
   if (typeof window === 'undefined') return 'http://localhost:8000';
-  const { protocol, hostname, port, origin } = window.location;
+  const { protocol, hostname, port, origin, search } = window.location;
   if (!hostname) return '';
+
+  // 1. URL parametridan ?gw=... yoki ?ip=...
+  try {
+    const sp = new URLSearchParams(search);
+    const urlGw = sp.get('gw') || sp.get('ip');
+    if (urlGw) {
+      let clean = urlGw.trim();
+      if (!/^https?:\/\//i.test(clean)) clean = `http://${clean}`;
+      if (!clean.includes('.trycloudflare.com') && !clean.includes(':', 7)) {
+        clean = `${clean}:8000`;
+      }
+      return clean.replace(/\/+$/, '');
+    }
+  } catch {}
+
+  // 2. localStorage dan saqlangan Cloudflare Gateway URL
+  try {
+    const savedGw = localStorage.getItem('qalqon_gateway_url');
+    if (savedGw && savedGw.trim().startsWith('http')) {
+      return savedGw.trim().replace(/\/+$/, '');
+    }
+  } catch {}
+
   if (port === '5173' || port === '4173') {
     return `http://${hostname}:8000`;
   }
-  // GitHub Pages statik host: lokal Raspberry Pi IP (10.23.21.132:8000)
+  // GitHub Pages statik host: Cloudflare Tunnel yoki lokal Raspberry Pi IP
   if (hostname.endsWith('.github.io')) {
     const savedIp = typeof window !== 'undefined' ? (localStorage.getItem('qalqon_pi_ip') || '10.23.21.132') : '10.23.21.132';
     return `http://${savedIp}:8000`;

@@ -592,14 +592,20 @@ async def proxy_ptz_camera(subpath: str, request: Request):
 
     clean_sub = subpath.strip("/")
 
-    # 1. 8090 serverning faolligini tekshirish
+    # 1. 8090 serverning faolligini va video oqimi borligini tekshirish
     is_ptz_available = False
     if HAS_HTTPX:
         try:
             async with httpx.AsyncClient(timeout=0.6) as test_client:
                 r = await test_client.get(f"{PTZ_SERVER_URL}/camera/status")
                 if r.status_code == 200:
-                    is_ptz_available = True
+                    vdata = r.json()
+                    # Faqatgina RTSP haqiqatda ulangan va kadrlar kelayotgan bo'lsa PTZ faol deb hisoblaymiz
+                    video_info = vdata.get("video", {})
+                    if isinstance(video_info, dict) and video_info.get("connected"):
+                        is_ptz_available = True
+                    elif isinstance(video_info, bool) and video_info:
+                        is_ptz_available = True
         except Exception:
             is_ptz_available = False
 

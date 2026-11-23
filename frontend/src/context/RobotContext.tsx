@@ -290,14 +290,17 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (typeof window === 'undefined') return '';
     const { protocol, hostname, port, origin, search } = window.location;
 
-    // 1. URL parametridan ?ip=10.23.21.132 yoki ?gw=http://10.23.21.132:8000
+    // 1. URL parametridan ?ip=10.23.21.132 yoki ?gw=https://...trycloudflare.com
     try {
       const sp = new URLSearchParams(search);
       const urlIp = sp.get('ip') || sp.get('gw');
       if (urlIp) {
         let clean = urlIp.trim();
         if (!/^https?:\/\//i.test(clean)) clean = `http://${clean}`;
-        if (!clean.includes(':', 7)) clean = `${clean}:8000`;
+        if (!clean.includes('.trycloudflare.com') && !clean.includes(':', 7)) {
+          clean = `${clean}:8000`;
+        }
+        clean = clean.replace(/\/+$/, '');
         const rawIp = clean.replace(/^https?:\/\//, '').split(':')[0];
         localStorage.setItem('qalqon_pi_ip', rawIp);
         localStorage.setItem('qalqon_gateway_url', clean);
@@ -310,13 +313,22 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // 2. localStorage dan saqlangan Gateway yoki Pi IP
     try {
       const savedGw = localStorage.getItem('qalqon_gateway_url');
-      if (savedGw && savedGw.trim()) return savedGw.trim().replace(/\/+$/, '');
+      if (savedGw && savedGw.trim() && savedGw.trim().startsWith('http')) {
+        const cleanGw = savedGw.trim().replace(/\/+$/, '');
+        faceCameraSettings.setPiWebcamBase(cleanGw);
+        ptzCameraService.setBase(`${cleanGw}/camera`);
+        return cleanGw;
+      }
       const savedIp = localStorage.getItem('qalqon_pi_ip');
       if (savedIp && savedIp.trim()) return `http://${savedIp.trim()}:8000`;
     } catch {}
 
     // 3. GitHub Pages bo'lsa default lokal Raspberry Pi IP (10.23.21.132:8000)
     if (hostname.endsWith('.github.io')) {
+      const savedGw = localStorage.getItem('qalqon_gateway_url');
+      if (savedGw && savedGw.trim() && savedGw.trim().startsWith('http')) {
+        return savedGw.trim().replace(/\/+$/, '');
+      }
       return 'http://10.23.21.132:8000';
     }
 
