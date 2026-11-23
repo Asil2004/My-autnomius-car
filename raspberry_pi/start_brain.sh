@@ -30,6 +30,15 @@ echo "                           yoki http://$IP_ADDR:8080"
 echo "----------------------------------------------------------"
 echo ""
 
-# 4. Asosiy dasturni ishga tushirish
+# 4. Kerakli Python kutubxonalarini tekshirish va yetishmasa avtomatik o'rnatish
+if ! python3 -c "import fastapi, uvicorn, serial, cv2, websockets" 2>/dev/null; then
+    echo "[!] FastAPI va tizim kutubxonalari o'rnatilmoqda (bu bir marta bo'ladi)..."
+    sudo apt-get update -y
+    sudo apt-get install -y python3-pip python3-fastapi python3-uvicorn python3-serial python3-opencv python3-numpy python3-websockets 2>/dev/null || true
+    pip3 install --break-system-packages fastapi uvicorn websockets pyserial opencv-python numpy 2>/dev/null || \
+    pip3 install fastapi uvicorn websockets pyserial opencv-python numpy 2>/dev/null || true
+fi
+
+# 5. Asosiy dasturni ishga tushirish
 cd "$(dirname "$0")"
 python3 qalqon_brain.py
