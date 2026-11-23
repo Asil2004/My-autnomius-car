@@ -39,6 +39,13 @@ if ! python3 -c "import fastapi, uvicorn, serial, cv2, websockets, paho.mqtt, ht
     pip3 install fastapi uvicorn websockets pyserial opencv-python numpy paho-mqtt httpx 2>/dev/null || true
 fi
 
-# 5. Asosiy dasturni ishga tushirish
+# 5. PTZ Kamera Serverini (8090) orqa fonda ishga tushirish
 cd "$(dirname "$0")"
+if [ -f "ptz_camera_launcher.py" ]; then
+    echo "[!] 3-Linzali PTZ Kamera serveri (LAN eth0 -> 8090) orqa fonda ishga tushirilmoqda..."
+    python3 ptz_camera_launcher.py &
+    sleep 1
+fi
+
+# 6. Asosiy dasturni ishga tushirish (8000)
 python3 qalqon_brain.py

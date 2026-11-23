@@ -36,6 +36,10 @@ nmcli connection up "$CONN"
 echo "    -> $CONN : 192.168.1.10/24"
 
 echo "[2/5] Kamera uchun DHCP xizmati sozlanmoqda (192.168.1.100 beriladi)..."
+if ! command -v dnsmasq &>/dev/null; then
+  echo "    dnsmasq o'rnatilmoqda..."
+  apt-get update -y && apt-get install -y dnsmasq || true
+fi
 cat > /etc/dnsmasq-qalqon-cam.conf <<'EOF'
 interface=eth0
 bind-interfaces
