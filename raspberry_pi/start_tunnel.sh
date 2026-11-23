@@ -46,9 +46,9 @@ if [ -z "$CLOUDFLARED_BIN" ]; then
     CLOUDFLARED_BIN="cloudflared"
 fi
 
-# 3. Tunnelni orqa fonda ishga tushirish
-echo "🚀 [2/3] HTTPS Tunnel ochilmoqda (localhost:8000 -> https://*.trycloudflare.com)..."
-$CLOUDFLARED_BIN tunnel --url http://localhost:8000 --logfile /tmp/tunnel.log &
+# 3. Tunnelni orqa fonda ishga tushirish (IPv4 127.0.0.1 orqali aniq ulanish)
+echo "🚀 [2/3] HTTPS Tunnel ochilmoqda (127.0.0.1:8000 -> https://*.trycloudflare.com)..."
+$CLOUDFLARED_BIN tunnel --url http://127.0.0.1:8000 --logfile /tmp/tunnel.log &
 TUNNEL_PID=$!
 
 # 4. trycloudflare.com manzilini tutib olish (kutish maksimum 20 soniya)
