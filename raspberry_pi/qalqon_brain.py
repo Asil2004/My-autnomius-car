@@ -23,10 +23,17 @@ import sys
 import time
 import json
 import glob
+import math
 import socket
 import asyncio
 import threading
-from typing import Optional
+from typing import Optional, List, Dict, Any
+
+try:
+    import httpx
+    HAS_HTTPX = True
+except ImportError:
+    HAS_HTTPX = False
 
 # UTF-8 chiqishni ta'minlash (Windows cp1251 xatolarini oldini olish)
 try:
@@ -38,7 +45,8 @@ except Exception:
     pass
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Response, Request
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
@@ -151,6 +159,29 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def private_network_access(request: Request, call_next):
+    """Chrome & Meta Quest 2: HTTPS dan lokal IP ga so'rovlar uchun Private Network ruxsati"""
+    response = await call_next(request)
+    if request.headers.get("access-control-request-private-network") == "true":
+        response.headers["Access-Control-Allow-Private-Network"] = "true"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response
+
+# Statik veb fayllar (React Frontend / VR / HUD)
+ROOT_DIR = os.path.dirname(CURRENT_DIR)
+for folder in ("assets", "images", "models", "faces", "audio"):
+    fpath = os.path.join(ROOT_DIR, folder)
+    if os.path.isdir(fpath):
+        app.mount(f"/{folder}", StaticFiles(directory=fpath), name=folder)
+
+for sfile in ("favicon.svg", "shield.svg", "icons.svg"):
+    sf_path = os.path.join(ROOT_DIR, sfile)
+    if os.path.isfile(sf_path):
+        def _make_static(p=sf_path):
+            return lambda: FileResponse(p)
+        app.add_api_route(f"/{sfile}", _make_static(), methods=["GET"])
 
 def get_all_local_ips():
     """Tizimdagi barcha faol IPv4 manzillarni aniqlash"""
@@ -348,6 +379,141 @@ def handle_command(request: Request, c: Optional[str] = None, speed: Optional[in
 
     return {"status": "error", "message": "Buyruq berilmadi"}
 
+# --------------------------------------------------------------------------
+# VR (Meta Quest 2) & Gamepad & Joystick Boshqaruv Endpointlari
+# --------------------------------------------------------------------------
+def joystick_to_discrete(x: int, y: int) -> str:
+    jx = max(-100, min(100, int(round(x))))
+    jy = max(-100, min(100, int(round(y))))
+    if abs(jx) < 8 and abs(jy) < 8:
+        return "S"
+    deg = math.degrees(math.atan2(-jy, jx))
+    if -112.5 <= deg < -67.5:
+        return "F"
+    elif -67.5 <= deg < -22.5:
+        return "I"
+    elif -22.5 <= deg < 22.5:
+        return "R"
+    elif 22.5 <= deg < 67.5:
+        return "J"
+    elif 67.5 <= deg < 112.5:
+        return "B"
+    elif 112.5 <= deg < 157.5:
+        return "H"
+    elif deg >= 157.5 or deg < -157.5:
+        return "L"
+    elif -157.5 <= deg < -112.5:
+        return "G"
+    return "S"
+
+@app.post("/api/esp32/cmd")
+async def esp32_cmd_post(request: Request):
+    """VR Headset va WebHUD dan kelgan harakat buyruqlarini bajarish"""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    cmd = str(body.get("cmd", "S")).strip().upper()
+    watchdog.feed_heartbeat(f"VR_CMD:{cmd}")
+    ok = arduino.send_command(cmd)
+    return {"ok": True, "cmd": cmd, "status": "ok" if ok else "blocked"}
+
+@app.post("/api/esp32/joystick")
+async def esp32_joystick_post(request: Request):
+    """Meta Quest 2 VR kontrollerining stik (analog joystik) harakatini boshqarish"""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    x = int(body.get("x", 0))
+    y = int(body.get("y", 0))
+    cmd = joystick_to_discrete(x, y)
+    watchdog.feed_heartbeat(f"VR_JOY:{cmd}")
+    ok = arduino.send_command(cmd)
+    return {"ok": True, "cmd": cmd, "x": x, "y": y, "status": "ok" if ok else "blocked"}
+
+@app.post("/api/esp32/speed")
+async def esp32_speed_post(request: Request):
+    """VR dan tezlikni almashtirish (1=50%, 2=75%, 3=100%)"""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    speed = int(body.get("speed", 2))
+    arduino.set_speed(speed)
+    return {"ok": True, "speed": speed}
+
+@app.get("/move")
+def handle_move_legacy(dir: Optional[str] = None, x: Optional[int] = None, y: Optional[int] = None):
+    if x is not None or y is not None:
+        cmd = joystick_to_discrete(x or 0, y or 0)
+        arduino.send_command(cmd)
+        return {"ok": True, "cmd": cmd}
+    cmd = (dir or "S").strip().upper()
+    arduino.send_command(cmd)
+    return {"ok": True, "cmd": cmd}
+
+@app.get("/api/webcam/stream")
+@app.get("/api/webcam/feed")
+def get_webcam_stream():
+    """VR va React HUD uchun frontal veb-kamera oqimi"""
+    return StreamingResponse(
+        mjpeg_frame_generator(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Access-Control-Allow-Origin": "*"}
+    )
+
+@app.get("/api/webcam/snapshot")
+def get_webcam_snapshot():
+    frame = camera.get_front_frame()
+    if frame is None:
+        return JSONResponse(status_code=503, content={"error": "Kamera kadri tayyor emas"})
+    try:
+        import cv2
+        _, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 65])
+        return Response(content=buf.tobytes(), media_type="image/jpeg", headers={"Access-Control-Allow-Origin": "*"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+PTZ_SERVER_URL = os.environ.get("PTZ_SERVER_URL", "http://localhost:8090")
+
+@app.api_route("/camera/{subpath:path}", methods=["GET", "POST", "OPTIONS"])
+async def proxy_ptz_camera(subpath: str, request: Request):
+    """8090-portdagi CP-159-1 PTZ serverini 8000-portga birlashtirish (VR 360 va Burish uchun)"""
+    if request.method == "OPTIONS":
+        return Response(status_code=204, headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+        })
+    if not HAS_HTTPX:
+        return JSONResponse(status_code=503, content={"error": "httpx kutubxonasi o'rnatilmagan"})
+    qs = request.url.query
+    target_url = f"{PTZ_SERVER_URL}/camera/{subpath}" + (f"?{qs}" if qs else "")
+
+    if subpath.strip("/") == "stream":
+        async def stream_proxy():
+            try:
+                async with httpx.AsyncClient(timeout=None) as client:
+                    async with client.stream("GET", target_url) as resp:
+                        async for chunk in resp.aiter_bytes(chunk_size=16384):
+                            if await request.is_disconnected():
+                                break
+                            if chunk:
+                                yield chunk
+            except Exception:
+                pass
+        return StreamingResponse(stream_proxy(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+    try:
+        body = await request.body() if request.method == "POST" else None
+        headers = {"Content-Type": request.headers.get("content-type", "application/json")} if body else {}
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.request(request.method, target_url, content=body, headers=headers)
+            return Response(content=resp.content, status_code=resp.status_code, media_type=resp.headers.get("content-type", "application/json"), headers={"Access-Control-Allow-Origin": "*"})
+    except Exception as e:
+        return JSONResponse(status_code=502, content={"error": f"PTZ aloqa xatosi (:8090): {e}"})
+
 @app.get("/api/obstacle")
 def set_obstacle(dist: Optional[float] = None):
     """
@@ -537,17 +703,27 @@ def trigger_failsafe_stop(reason: str = "MANUAL_PANIC"):
 @app.get("/api/status")
 @app.get("/api/telemetry")
 def get_telemetry():
-    """To'liq telemetriya JSON (Web UI va mobil ilova uchun)"""
+    """To'liq telemetriya JSON (Web UI, VR va mobil ilova uchun)"""
     sonars = arduino.get_sonars()
     battery = arduino.get_battery()
     lidar_sectors = lidar.get_sectors()
-    lidar_pts = lidar.get_points_list(max_distance=6.0, step=4)
+    lidar_pts = lidar.get_points_list(max_distance=6.0, step=2)
     cam_status = camera.get_status()
     ard_status = arduino.get_status()
 
     hazard = lidar.get_hazard_analysis()
     wd_status = watchdog.get_status()
     is_blocked = (lidar_sectors["front"] <= 0.45) or (sonars["front"] <= 25) or ard_status["obstacle_warning"] or hazard["emergency_stop_required"]
+
+    min_dist = 999.0
+    min_angle = None
+    for pt in lidar_pts:
+        d = pt.get("distance", 999.0)
+        if 0.18 <= d < min_dist:
+            min_dist = d
+            min_angle = pt.get("angle")
+
+    front_cm = int(lidar_sectors["front"] * 100) if lidar_sectors["front"] < 90 else 250
 
     return {
         "time": time.time(),
@@ -572,7 +748,18 @@ def get_telemetry():
             "rate_hz": lidar.status()["rate_hz"],
             "sectors": lidar_sectors,
             "points_count": len(lidar_pts),
-            "points": lidar_pts
+            "total_points": len(lidar_pts),
+            "points": lidar_pts,
+            "closest_obstacle": {
+                "distance": round(min_dist, 2) if min_dist < 900 else None,
+                "angle": min_angle
+            },
+            "zones": {
+                "front": lidar_sectors.get("front", 5.0),
+                "right": lidar_sectors.get("right", 5.0),
+                "rear": lidar_sectors.get("rear", 5.0),
+                "left": lidar_sectors.get("left", 5.0)
+            }
         },
         "vision": {
             "fps": cam_status["fps"],
@@ -581,27 +768,54 @@ def get_telemetry():
         "logs": arduino.logs[-8:]
     }
 
+@app.get("/api/lidar")
+def get_lidar_endpoint():
+    """VR va tashqi dasturlar uchun LiDAR telemetriyasi"""
+    return get_telemetry()["lidar"]
+
 active_websockets = set()
 
 @app.websocket("/ws")
 async def websocket_telemetry(ws: WebSocket):
-    """Real-vaqtli telemetriya oqimi (10 Hz)"""
-    # Masofaviy (tunnel orqali) ulanish uchun admin token talab qilinadi
+    """Ikki tomonlama WebSocket: 10Hz LiDAR va telemetriya yuboradi, VR va HUD buyruqlarini qabul qiladi"""
     if not await remote.ws_gate(ws):
         return
     await ws.accept()
     active_websockets.add(ws)
-    try:
+
+    async def sender_loop():
         while True:
             watchdog.feed_heartbeat("WEBSOCKET")
             telem = get_telemetry()
             await ws.send_json(telem)
             await asyncio.sleep(0.1)
-    except WebSocketDisconnect:
-        active_websockets.remove(ws)
-    except Exception:
-        if ws in active_websockets:
-            active_websockets.remove(ws)
+
+    async def receiver_loop():
+        while True:
+            try:
+                data = await ws.receive_json()
+                if isinstance(data, dict):
+                    m_type = data.get("type", "")
+                    if m_type == "cmd" or "cmd" in data:
+                        c = str(data.get("cmd", "S")).strip().upper()
+                        arduino.send_command(c)
+                    elif m_type == "joystick" or ("x" in data and "y" in data):
+                        x = int(data.get("x", 0))
+                        y = int(data.get("y", 0))
+                        c = joystick_to_discrete(x, y)
+                        arduino.send_command(c)
+                    elif m_type == "speed" or "speed" in data:
+                        sp = int(data.get("speed", 2))
+                        arduino.set_speed(sp)
+            except Exception:
+                break
+
+    try:
+        await asyncio.gather(sender_loop(), receiver_loop())
+    except (WebSocketDisconnect, Exception):
+        pass
+    finally:
+        active_websockets.discard(ws)
 
 
 # --------------------------------------------------------------------------
@@ -1165,9 +1379,18 @@ COCKPIT_HTML = """<!DOCTYPE html>
 </html>
 """
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/")
+def root_ui():
+    """Asosiy interfeys: Agar React Frontend (Meta Quest 2 VR / HUD) mavjud bo'lsa uni ochadi, aks holda Mobile Cockpit"""
+    index_file = os.path.join(ROOT_DIR, "index.html")
+    if os.path.exists(index_file):
+        return FileResponse(index_file)
+    return HTMLResponse(content=COCKPIT_HTML)
+
+@app.get("/cockpit", response_class=HTMLResponse)
+@app.get("/legacy", response_class=HTMLResponse)
 def cockpit_ui():
-    """Smartfon, planshet yoki kompyuter brauzerida to'liq taktik boshqaruv oynasi"""
+    """Mustaqil Mobile Cockpit HUD (AVTO-YO'LAK tugmasi bilan)"""
     return HTMLResponse(content=COCKPIT_HTML)
 
 @app.get("/face", response_class=HTMLResponse)
@@ -1229,7 +1452,9 @@ if __name__ == '__main__':
     print("="*65)
     print(f"💻 Kompyuterda ochish:   http://localhost:8000  yoki  http://localhost:8080")
     print(f"📱 Telefon/Planshetda:   http://{PRIMARY_IP}:8000")
-    print(f"                       yoki http://{PRIMARY_IP}:8080")
+    print(f"🥽 Meta Quest 2 VR:      http://{PRIMARY_IP}:8000/#vr")
+    print(f"🌐 React Boshqaruv HUD:  http://{PRIMARY_IP}:8000/#hud")
+    print(f"🕹️ Mustaqil Cockpit:     http://{PRIMARY_IP}:8000/cockpit")
     if len(LOCAL_IPS) > 1:
         print(f"📡 Boshqa IP manzillar: {', '.join(['http://' + ip + ':8000' for ip in LOCAL_IPS[1:]])}")
     print("="*65 + "\n")
