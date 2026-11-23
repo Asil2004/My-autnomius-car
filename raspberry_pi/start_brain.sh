@@ -48,8 +48,11 @@ if [ -f "ptz_camera_launcher.py" ]; then
 fi
 
 # 6. Cloudflare HTTPS Tunnelni orqa fonda ishga tushirish (WebXR va GitHub Pages uchun)
-if [ -f "start_tunnel.py" ]; then
+if [ -f "start_tunnel.sh" ]; then
     echo "[!] Cloudflare HTTPS Tunnel (WebXR uchun) orqa fonda ishga tushirilmoqda..."
+    bash start_tunnel.sh &
+    sleep 2
+elif [ -f "start_tunnel.py" ]; then
     python3 start_tunnel.py &
     sleep 2
 fi

@@ -869,9 +869,18 @@ def get_telemetry():
 
     front_cm = int(lidar_sectors["front"] * 100) if lidar_sectors["front"] < 90 else 250
 
+    gw_url = None
+    try:
+        if os.path.exists("/tmp/cloudflared_url.txt"):
+            with open("/tmp/cloudflared_url.txt", "r") as f:
+                gw_url = f.read().strip()
+    except Exception:
+        pass
+
     return {
         "time": time.time(),
         "uptime_sec": int(time.time() - START_TIME),
+        "gateway_url": gw_url,
         "mode": patrol_mode,
         "is_front_blocked": is_blocked,
         "hazard": hazard,

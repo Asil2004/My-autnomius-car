@@ -9,6 +9,7 @@ import {
   Gamepad2,
   Glasses,
   Lightbulb,
+  Link,
   LogOut,
   OctagonAlert,
   Radar,
@@ -1076,6 +1077,26 @@ export const VRControlView: React.FC<VRControlViewProps> = ({ onExit }) => {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Cloudflare HTTPS Gateway URL sozlash tugmasi (Masofaviy VR uchun) */}
+          <button
+            type="button"
+            onClick={() => {
+              const cur = localStorage.getItem('qalqon_gateway_url') || '';
+              const next = window.prompt("Raspberry Pi Cloudflare Gateway URL ni kiriting (Masalan: https://xxx.trycloudflare.com):", cur);
+              if (next && next.trim().startsWith('http')) {
+                const clean = next.trim().replace(/\/+$/, '');
+                localStorage.setItem('qalqon_gateway_url', clean);
+                window.location.href = `${window.location.pathname}?gw=${clean}#vr`;
+                window.location.reload();
+              }
+            }}
+            title="Cloudflare HTTPS Gateway manzilini kiritish / yangilash"
+            className="px-2.5 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:text-cyan-300 hover:border-cyan-500 font-mono text-[11px] flex items-center gap-1.5 transition-all"
+          >
+            <Link className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="hidden sm:inline">GATEWAY</span>
+          </button>
+
           {/* Meta Quest 2 Immersive VR tugmasi */}
           <button
             type="button"
