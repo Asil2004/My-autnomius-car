@@ -881,6 +881,15 @@ def get_telemetry():
         "time": time.time(),
         "uptime_sec": int(time.time() - START_TIME),
         "gateway_url": gw_url,
+        "esp32": {
+            "serial_connected": arduino.is_hardware,
+            "port": arduino.port,
+            "mode": "HARDWARE" if arduino.is_hardware else "SIMULATION"
+        },
+        "arduino": {
+            "connected": arduino.is_hardware,
+            "port": arduino.port
+        },
         "mode": patrol_mode,
         "is_front_blocked": is_blocked,
         "hazard": hazard,

@@ -346,7 +346,14 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const ensureWs = async () => {
       if (cancelled || lidarSerialService.hasDirectLink()) return;
       try {
-        await lidarSerialService.connectWebSocket();
+        const gw = getGatewayBase();
+        let wsTarget: string | undefined = undefined;
+        if (gw && gw.startsWith('https://')) {
+          wsTarget = `${gw.replace(/^https:\/\//i, 'wss://')}/ws`;
+        } else if (gw && gw.startsWith('http://')) {
+          wsTarget = `${gw.replace(/^http:\/\//i, 'ws://')}/ws`;
+        }
+        await lidarSerialService.connectWebSocket(wsTarget);
       } catch {
         // Server hali tayyor bo'lmasa keyingi siklda qayta urinamiz
       }
@@ -378,9 +385,9 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             if (j?.cloud_relay && j?.robot_online) {
               setEsp32Connected(true);
               setEsp32Status(`VPS ONLINE (${j.robot_id || 'QALQON-01'})`);
-            } else if (!j?.cloud_relay && j?.esp32?.serial_connected) {
+            } else if (!j?.cloud_relay && (j?.esp32?.serial_connected || j?.arduino?.connected || j?.time)) {
               setEsp32Connected(true);
-              setEsp32Status('ONLINE (PI USB)');
+              setEsp32Status(j?.esp32?.serial_connected ? 'ONLINE (PI USB)' : 'ONLINE (PI)');
             }
           }
         } catch {}

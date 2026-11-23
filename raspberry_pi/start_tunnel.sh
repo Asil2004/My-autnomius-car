@@ -46,8 +46,18 @@ if [ -z "$CLOUDFLARED_BIN" ]; then
     CLOUDFLARED_BIN="cloudflared"
 fi
 
-# 3. Tunnelni orqa fonda ishga tushirish (IPv4 127.0.0.1 orqali aniq ulanish)
-echo "🚀 [2/3] HTTPS Tunnel ochilmoqda (127.0.0.1:8000 -> https://*.trycloudflare.com)..."
+# 3. Tunnelni ishga tushirishdan oldin 8000-port tayyor bo'lishini kutish (502 va connection refused ni oldini olish)
+echo "⏳ [2/3] Miya serveri (8000-port) to'liq tayyor bo'lishi kutilmoqda..."
+for i in {1..35}; do
+    if curl -s -o /dev/null http://127.0.0.1:8000/api/status 2>/dev/null; then
+        echo "✅ [OK] 8000-port miya serveri faol va so'rovlarni qabul qilmoqda!"
+        break
+    fi
+    sleep 1
+done
+
+# 4. Tunnelni orqa fonda ishga tushirish (IPv4 127.0.0.1 orqali aniq ulanish)
+echo "🚀 [3/3] HTTPS Tunnel ochilmoqda (127.0.0.1:8000 -> https://*.trycloudflare.com)..."
 $CLOUDFLARED_BIN tunnel --url http://127.0.0.1:8000 --logfile /tmp/tunnel.log &
 TUNNEL_PID=$!
 
