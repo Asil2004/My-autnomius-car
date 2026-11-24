@@ -210,6 +210,8 @@ export const VRControlView: React.FC<VRControlViewProps> = ({ onExit }) => {
   const [xrError, setXrError] = useState<string>('');
   const [headTrackPtz, setHeadTrackPtz] = useState<boolean>(false);
   const headTrackRef = useRef<boolean>(false);
+  /** Ko'zoynak ichida VR dan chiqish: ikkala yon tugma bosib turilganligi (0..1) */
+  const exitHoldRef = useRef<number>(0);
   useEffect(() => {
     headTrackRef.current = headTrackPtz;
   }, [headTrackPtz]);
@@ -474,6 +476,32 @@ export const VRControlView: React.FC<VRControlViewProps> = ({ onExit }) => {
     ctx.fillStyle = '#94a3b8';
     ctx.font = '13px monospace';
     ctx.fillText('[A] Kamera  [B] Bosh-PTZ  [X] Tezlik  [O‘ng Trigger] E-STOP', w * 0.67, videoBottom + 29);
+    ctx.fillStyle = '#fbbf24';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText('[IKKALA YON TUGMA 1.5 s] VR DAN CHIQISH', w * 0.67, videoBottom + 13);
+
+    // VR dan chiqish: ikkala yon (grip) tugma bosib turilganda jarayon ko'rsatkichi
+    const exitP = exitHoldRef.current;
+    if (exitP > 0) {
+      const bw = 460;
+      const bh = 92;
+      const bx = (w - bw) / 2;
+      const by = (videoBottom - bh) / 2;
+      ctx.fillStyle = 'rgba(5, 10, 20, 0.9)';
+      ctx.fillRect(bx, by, bw, bh);
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(bx, by, bw, bh);
+      ctx.fillStyle = '#fde68a';
+      ctx.font = 'bold 22px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('VR DAN CHIQILMOQDA...', w / 2, by + 36);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = 'rgba(251, 191, 36, 0.25)';
+      ctx.fillRect(bx + 24, by + 54, bw - 48, 16);
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillRect(bx + 24, by + 54, (bw - 48) * Math.min(1, exitP), 16);
+    }
   }, []);
 
   // 2D Preview Kanvasini chizish sikli (15 FPS — yengil!)
@@ -751,8 +779,12 @@ export const VRControlView: React.FC<VRControlViewProps> = ({ onExit }) => {
       let prevBtnY = false;
       let prevLeftTrig = false;
       let headCenter: { yaw: number; pitch: number } | null = null;
+      let exitHoldStart = 0;
+      let exiting = false;
+      exitHoldRef.current = 0;
 
       session.addEventListener('end', () => {
+        exitHoldRef.current = 0;
         xrSessionRef.current = null;
         setXrActive(false);
         // Xavfsizlik: VR yopilganda robot va PTZ darhol to'xtaydi
@@ -778,6 +810,8 @@ export const VRControlView: React.FC<VRControlViewProps> = ({ onExit }) => {
         let btnX = false;
         let btnY = false;
         let leftTrig = false;
+        let gripL = false;
+        let gripR = false;
 
         for (const src of session.inputSources) {
           const gp = src.gamepad;
@@ -790,15 +824,31 @@ export const VRControlView: React.FC<VRControlViewProps> = ({ onExit }) => {
             lx = sx;
             ly = sy;
             leftTrig = Boolean(gp.buttons[0]?.pressed);
+            gripL = Boolean(gp.buttons[1]?.pressed);
             btnX = Boolean(gp.buttons[4]?.pressed);
             btnY = Boolean(gp.buttons[5]?.pressed);
           } else if (src.handedness === 'right') {
             rx = sx;
             ry = sy;
             eStopPressed = Boolean(gp.buttons[0]?.pressed);
+            gripR = Boolean(gp.buttons[1]?.pressed);
             btnA = Boolean(gp.buttons[4]?.pressed);
             btnB = Boolean(gp.buttons[5]?.pressed);
           }
+        }
+
+        // VR DAN CHIQISH: ikkala yon (grip) tugmani 1.5 s bosib turish (tasodifan chiqib ketmaslik uchun)
+        if (gripL && gripR) {
+          if (!exitHoldStart) exitHoldStart = now;
+          exitHoldRef.current = Math.min(1, (now - exitHoldStart) / 1500);
+          if (exitHoldRef.current >= 1 && !exiting) {
+            exiting = true;
+            // 'end' hodisasida robot va PTZ to'xtatiladi
+            void session.end().catch(() => {});
+          }
+        } else {
+          exitHoldStart = 0;
+          exitHoldRef.current = 0;
         }
 
         // Tugma hodisalari (edge trigger)
@@ -1102,17 +1152,23 @@ export const VRControlView: React.FC<VRControlViewProps> = ({ onExit }) => {
             type="button"
             onClick={() => {
               tacticalAudio.playClick();
-              void enterMetaQuestVR();
+              // VR ochiq bo'lsa: shu tugma VR dan chiqaradi
+              if (xrSessionRef.current) void xrSessionRef.current.end().catch(() => {});
+              else void enterMetaQuestVR();
             }}
             className={`px-3.5 py-2 rounded-lg font-mono font-black text-xs flex items-center gap-2 transition-all shadow-lg ${
-              xrSupported
+              xrActive
+                ? 'bg-amber-500 text-slate-950 hover:bg-amber-400'
+                : xrSupported
                 ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white hover:brightness-110 shadow-cyan-500/30 animate-pulse'
                 : 'bg-slate-800 text-cyan-300 border border-cyan-500/50 hover:bg-slate-700'
             }`}
           >
             <Glasses className="w-4 h-4" />
             <span>
-              {xrChecking
+              {xrActive
+                ? 'VR DAN CHIQISH'
+                : xrChecking
                 ? 'WebXR tekshirilmoqda...'
                 : xrSupported
                 ? 'META QUEST 2 — VR GA KIRISH'
@@ -1138,12 +1194,18 @@ export const VRControlView: React.FC<VRControlViewProps> = ({ onExit }) => {
             type="button"
             onClick={() => {
               tacticalAudio.playClick();
+              // VR sessiyasi ochiq bo'lsa avval yopiladi (robot va PTZ to'xtaydi), keyin asosiy panelga qaytiladi
+              if (xrSessionRef.current) void xrSessionRef.current.end().catch(() => {});
+              sendJoystickCoordinates(0, 0);
+              sendMecanumCommand('S');
+              ptzCameraService.stop();
               onExit();
             }}
-            className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 font-mono text-xs flex items-center gap-1.5"
+            title="VR rejimidan chiqib, asosiy boshqaruv paneliga qaytish"
+            className="px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-mono font-black text-xs flex items-center gap-1.5"
           >
             <LogOut className="w-4 h-4" />
-            HUD
+            VR REJIMDAN CHIQISH
           </button>
         </div>
       </header>
