@@ -636,6 +636,11 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const watchIdRef = useRef<number | null>(null);
 
   const startRealGPS = useCallback(() => {
+    // Operator qurilmasi o'z GPS ini ishlatmaydi: joylashuv robot planshetidan keladi
+    if (camLinkSettings.get().role !== 'robot') {
+      addLog('GPS', 'info', "Operator rejimi: joylashuv robot planshetining GPS idan olinadi");
+      return;
+    }
     if (!('geolocation' in navigator)) {
       setGps((prev) => ({
         ...prev,
@@ -704,13 +709,67 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     );
   }, [addLog]);
 
-  // Sayt ochilganda avtomatik planshet / qurilma GPS ni ishga tushirish
+  // GPS MANBAI:
+  //  - robot planshet: o'zining GPS i (haqiqiy joylashuv), operatorlarga telemetriya orqali uzatiladi;
+  //  - operator / boshqa qurilmalar: o'z GPS i ishlatilmaydi (kompyuter joylashuvni IP bo'yicha taxmin qiladi va
+  //    boshqa joyni ko'rsatadi), kuzatilayotgan robot planshetining GPS i ko'rsatiladi.
   useEffect(() => {
-    startRealGPS();
-    return () => {
+    let unsubFleet: (() => void) | null = null;
+    let lastTelT = 0;
+    const stopLocal = () => {
       if (watchIdRef.current !== null) {
         navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
       }
+    };
+    const apply = (role: string) => {
+      unsubFleet?.();
+      unsubFleet = null;
+      stopLocal();
+      if (role === 'robot') {
+        navigationService.setRemoteMode(false);
+        startRealGPS();
+        return;
+      }
+      navigationService.setRemoteMode(true);
+      lastTelT = 0;
+      setGps((prev) => ({ ...prev, isReal: false, status: 'SEARCHING', error: 'Robot planshetining GPS i kutilmoqda...' }));
+      unsubFleet = fleetWatcher.subscribe((f) => {
+        const id = watchedRobotId();
+        const robot = f.robots.find((r) => r.id === id);
+        const tel = robot?.tel;
+        const n = tel?.nav;
+        if (!tel || !n || tel.t === lastTelT) return;
+        lastTelT = tel.t;
+        navigationService.pushRemote(n);
+        headingService.pushGps(n.heading, n.speed * 3.6);
+        setGps({
+          latitude: n.lat,
+          longitude: n.lon,
+          altitude: null,
+          accuracy: n.acc,
+          speed: +(n.speed * 3.6).toFixed(1),
+          heading: Math.round(n.heading),
+          timestamp: tel.t,
+          isReal: true,
+          status: robot?.online ? 'ONLINE' : 'UNAVAILABLE',
+          error: robot?.online ? undefined : `${id} oflayn: oxirgi ma'lum joylashuv`
+        });
+      });
+    };
+    let role = camLinkSettings.get().role;
+    apply(role);
+    // Faqat rol o'zgarganda qayta sozlanadi (operator ismi va h.k. o'zgarishi GPS ni uzmasin)
+    const unsubRole = camLinkSettings.subscribe((s) => {
+      if (s.role !== role) {
+        role = s.role;
+        apply(role);
+      }
+    });
+    return () => {
+      unsubRole();
+      unsubFleet?.();
+      stopLocal();
     };
   }, [startRealGPS]);
 

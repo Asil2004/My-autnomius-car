@@ -17,6 +17,7 @@ import { GyroCalibrationModal } from './GyroCalibrationModal';
 import { tacticalAudio } from '../services/audioService';
 import { PtzCameraCard } from './PtzCameraCard';
 import { FaceCameraCard } from './FaceCameraCard';
+import { CamLinkCard } from './CamLinkCard';
 
 export const SettingsView: React.FC = () => {
   const { esp32Ip, setEsp32Ip, esp32Enabled, setEsp32Enabled } = useRobot();
@@ -77,6 +78,9 @@ export const SettingsView: React.FC = () => {
         </div>
       </div>
 
+      {/* Robotlar parki: rol (robot / operator) va park kodi. Robot planshetining GPS, kamera va telemetriyasi
+          shu kod bir xil bo'lgan barcha qurilmalarga uzatiladi */}
+      <CamLinkCard />
 
       <FaceCameraCard />
       <PtzCameraCard />

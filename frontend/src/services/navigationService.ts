@@ -43,6 +43,8 @@ const DR_MAX_MS = 120_000;
 const Q_MOVING = 1.5;
 const Q_STILL = 0.05;
 const MIN_GPS_ACC = 3;
+/** Operator: robot telemetriyasi shuncha vaqt kelmasa joylashuv eskirgan */
+const REMOTE_STALE_MS = 15_000;
 
 const R_EARTH = 6378137;
 const toRad = (d: number) => (d * Math.PI) / 180;
@@ -94,6 +96,7 @@ class NavigationService {
    * GPS o'lchovi. speedKmh / courseDeg bo'lmasligi mumkin. accuracyM: qurilma bergan aniqlik (metr).
    */
   pushGps(fix: { lat: number; lon: number; accuracyM?: number | null; speedKmh?: number | null; courseDeg?: number | null }) {
+    if (this.remote) return; // operator qurilmasi: o'z GPS i emas, robotniki ishlatiladi
     if (!isFinite(fix.lat) || !isFinite(fix.lon)) return;
     const now = Date.now();
     const acc = Math.max(MIN_GPS_ACC, fix.accuracyM && isFinite(fix.accuracyM) ? fix.accuracyM : 10);
@@ -203,9 +206,60 @@ class NavigationService {
 
   private tick = () => {
     const now = Date.now();
+    if (this.remote) {
+      // Robotdan telemetriya kelmay qolsa joylashuv "eskirgan" deb ko'rsatiladi (oxirgi nuqta joyida qoladi)
+      if (this.state.initialized && now - this.remoteAt > REMOTE_STALE_MS && this.state.positionSource !== 'stale') {
+        this.state = { ...this.state, positionSource: 'stale', speed: 0, t: now };
+        this.listeners.forEach((l) => l(this.state));
+      }
+      return;
+    }
     this.advance(now);
     this.publish(now);
   };
+
+  // ---------------------------------------------------------------------------
+  // OPERATOR QURILMASI: joylashuv robot planshetining GPS idan (telemetriya orqali)
+  // ---------------------------------------------------------------------------
+  private remote = false;
+  private remoteAt = 0;
+
+  /** true: bu qurilma o'z GPS ini ishlatmaydi, robot planshetining navigatsiyasini ko'rsatadi */
+  setRemoteMode(on: boolean) {
+    if (on === this.remote) return;
+    this.remote = on;
+    this.reset();
+    this.listeners.forEach((l) => l(this.state));
+  }
+
+  /** Robot telemetriyasidagi navigatsiya holati (robot planshetida hisoblangan, shu holicha ko'rsatiladi) */
+  pushRemote(n: {
+    lat: number;
+    lon: number;
+    speed: number;
+    heading: number;
+    hsrc: NavState['headingSource'];
+    psrc: PositionSource;
+    acc: number;
+    gpsAgeS: number;
+  }) {
+    if (!this.remote || !isFinite(n.lat) || !isFinite(n.lon)) return;
+    const now = Date.now();
+    this.remoteAt = now;
+    this.state = {
+      lat: n.lat,
+      lon: n.lon,
+      speed: n.speed,
+      heading: n.heading,
+      headingSource: n.hsrc,
+      positionSource: n.psrc,
+      accuracy: n.acc,
+      gpsAgeMs: n.gpsAgeS < 0 ? Infinity : n.gpsAgeS * 1000,
+      t: now,
+      initialized: true
+    };
+    this.listeners.forEach((l) => l(this.state));
+  }
 
   getState(): NavState {
     return this.state;
