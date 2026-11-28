@@ -349,7 +349,7 @@ def mjpeg_frame_generator():
         if jpeg:
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n'
-                   f'Content-Length: {len(jpeg)}\r\n\r\n'.encode('ascii') + jpeg + b'\r\n')
+                   + f'Content-Length: {len(jpeg)}\r\n\r\n'.encode('ascii') + jpeg + b'\r\n')
         time.sleep(0.04)
 
 # --------------------------------------------------------------------------
@@ -385,7 +385,7 @@ def video_feed_quad():
             if jpeg:
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n'
-                       f'Content-Length: {len(jpeg)}\r\n\r\n'.encode('ascii') + jpeg + b'\r\n')
+                       + f'Content-Length: {len(jpeg)}\r\n\r\n'.encode('ascii') + jpeg + b'\r\n')
             time.sleep(0.05)
     return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame")
 
@@ -400,7 +400,7 @@ def video_feed_by_id(cam_id: int):
             if jpeg:
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n'
-                       f'Content-Length: {len(jpeg)}\r\n\r\n'.encode('ascii') + jpeg + b'\r\n')
+                       + f'Content-Length: {len(jpeg)}\r\n\r\n'.encode('ascii') + jpeg + b'\r\n')
             time.sleep(0.04)
     return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame")
 
@@ -681,11 +681,13 @@ def set_obstacle(dist: Optional[float] = None):
     return {"status": "ok", "obstacle_distance_m": dist}
 
 @app.get("/strobe")
-def toggle_strobe():
-    """Politsiya stroboskopi holatini almashtirish"""
+def toggle_strobe(on: Optional[int] = None):
+    """Politsiya stroboskopi (migalka): ESP32 dagi rele orqali yoqiladi / o'chiriladi. ?on=1 / ?on=0, bo'lmasa almashtiradi"""
     global strobe_active
-    strobe_active = not strobe_active
-    arduino._add_log(f"Stroboskop: {'YOQILDI' if strobe_active else 'O`CHIRILDI'}")
+    strobe_active = (not strobe_active) if on is None else bool(on)
+    # ESP32 USB orqali: "STROBE_ON" / "STROBE_OFF" (ESP32 so'zni yaxlit bajaradi)
+    arduino.send_command("STROBE_ON" if strobe_active else "STROBE_OFF")
+    arduino._add_log(f"Stroboskop (migalka): {'YOQILDI' if strobe_active else 'O`CHIRILDI'}")
     return {"status": "ok", "strobe": strobe_active}
 
 @app.get("/siren")

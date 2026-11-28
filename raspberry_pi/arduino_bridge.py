@@ -207,7 +207,9 @@ class ArduinoBridge:
                 self._add_log(f"BLOKLANDI: Oldinda to'siq ({self.sonars['front']} sm)!")
                 return False
 
-            self.last_cmd = cmd
+            # Migalka buyrug'i harakat holatini o'zgartirmaydi (robot "yurmoqda" deb ko'rinmasin)
+            if not cmd.startswith("STROBE"):
+                self.last_cmd = cmd
             self._add_log(f"Buyruq: {cmd}")
 
             if self.is_hardware and self.ser and self.ser.is_open:

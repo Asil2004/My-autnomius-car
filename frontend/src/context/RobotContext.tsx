@@ -151,6 +151,10 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [hornActive, setHornActive] = useState<boolean>(false);
   const [lightActive, setLightActive] = useState<boolean>(false);
   const mqttClientRef = useRef<any>(null);
+  // Migalka (stroboskop): oxirgi so'ralgan holat va buyruq vaqti (ESP32 telemetriyasi bilan moslash uchun)
+  const strobeRef = useRef(false);
+  const strobeCmdAtRef = useRef(0);
+  const setStrobeFromRobotRef = useRef<(on: boolean) => void>(() => {});
   const heartbeatRef = useRef<number | null>(null);
   const currentCmdRef = useRef<MecanumCommand>('S');
   const pressedKeysRef = useRef<{ [key: string]: boolean }>({});
@@ -214,6 +218,8 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               const text = payload.toString();
               const data = JSON.parse(text);
               headingService.ingestTelemetry(data);
+              // ESP32 dagi haqiqiy migalka holati (boshqa qurilmadan yoqilgan bo'lsa ham tugma to'g'ri ko'rinadi)
+              if (typeof data.strobe === 'boolean') setStrobeFromRobotRef.current(data.strobe);
               if (data.front_cm !== undefined) {
                 lidarSerialService.ingestRemoteLidar({
                   frontCm: data.front_cm,
@@ -779,13 +785,21 @@ export const RobotProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     tacticalAudio.setMuted(next);
   };
 
+  // STROBOSKOP = robotdagi haqiqiy migalka: ESP32 rele orqali yoqadi / o'chiradi (MQTT, Pi gateway yoki ESP32 HTTP orqali)
+  setStrobeFromRobotRef.current = (on: boolean) => {
+    // Buyruq yuborilgach 3 s ESP32 dan yangi holat kelishini kutamiz (eski telemetriya tugmani qaytarib qo'ymasin)
+    if (on === strobeRef.current || Date.now() - strobeCmdAtRef.current < 3000) return;
+    strobeRef.current = on;
+    setStrobeActive(on);
+  };
   const toggleStrobe = () => {
-    setStrobeActive((prev) => {
-      const next = !prev;
-      tacticalAudio.playClick();
-      addLog('SYSTEM', next ? 'warn' : 'info', `Stroboskop patrul chiroqlari: ${next ? 'YOQILDI' : 'O\'CHIRILDI'}`);
-      return next;
-    });
+    const next = !strobeRef.current;
+    strobeRef.current = next;
+    strobeCmdAtRef.current = Date.now();
+    setStrobeActive(next);
+    tacticalAudio.playClick();
+    sendRawToESP32(next ? 'STROBE_ON' : 'STROBE_OFF');
+    addLog('SYSTEM', next ? 'warn' : 'info', `Migalka (stroboskop): ${next ? 'YOQILDI' : "O'CHIRILDI"}`);
   };
 
   /** Shu qurilmada sirenani aniq holatga keltirish (robot plansheti dinamigi) */

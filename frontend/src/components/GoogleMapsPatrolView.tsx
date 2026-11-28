@@ -1274,7 +1274,7 @@ export const GoogleMapsPatrolView: React.FC = () => {
                   </button>
                 )}
                 <div className="text-[9px] font-mono text-slate-400 leading-snug">
-                  Robot planshet GPS + MPU-6050 giroskopi bo'yicha ESP32'ga buyruq beradi. {roundTrip ? "Oxirgi nuqtaga yetgach, o'sha chiziq bo'ylab orqaga qaytadi." : "Oxirgi nuqtada to'xtaydi."}
+                  Robot planshet GPS + kompasi bo'yicha ESP32'ga buyruq beradi. {roundTrip ? "Oxirgi nuqtaga yetgach, o'sha chiziq bo'ylab orqaga qaytadi." : "Oxirgi nuqtada to'xtaydi."}
                 </div>
               </div>
             )}

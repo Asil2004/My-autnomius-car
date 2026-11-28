@@ -21,183 +21,37 @@
 
 #include <WiFi.h>
 #include <WebServer.h>
-#include <Wire.h>
 #include <math.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 
 // ==============================================================================
-// 0. MPU-6050 6-O'QLI DATCHIK (GIROSKOP + AKSELEROMETR) SOZLAMALARI
+// 0. MIGALKA (POLITSIYA STROBOSKOPI) RELESI
 // ==============================================================================
-// ESP32 standart I2C pinlari:
-#define MPU_SDA 21
-#define MPU_SCL 22
+// Migalka o'zining miltillash sxemasi bilan ishlaydi: ESP32 faqat rele orqali uning quvvatini yoqadi / o'chiradi.
+// Ulanish (avval MPU-6050 giroskopi turgan joyga):
+//   Rele VCC -> ESP32 3.3V   |   Rele GND -> ESP32 GND   |   Rele IN -> GPIO 21 (avvalgi giroskop SDA simi)
+//   Migalka quvvati rele kontaktlari orqali: COM -> manba (+), NO -> migalka (+)  (NO: rele o'chiq bo'lsa migalka o'chiq)
+#define STROBE_RELE_PIN 21
+// Rele moduli qaysi signalda yoqiladi: HIGH (yuqori darajali modul) yoki LOW (past darajali, ko'p uchraydigan ko'k modullar).
+// Agar migalka teskari ishlasa (o'chiq deganda yonib tursa) shu qiymatni LOW ga almashtiring.
+#define RELE_YONIQ HIGH
+#define RELE_OCHIQ (RELE_YONIQ == HIGH ? LOW : HIGH)
 
-#define MPU_REG_SMPLRT_DIV   0x19
-#define MPU_REG_CONFIG       0x1A
-#define MPU_REG_GYRO_CONFIG  0x1B
-#define MPU_REG_ACCEL_CONFIG 0x1C
-#define MPU_REG_ACCEL_XOUT_H 0x3B
-#define MPU_REG_PWR_MGMT_1   0x6B
-#define MPU_REG_WHO_AM_I     0x75
+bool migalkaYoniq = false;
 
-uint8_t mpuAddr = 0x68;  // Standart I2C manzil (AD0 -> GND: 0x68, AD0 -> VCC: 0x69)
-bool mpuMavjud = false;
-float gyroX_offset = 0, gyroY_offset = 0, gyroZ_offset = 0;
-float yaw = 0.0f;        // 0 .. 360° (Heading / Azimut burchagi)
-float pitch = 0.0f;      // -180 .. +180° (Old-Orqa egilish)
-float roll = 0.0f;       // -90 .. +90° (Chap-O'ng egilish)
-float gyroRateZ = 0.0f;  // °/s (Aylanish tezligi)
-float mpuHarorat = 0.0f; // °C
-float ax = 0, ay = 0, az = 0;
-unsigned long oxirgiImuVaqti = 0;
-
-void i2cWriteByte(uint8_t reg, uint8_t data) {
-  Wire.beginTransmission(mpuAddr);
-  Wire.write(reg);
-  Wire.write(data);
-  Wire.endTransmission();
+void migalka(bool yoniq) {
+  migalkaYoniq = yoniq;
+  digitalWrite(STROBE_RELE_PIN, yoniq ? RELE_YONIQ : RELE_OCHIQ);
+  Serial.print("MIGALKA:");
+  Serial.println(yoniq ? "ON" : "OFF");
 }
 
-uint8_t i2cReadByte(uint8_t reg) {
-  Wire.beginTransmission(mpuAddr);
-  Wire.write(reg);
-  Wire.endTransmission(false);
-  Wire.requestFrom((uint8_t)mpuAddr, (uint8_t)1);
-  if (Wire.available()) {
-    return Wire.read();
-  }
-  return 0;
-}
-
-void kalibrlashMPU6050() {
-  if (!mpuMavjud) return;
-  Serial.println("[MPU6050] Giroskop kalibrlanmoqda (robotni 1 soniya qimirlatmang)...");
-  long gx_sum = 0, gy_sum = 0, gz_sum = 0;
-  const int NUM_SAMPLES = 250;
-
-  for (int i = 0; i < NUM_SAMPLES; i++) {
-    Wire.beginTransmission(mpuAddr);
-    Wire.write(0x43); // GYRO_XOUT_H
-    Wire.endTransmission(false);
-    Wire.requestFrom((uint8_t)mpuAddr, (uint8_t)6);
-
-    if (Wire.available() >= 6) {
-      int16_t gx = (Wire.read() << 8) | Wire.read();
-      int16_t gy = (Wire.read() << 8) | Wire.read();
-      int16_t gz = (Wire.read() << 8) | Wire.read();
-      gx_sum += gx;
-      gy_sum += gy;
-      gz_sum += gz;
-    }
-    delay(4);
-  }
-
-  gyroX_offset = (float)gx_sum / (float)NUM_SAMPLES;
-  gyroY_offset = (float)gy_sum / (float)NUM_SAMPLES;
-  gyroZ_offset = (float)gz_sum / (float)NUM_SAMPLES;
-
-  yaw = 0.0f;
-  oxirgiImuVaqti = micros();
-  Serial.print("[MPU6050] Kalibrlash tayyor! Z-dreyf kompensatsiyasi: ");
-  Serial.println(gyroZ_offset / 65.5f);
-}
-
-bool initMPU6050() {
-  Wire.begin(MPU_SDA, MPU_SCL, 400000);
-  delay(100);
-
-  // 1. Avval 0x68 manzilini sinab ko'ramiz (AD0 -> GND)
-  mpuAddr = 0x68;
-  uint8_t who = i2cReadByte(MPU_REG_WHO_AM_I);
-
-  // 2. Agar 0x68 javob bermasa, 0x69 manzilini sinaymiz (AD0 -> VCC)
-  if (who != 0x68 && who != 0x70 && who != 0x71 && who != 0x72 && who != 0x98) {
-    mpuAddr = 0x69;
-    who = i2cReadByte(MPU_REG_WHO_AM_I);
-  }
-
-  Serial.print("[MPU6050] I2C manzil: 0x");
-  Serial.print(mpuAddr, HEX);
-  Serial.print(" | WHO_AM_I: 0x");
-  Serial.println(who, HEX);
-
-  if (who == 0x00 || who == 0xFF) {
-    Serial.println("[-] [OGOHLANTIRISH] MPU-6050 datchigi topilmadi!");
-    Serial.println("    Simlarni tekshiring: SDA -> GPIO 21, SCL -> GPIO 22, VCC -> 3.3V/5V, GND -> GND.");
-    mpuMavjud = false;
-    return false;
-  }
-
-  // 1. Sleep rejimdan uyg'otish (PLL with X axis gyroscope reference)
-  i2cWriteByte(MPU_REG_PWR_MGMT_1, 0x01);
-  delay(50);
-  // 2. DLPF - 42Hz (motor tebranishi va elektr shovqinlarni filtrlash)
-  i2cWriteByte(MPU_REG_CONFIG, 0x03);
-  // 3. Sample Rate: 100Hz (1kHz / (1 + 9) = 100Hz)
-  i2cWriteByte(MPU_REG_SMPLRT_DIV, 0x09);
-  // 4. Gyro +/- 500 deg/s (65.5 LSB / deg/s)
-  i2cWriteByte(MPU_REG_GYRO_CONFIG, 0x08);
-  // 5. Accel +/- 2g (16384 LSB / g)
-  i2cWriteByte(MPU_REG_ACCEL_CONFIG, 0x00);
-  delay(50);
-
-  mpuMavjud = true;
-  Serial.println("[+] [OK] MPU-6050 datchigi muvaffaqiyatli ishga tushdi!");
-  kalibrlashMPU6050();
-  return true;
-}
-
-void yangilashMPU6050() {
-  if (!mpuMavjud) return;
-
-  unsigned long hozir = micros();
-  float dt = (hozir - oxirgiImuVaqti) / 1000000.0f;
-  if (dt < 0.005f) return; // 200 Hz dan oshirmaslik
-  oxirgiImuVaqti = hozir;
-
-  Wire.beginTransmission(mpuAddr);
-  Wire.write(MPU_REG_ACCEL_XOUT_H);
-  Wire.endTransmission(false);
-  Wire.requestFrom((uint8_t)mpuAddr, (uint8_t)14);
-
-  if (Wire.available() >= 14) {
-    int16_t rawAX = (Wire.read() << 8) | Wire.read();
-    int16_t rawAY = (Wire.read() << 8) | Wire.read();
-    int16_t rawAZ = (Wire.read() << 8) | Wire.read();
-    int16_t rawTemp = (Wire.read() << 8) | Wire.read();
-    int16_t rawGX = (Wire.read() << 8) | Wire.read();
-    int16_t rawGY = (Wire.read() << 8) | Wire.read();
-    int16_t rawGZ = (Wire.read() << 8) | Wire.read();
-
-    ax = rawAX / 16384.0f;
-    ay = rawAY / 16384.0f;
-    az = rawAZ / 16384.0f;
-    mpuHarorat = (rawTemp / 340.0f) + 36.53f;
-
-    float gx = (rawGX - gyroX_offset) / 65.5f; // °/s
-    float gy = (rawGY - gyroY_offset) / 65.5f;
-    float gz = (rawGZ - gyroZ_offset) / 65.5f;
-
-    gyroRateZ = gz;
-
-    // Zero-drift (o'lik zona) filtri: robot qimirlamaganda mayda shovqinlar hisobiga yaw oqib ketmasligi uchun
-    if (abs(gz) < 0.25f) {
-      gz = 0.0f;
-    }
-
-    // Yaw burchagini integrallash (0..360°)
-    yaw += gz * dt;
-    if (yaw >= 360.0f) yaw -= 360.0f;
-    else if (yaw < 0.0f) yaw += 360.0f;
-
-    // Pitch & Roll (Komplementar filtr: 96% giroskop + 4% akselerometr)
-    float accelPitch = atan2(-ax, sqrt(ay * ay + az * az)) * 180.0f / PI;
-    float accelRoll  = atan2(ay, az) * 180.0f / PI;
-
-    pitch = 0.96f * (pitch + gy * dt) + 0.04f * accelPitch;
-    roll  = 0.96f * (roll + gx * dt) + 0.04f * accelRoll;
-  }
+void initMigalka() {
+  // Avval "o'chiq" darajasini yozib, keyin chiqish qilamiz: yoqilganda migalka bir lahza ham yonib ketmasin
+  digitalWrite(STROBE_RELE_PIN, RELE_OCHIQ);
+  pinMode(STROBE_RELE_PIN, OUTPUT);
+  migalkaYoniq = false;
 }
 
 // ==============================================================================
@@ -450,6 +304,58 @@ void buyruqniBajar(char xarf) {
   Serial.println(xarf);
 }
 
+/**
+ * Matnli buyruq (MQTT, HTTP /move?dir=..., USB Serial): so'z yoki bitta harf.
+ *   STROBE_ON / MIGALKA_ON   -> migalka yonadi
+ *   STROBE_OFF / MIGALKA_OFF -> migalka o'chadi
+ *   STROBE / MIGALKA         -> almashtiradi
+ *   F, B, L, R, S, 1, 2, 3 ... -> harakat (buyruqniBajar)
+ * Noma'lum so'zlar (masalan LIGHT_ON, HORN_ON) E'TIBORSIZ qoldiriladi: avval ularning faqat birinchi harfi olinib,
+ * robot kutilmaganda burilib ketardi ("LIGHT_ON" -> 'L' chapga, "HORN_ON" -> 'H' orqaga-chapga).
+ */
+bool matnliBuyruq(String msg) {
+  msg.trim();
+  msg.toUpperCase();
+  if (msg.length() == 0) return false;
+  if (msg == "STROBE_ON" || msg == "MIGALKA_ON") migalka(true);
+  else if (msg == "STROBE_OFF" || msg == "MIGALKA_OFF") migalka(false);
+  else if (msg == "STROBE" || msg == "MIGALKA") migalka(!migalkaYoniq);
+  else if (msg.length() == 1) {
+    buyruqniBajar(msg.charAt(0));
+    return true;
+  } else {
+    Serial.print("NOMALUM:");
+    Serial.println(msg);
+    return false;
+  }
+  Serial.print("ACK:");
+  Serial.println(msg);
+  return true;
+}
+
+/**
+ * USB Serial (Raspberry Pi) dan kelgan qism: Pi harflarni qator oxirisiz yuboradi, shuning uchun ketma-ket kelgan
+ * harflar birikib qolishi mumkin ("2F"). Ma'lum so'z bo'lsa so'z sifatida; faqat harakat harflaridan iborat bo'lsa har biri
+ * alohida; boshqa narsa (masalan "LIGHT_ON") e'tiborsiz.
+ */
+void serialBuyruq(String s) {
+  s.trim();
+  s.toUpperCase();
+  if (s.length() <= 1 || s.startsWith("STROBE") || s.startsWith("MIGALKA")) {
+    matnliBuyruq(s);
+    return;
+  }
+  const char* harflar = "FBLRGQIEHJS123";
+  for (unsigned int i = 0; i < s.length(); i++) {
+    if (!strchr(harflar, s.charAt(i))) {
+      Serial.print("NOMALUM:");
+      Serial.println(s);
+      return;
+    }
+  }
+  for (unsigned int i = 0; i < s.length(); i++) buyruqniBajar(s.charAt(i));
+}
+
 // ==============================================================================
 // 5. O'RNATILGAN BOSHQARUV VEB-SAHIFASI (HTML + CSS + JAVASCRIPT)
 // ==============================================================================
@@ -646,75 +552,25 @@ const char index_html[] PROGMEM = R"rawliteral(
       height: 24px;
       fill: #94a3b8;
     }
-    /* IMU MPU-6050 Ko'rsatkichlar kartasi */
-    .imu-card {
+    /* Migalka (politsiya stroboskopi) tugmasi */
+    .strobe-btn {
       width: 100%;
       background: #1e293b;
-      border: 1px solid #334155;
+      border: 1px solid #475569;
+      color: #f8fafc;
       border-radius: 12px;
-      padding: 8px 10px;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    .imu-head {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 11px;
-      color: #94a3b8;
-      font-weight: 600;
-    }
-    .imu-badge {
-      font-size: 9px;
-      padding: 2px 6px;
-      border-radius: 8px;
-      background: #334155;
-      color: #94a3b8;
-    }
-    .imu-badge.active {
-      background: #0f766e;
-      color: #5eead4;
-    }
-    .imu-main {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0 4px;
-    }
-    .imu-yaw-box {
-      font-size: 20px;
+      padding: 10px;
+      font-size: 13px;
       font-weight: 800;
-      color: #38bdf8;
-      font-family: monospace;
+      cursor: pointer;
+    }
+    .strobe-btn.on {
+      background: linear-gradient(90deg, #dc2626, #2563eb);
+      border-color: #f8fafc;
     }
     .deg {
       font-size: 13px;
       color: #94a3b8;
-    }
-    .imu-angles {
-      font-size: 10px;
-      color: #cbd5e1;
-      text-align: right;
-      line-height: 1.3;
-    }
-    .imu-btns {
-      display: flex;
-      gap: 6px;
-    }
-    .imu-btn {
-      flex: 1;
-      background: #334155;
-      border: 1px solid #475569;
-      color: #f8fafc;
-      border-radius: 6px;
-      padding: 4px;
-      font-size: 10px;
-      font-weight: 600;
-      cursor: pointer;
-    }
-    .imu-btn:active {
-      background: #0d9488;
     }
   </style>
 </head>
@@ -750,26 +606,8 @@ const char index_html[] PROGMEM = R"rawliteral(
         <input type="range" min="20" max="100" value="100" id="spdRange" oninput="changeSpeed(this.value)">
       </div>
 
-      <!-- IMU MPU-6050 Ko'rsatkichlari -->
-      <div class="imu-card">
-        <div class="imu-head">
-          <span>🧭 MPU-6050 IMU</span>
-          <span id="imuStatus" class="imu-badge">KUTILMOQDA</span>
-        </div>
-        <div class="imu-main">
-          <div class="imu-yaw-box">
-            <span id="imuYaw">0.0</span><span class="deg">°</span>
-          </div>
-          <div class="imu-angles">
-            <div>Pitch: <b id="imuPitch">0.0°</b></div>
-            <div>Roll: <b id="imuRoll">0.0°</b></div>
-          </div>
-        </div>
-        <div class="imu-btns">
-          <button type="button" class="imu-btn" onclick="zeroImu()">🎯 0° Qilish</button>
-          <button type="button" class="imu-btn" onclick="calibImu()">⚙️ Kalibrlash</button>
-        </div>
-      </div>
+      <!-- Migalka (politsiya stroboskopi) -->
+      <button type="button" id="strobeBtn" class="strobe-btn" onclick="toggleStrobe()">рџљЁ MIGALKA</button>
 
       <div class="car-circle" onclick="sendCmd('S')">
         <svg viewBox="0 0 24 24">
@@ -814,42 +652,19 @@ const char index_html[] PROGMEM = R"rawliteral(
       fetch('/speed?val=' + pwm).catch(e => console.warn(e));
     }
 
-    // IMU datchik ma'lumotlarini o'qib borish
-    function fetchImuData() {
-      fetch('/imu')
-        .then(r => r.json())
-        .then(d => {
-          if (!d) return;
-          const badge = document.getElementById('imuStatus');
-          if (badge) {
-            if (d.connected) {
-              badge.innerText = 'FAOL';
-              badge.className = 'imu-badge active';
-            } else {
-              badge.innerText = 'ULANMAGAN';
-              badge.className = 'imu-badge';
-            }
-          }
-          const y = document.getElementById('imuYaw');
-          if (y) y.innerText = (+d.yaw).toFixed(1);
-          const p = document.getElementById('imuPitch');
-          if (p) p.innerText = (+d.pitch).toFixed(1) + '°';
-          const r = document.getElementById('imuRoll');
-          if (r) r.innerText = (+d.roll).toFixed(1) + '°';
-        })
-        .catch(() => {});
+    // Migalka (politsiya stroboskopi) relesi
+    function refreshStrobe() {
+      fetch('/status').then(r => r.json()).then(d => {
+        const b = document.getElementById('strobeBtn');
+        if (b) { b.classList.toggle('on', !!d.strobe); b.innerText = d.strobe ? 'рџљЁ MIGALKA YONIQ' : 'рџљЁ MIGALKA'; }
+      }).catch(() => {});
     }
-    setInterval(fetchImuData, 300);
-
-    function zeroImu() {
-      fetch('/imu/zero').then(() => fetchImuData());
+    function toggleStrobe() {
+      const on = !document.getElementById('strobeBtn').classList.contains('on');
+      fetch('/move?dir=' + (on ? 'STROBE_ON' : 'STROBE_OFF')).then(refreshStrobe).catch(() => {});
     }
-
-    function calibImu() {
-      if (confirm("Robot 1 soniya qimirlamasdan turishi kerak. Kalibrlashni boshlaymizmi?")) {
-        fetch('/imu/calibrate').then(() => fetchImuData());
-      }
-    }
+    setInterval(refreshStrobe, 1500);
+    refreshStrobe();
 
     // Bosib turganda uzluksiz yuborish (Keep-alive)
     function startMovement(cmd, btnElem) {
@@ -984,9 +799,9 @@ void handleMove() {
   else if (server.hasArg("c")) cmdStr = server.arg("c");
 
   if (cmdStr.length() > 0) {
-    char c = cmdStr.charAt(0);
-    buyruqniBajar(c);
-    server.send(200, "application/json", "{\"status\":\"ok\",\"cmd\":\"" + String(c) + "\"}");
+    bool ok = matnliBuyruq(cmdStr);
+    server.send(ok ? 200 : 400, "application/json",
+                String("{\"status\":\"") + (ok ? "ok" : "unknown") + "\",\"cmd\":\"" + cmdStr + "\",\"strobe\":" + (migalkaYoniq ? "true" : "false") + "}");
   } else {
     server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Missing 'dir', 'c' or 'x'/'y' argument\"}");
   }
@@ -1011,57 +826,26 @@ void handleSpeed() {
   }
 }
 
-// Robot holati: /status (IMU ma'lumotlari bilan boyitilgan)
+// Robot holati: /status
 void handleStatus() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   String json = "{";
   json += "\"status\":\"online\",";
   json += "\"moving\":" + String(harakatda ? "true" : "false") + ",";
   json += "\"speed\":" + String(tezlik) + ",";
+  json += "\"strobe\":" + String(migalkaYoniq ? "true" : "false") + ",";
   json += "\"ip\":\"" + WiFi.localIP().toString() + "\",";
-  json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
-  json += "\"imu\":{";
-  json += "\"connected\":" + String(mpuMavjud ? "true" : "false") + ",";
-  json += "\"yaw\":" + String(yaw, 1) + ",";
-  json += "\"pitch\":" + String(pitch, 1) + ",";
-  json += "\"roll\":" + String(roll, 1) + ",";
-  json += "\"rate\":" + String(gyroRateZ, 1) + ",";
-  json += "\"temp\":" + String(mpuHarorat, 1);
-  json += "}";
+  json += "\"rssi\":" + String(WiFi.RSSI());
   json += "}";
   server.send(200, "application/json", json);
 }
 
-// IMU telemetriyasi: /imu
-void handleImu() {
+// Migalka: /strobe?on=1 | /strobe?on=0 | /strobe (almashtirish)
+void handleStrobe() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
-  String json = "{";
-  json += "\"connected\":" + String(mpuMavjud ? "true" : "false") + ",";
-  json += "\"yaw\":" + String(yaw, 2) + ",";
-  json += "\"pitch\":" + String(pitch, 2) + ",";
-  json += "\"roll\":" + String(roll, 2) + ",";
-  json += "\"rate\":" + String(gyroRateZ, 2) + ",";
-  json += "\"ax\":" + String(ax, 2) + ",";
-  json += "\"ay\":" + String(ay, 2) + ",";
-  json += "\"az\":" + String(az, 2) + ",";
-  json += "\"temp\":" + String(mpuHarorat, 1);
-  json += "}";
-  server.send(200, "application/json", json);
-}
-
-// IMU yaw burchagini 0° ga tenglash (Zero / Tara): /imu/zero
-void handleImuZero() {
-  server.sendHeader("Access-Control-Allow-Origin", "*");
-  yaw = 0.0f;
-  server.send(200, "application/json", "{\"status\":\"ok\",\"yaw\":0.0}");
-}
-
-// IMU datchigini to'liq kalibrlash: /imu/calibrate
-void handleImuCalibrate() {
-  server.sendHeader("Access-Control-Allow-Origin", "*");
-  toxta();
-  kalibrlashMPU6050();
-  server.send(200, "application/json", "{\"status\":\"ok\",\"message\":\"MPU6050 kalibrlandi\"}");
+  if (server.hasArg("on")) migalka(server.arg("on") == "1" || server.arg("on").equalsIgnoreCase("true"));
+  else migalka(!migalkaYoniq);
+  server.send(200, "application/json", String("{\"status\":\"ok\",\"strobe\":") + (migalkaYoniq ? "true" : "false") + "}");
 }
 
 // RTK GNSS ma'lumotlarini JSON qilib berish: /gps
@@ -1091,18 +875,6 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     msg += (char)payload[i];
   }
   msg.trim();
-
-  // IMU kalibrlash yoki nolga tenglash buyruqlari
-  if (msg.equalsIgnoreCase("ZERO_IMU") || msg.equalsIgnoreCase("ZERO")) {
-    yaw = 0.0f;
-    Serial.println("[MQTT] IMU Yaw 0° ga tenglandi.");
-    return;
-  }
-  if (msg.equalsIgnoreCase("CALIBRATE_IMU") || msg.equalsIgnoreCase("CALIB")) {
-    toxta();
-    kalibrlashMPU6050();
-    return;
-  }
 
   // Joystik analog koordinatalari (masalan: "J:50,-80")
   if (msg.startsWith("J:")) {
@@ -1139,10 +911,9 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     int v = msg.substring(2).toInt();
     tezlik = constrain(v, 0, 255);
   } 
-  // Agar oddiy buyruq bo'lsa (F, B, L, R, S)
-  else if (msg.length() > 0) {
-    char c = msg.charAt(0);
-    buyruqniBajar(c);
+  // Oddiy buyruq (F, B, L, R, S ...) yoki so'z (STROBE_ON / STROBE_OFF)
+  else {
+    matnliBuyruq(msg);
   }
 }
 
@@ -1185,8 +956,8 @@ void setup() {
   // Dastlab motorlarni to'xtatish
   toxta();
 
-  // 0. MPU-6050 datchigini ishga tushirish
-  mpuMavjud = initMPU6050();
+  // 0. Migalka relesi (o'chiq holatda boshlanadi)
+  initMigalka();
 
 #if ENABLE_HARDWARE_GPS
   // 0.1 LG290P GNSS RTK datchigini Serial2 da ishga tushirish (RX=16, TX=17)
@@ -1226,9 +997,7 @@ void setup() {
   server.on("/cmd", HTTP_GET, handleMove);
   server.on("/speed", HTTP_GET, handleSpeed);
   server.on("/status", HTTP_GET, handleStatus);
-  server.on("/imu", HTTP_GET, handleImu);
-  server.on("/imu/zero", HTTP_GET, handleImuZero);
-  server.on("/imu/calibrate", HTTP_GET, handleImuCalibrate);
+  server.on("/strobe", HTTP_GET, handleStrobe);
   server.on("/gps", HTTP_GET, handleGps);
   server.onNotFound(handleNotFound);
 
@@ -1243,17 +1012,27 @@ void setup() {
 }
 
 void loop() {
-  // 1. MPU-6050 giroskop va akselerometrni uzluksiz o'qib borish
-  yangilashMPU6050();
-
   // 1.1 LG290P GNSS RTK datchigini o'qish va Trackk Cloud Hub'ga uzatish
   yangilashGpsHardware();
 
   // 1.2 UART (USB Serial) orqali Raspberry Pi dan kelgan buyruqlarni qabul qilish (115200 bod)
+  //  Bitta harf (F, S ...) yoki so'z (STROBE_ON). So'z yaxlit bajarilishi uchun belgilar yig'iladi va qator oxiri
+  //  ('\n') kelganda yoki 25 ms yangi belgi kelmaganda bajariladi ("STROBE_ON" harflari alohida buyruq bo'lib ketmasin)
+  static String serialBuf = "";
+  static unsigned long serialOxirgi = 0;
   while (Serial.available()) {
     char c = (char)Serial.read();
-    if (c == '\r' || c == '\n' || c == ' ') continue;
-    buyruqniBajar(c);
+    serialOxirgi = millis();
+    if (c == '\r' || c == '\n' || c == ' ') {
+      if (serialBuf.length()) serialBuyruq(serialBuf);
+      serialBuf = "";
+      continue;
+    }
+    if (serialBuf.length() < 32) serialBuf += c;
+  }
+  if (serialBuf.length() && millis() - serialOxirgi > 25) {
+    serialBuyruq(serialBuf);
+    serialBuf = "";
   }
 
   // 2. HTTP so'rovlarni qabul qilish
@@ -1273,14 +1052,10 @@ void loop() {
 
         char teleJson[256];
         snprintf(teleJson, sizeof(teleJson),
-          "{\"status\":\"online\",\"moving\":%s,\"speed\":%d,\"yaw\":%.1f,\"pitch\":%.1f,\"roll\":%.1f,\"rate\":%.1f,\"temp\":%.1f}",
+          "{\"status\":\"online\",\"moving\":%s,\"speed\":%d,\"strobe\":%s}",
           harakatda ? "true" : "false",
           tezlik,
-          yaw,
-          pitch,
-          roll,
-          gyroRateZ,
-          mpuHarorat
+          migalkaYoniq ? "true" : "false"
         );
         mqttClient.publish(mqttTelemetryTopic, teleJson);
       }
